@@ -6,6 +6,7 @@ import {StampHook} from "../src/StampHook.sol";
 import {StampToken} from "../src/StampToken.sol";
 import {StampEthRouter} from "../src/StampEthRouter.sol";
 import {CourierNFT, ICourierRenderer} from "../src/CourierNFT.sol";
+import {PostOffice} from "../src/PostOffice.sol";
 import {CourierSVG} from "../src/CourierSVG.sol";
 import {CourierRenderer, ICourierSeed} from "../src/CourierRenderer.sol";
 import {DeployLib} from "../script/DeployLib.sol";
@@ -14,6 +15,12 @@ import {RobinhoodConfig, CourierDeployer} from "../script/DeployMainnet.s.sol";
 interface IERC20 {
     function balanceOf(address) external view returns (uint256);
     function approve(address, uint256) external returns (bool);
+}
+
+/// IMD's own admin functions on Robinhood Chain (its owner is a single wallet).
+interface IImdAdmin {
+    function owner() external view returns (address);
+    function setBlocked(address account, bool blocked) external;
 }
 
 /// @notice Runs the hook against the real Robinhood Chain PoolManager, IMD and IMD/ETH pool.
@@ -66,6 +73,27 @@ contract StampHookForkTest is Test {
         hook.collectProtocolFees(RobinhoodConfig.IMD);
         assertGt(IERC20(RobinhoodConfig.IMD).balanceOf(feeRecipient), 0);
     }
+
+    /// Final check 19b34b9b finding 3: IMD's owner can block an address; a blocked fee recipient moves its own
+    /// fees to a new one, with the hook already renounced.
+    function test_Fork_BlockedFeeRecipientMovesItsFees() public {
+        if (block.chainid != 4663) return;
+        hook.renounceOwnership();
+        vm.prank(alice);
+        ethRouter.buyWithEth{value: 0.01 ether}(address(stamp), 1, block.timestamp);
+        IImdAdmin imd = IImdAdmin(RobinhoodConfig.IMD);
+        vm.prank(imd.owner());
+        imd.setBlocked(feeRecipient, true);
+        vm.expectRevert();
+        hook.collectProtocolFees(RobinhoodConfig.IMD);
+
+        address next = makeAddr("next");
+        vm.prank(feeRecipient);
+        hook.setFeeRecipient(next);
+        hook.collectProtocolFees(RobinhoodConfig.IMD);
+        assertGt(IERC20(RobinhoodConfig.IMD).balanceOf(next), 0);
+        assertEq(hook.pendingProtocolFees(RobinhoodConfig.IMD), 0);
+    }
 }
 
 /// @notice The real launch stages (the deploy script's own functions) against the live PoolManager.
@@ -96,6 +124,7 @@ contract LaunchStagesForkTest is Test, CourierDeployer {
 
         c.renderer = address(nft.renderer());
         Game memory g = this.stageTwo(c);
+        assertEq(PostOffice(g.office).treasury(), nft.treasury());
         assertEq(swapped.owner(), address(0));
         assertEq(address(swapped.office()), g.office);
         assertTrue(nft.rendererFrozen());
@@ -103,5 +132,14 @@ contract LaunchStagesForkTest is Test, CourierDeployer {
         assertEq(StampToken(g.stamp).owner(), address(0));
         assertEq(StampHook(g.hook).owner(), address(0));
         assertEq(nft.game(), g.office);
+    }
+
+    /// Final check 19b34b9b finding 4: one treasury for the whole game; stage 2 refuses a different one.
+    function test_Fork_StageTwoRefusesADifferentTreasury() public {
+        if (block.chainid != 4663) return;
+        Couriers memory c = _deployCouriers(address(this), makeAddr("elsewhere"), 0.003 ether, keccak256(abi.encode(SECRET)));
+        CourierNFT(c.nft).reveal(SECRET);
+        vm.expectRevert(bytes("the NFT's treasury differs from TREASURY"));
+        this.stageTwo(c);
     }
 }

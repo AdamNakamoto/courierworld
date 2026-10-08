@@ -103,7 +103,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 
 ```bash
-cd contracts && forge test                                             # 88 tests
+cd contracts && forge test                                             # 95 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest" --fork-url robinhood   # real pools; the real stage 2
 ```
 

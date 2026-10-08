@@ -83,8 +83,7 @@ abstract contract CourierDeployer is Script {
         uint256 blockTimeMs,
         Couriers memory c
     ) internal returns (Game memory g) {
-        // The renderer to link and give up is the one the NFT actually uses, the same one freezeRenderer locks.
-        require(address(CourierNFT(c.nft).renderer()) == c.renderer, "the NFT uses a different renderer");
+        _checkCouriers(deployer, treasury, c);
 
         // The hook, at an address carrying its permission flags.
         bytes memory initCode = abi.encodePacked(
@@ -124,6 +123,20 @@ abstract contract CourierDeployer is Script {
         StampHook(g.hook).renounceOwnership(); // the fee recipient is final
         CourierNFT(c.nft).freezeRenderer(); // the art is final
         CourierNFT(c.nft).renounceOwnership();
+    }
+
+    /// @dev Everything stage 2 relies on, checked before it deploys anything, so it can't stop half-way.
+    function _checkCouriers(address deployer, address treasury, Couriers memory c) internal view {
+        CourierNFT nft = CourierNFT(c.nft);
+        CourierRenderer renderer = CourierRenderer(c.renderer);
+        // The renderer to link and give up is the one the NFT actually uses, the same one freezeRenderer locks.
+        require(address(nft.renderer()) == c.renderer, "the NFT uses a different renderer");
+        require(c.renderer.code.length > 0 && address(renderer.nft()) == c.nft, "the renderer isn't this collection's");
+        require(renderer.owner() == deployer && address(renderer.office()) == address(0), "the renderer is already set up");
+        require(nft.owner() == deployer && nft.seed() != 0, "the couriers aren't revealed by this wallet");
+        require(nft.game() == address(0) && !nft.rendererFrozen(), "the couriers are already linked or frozen");
+        // One treasury for the whole game: mint money, royalties, office sales and spending.
+        require(nft.treasury() == treasury, "the NFT's treasury differs from TREASURY");
     }
 
     /// @dev Dev chains only: the deployer mints `each` couriers for every player, hands them over, and reveals.
@@ -170,7 +183,10 @@ abstract contract CourierDeployer is Script {
     function _log(Couriers memory c, Game memory g) internal view {
         console.log("CourierNFT", c.nft);
         console.log("Renderer", c.renderer);
+        console.log("Treasury (NFT)", CourierNFT(c.nft).treasury());
         if (g.hook == address(0)) return;
+        console.log("Treasury (PostOffice)", PostOffice(g.office).treasury());
+        console.log("Fee recipient", StampHook(g.hook).feeRecipient());
         console.log("StampHook", g.hook);
         console.log("Router", StampHook(g.hook).router());
         console.log("EthRouter", StampHook(g.hook).ethRouter());

@@ -23,8 +23,9 @@ Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** poo
   so `openPool` always works) and adds the launch allocation as single-sided $STAMP liquidity, owned by the hook, which has no
   function to remove it. The hook rejects other pools that use it and outside liquidity in its pool
   (`beforeInitialize`/`beforeAddLiquidity` revert for any caller but the hook). LP fee is 0. The deploy
-  renounces the hook right after `openPool` (`renounceOwnership` refuses before the launch), so `feeRecipient`
-  is final.
+  renounces the hook right after `openPool` (`renounceOwnership` refuses before the launch). After that only the
+  fee recipient itself can point the fees to a new address (`setFeeRecipient`), for example if IMD's issuer
+  blocks it; nobody else can redirect them.
 - **The fee:** 4% of the IMD side of every swap in the hook's pool, rounded up, through any router, both
   directions, exact-in and exact-out, all of it to the protocol. It is taken through the swap's return deltas
   (specified side in `beforeSwap`, unspecified side in `afterSwap`), held as ERC-6909 IMD claims in the
@@ -50,11 +51,15 @@ Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** poo
   is over the owner calls `reveal(secret)`, which ends the sale for good and mixes the secret with
   `blockhash(block.number - 1)`. The ride sets delivery power. A courier on duty is locked (`setLocked`, callable
   only by the one-shot `game`) and can't be transferred. Ownership moves in two steps, and `renounceOwnership`
-  only works once the couriers are revealed, linked to the game and their art frozen. `setTreasury` moves the
-  royalty receiver along with mint payments.
+  only works once the couriers are revealed, linked to the game and their art frozen. `setGame` only takes a
+  post office whose `couriers()` is this collection; `freezeRenderer` only freezes a deployed renderer.
+  `setTreasury` moves the royalty receiver along with mint payments when royalties went to the treasury, and
+  leaves a receiver set elsewhere with `setRoyalty` alone.
 - **Art:** `CourierRenderer` / `CourierSVG` / `CourierTraits` build `tokenURI` on-chain (view-only). The NFT owner
   can swap the renderer until `freezeRenderer()`, which the game deploy calls; the game deploy also links and
-  renounces the renderer the NFT actually uses (it reads it from the NFT and refuses a different address).
+  renounces the renderer the NFT actually uses. Before deploying anything it checks the couriers are revealed,
+  unlinked and unfrozen, the renderer belongs to this collection and the deployer and has no office, and the
+  NFT's treasury is the game's treasury.
 
 ## 2. Scope
 
@@ -89,7 +94,8 @@ forge test --match-contract "StampHookForkTest|LaunchStagesForkTest" --fork-url 
    PoolManager unlocked by someone else) skips it, and no trader pays more than 1 wei above 4%.
 2. **Fee solvency:** the hook's ERC-6909 IMD claims are never less than `pendingProtocolFees[IMD]`;
    `collectProtocolFees` sends exactly that to `feeRecipient` and nothing else, and works whether or not the
-   PoolManager is already unlocked.
+   PoolManager is already unlocked. Only the owner (before the renounce) or the fee recipient itself can change
+   `feeRecipient`.
 3. **Locked liquidity:** nobody can remove the launch liquidity, add other liquidity to the pool, open another
    pool on this hook, or call `openPool` twice; a donation of $STAMP to the hook before the launch can't block
    `openPool`, and every start price and allocation the constructor accepts opens.
@@ -104,14 +110,14 @@ forge test --match-contract "StampHookForkTest|LaunchStagesForkTest" --fork-url 
 7. **Routers:** they only move the caller's tokens; deadlines and minimum outputs hold; the ETH router returns
    unused ETH and IMD; permit front-running can't make a sell fail; sells stop at the launch price.
 8. **No owner after launch:** once the game deploy has run, no contract has an owner, nothing can give one
-   back, and no setting can change. Before that, no owner, at any point, can move a player's $STAMP, NFTs or
+   back, and no setting can change, except that the fee recipient can move its own fees to a new address. Before that, no owner, at any point, can move a player's $STAMP, NFTs or
    IMD, change the fee, or hold player money (mint and office payments go straight to the treasury).
 
 ## 4. Admin powers, and when they end
 
 - `StampToken`: one-shot `setMinter`, then renounced by the game deploy.
 - `StampHook` (two-step transfer): `openPool` once and `setFeeRecipient`, until `renounceOwnership` right after
-  `openPool` in the game deploy.
+  `openPool` in the game deploy. The fee recipient can always call `setFeeRecipient` for itself.
 - `PostOffice`: none, ever.
 - `CourierRenderer`: one-shot `setOffice`, then renounced by the game deploy.
 - `CourierNFT` (two-step transfer), from stage 1 until the game deploy: open/close the sale (never after the
@@ -135,6 +141,11 @@ diluted market cap for 21M $STAMP, converted to IMD at deploy time from the IMD/
   else.
 - A sell through another router can walk the pool price past the launch price into the empty range; `price()`
   and `marketCap()` report the launch price there, which is where the next trade fills.
+- **IMD's issuer:** IMD on Robinhood Chain has an owner (a single wallet) that can block addresses
+  (`setBlocked`), switch transfers off, and configure Uniswap v4 handling (`setV4Config`). Courier can't limit
+  that. A blocked user can't sell through our routers; a blocked fee recipient can't receive fees, so it moves
+  them with `setFeeRecipient` (`test_Fork_BlockedFeeRecipientMovesItsFees` replays it with IMD's real owner).
+  If IMD transfers were switched off, every swap in the pool would stop until they're back on.
 - `Trade` logs the user reported by our routers, or `tx.origin` for any other router.
 - The fee rounds up, so a 1-wei exact-in buy through another router pays its 1 wei as the fee and receives
   nothing (within the stated tolerance of 1 wei over 4%).
@@ -184,4 +195,14 @@ two stages. 86 tests in all.
 | 3 | Info: `setTreasury` left royalties on the old treasury | `setTreasury` moves the default royalty receiver too, keeping the rate. `test_SetTreasuryMovesRoyaltiesToo`. |
 | 4 | Info: the NFT could renounce without freezing its art | `renounceOwnership` also requires `rendererFrozen`. `test_RenounceOnlyOnceRevealedLinkedAndFrozen`. |
 
-88 tests, plus 2 against a Robinhood Chain fork (`--match-contract "StampHookForkTest|LaunchStagesForkTest"`).
+## 8. Resolved: IMD Swarm final check 19b34b9b (on commit ca016a4)
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 1 | Low: `freezeRenderer` accepted an empty or unusable renderer | It reverts `NoRenderer` unless a contract is set, and stage 2 checks before deploying anything that the renderer belongs to this collection and the deployer and has no office. `test_FreezeNeedsARenderer`; the fixtures attach a renderer as stage 1 does. |
+| 2 | Low: `setTreasury` overwrote a royalty receiver chosen with `setRoyalty` | It moves royalties only when they went to the old treasury. `test_SetTreasuryKeepsADeliberateRoyaltyReceiver`, `test_SetTreasuryMovesRoyaltiesToo`. |
+| 3 | Low: IMD's issuer can block the fee recipient, stranding every fee after the renounce | The fee recipient can move its own fees to a new address; nobody else can. Documented in section 5. `test_FeeRecipientCanMoveItsOwnFees`, and on a fork with IMD's real owner `test_Fork_BlockedFeeRecipientMovesItsFees`. |
+| 4 | Info: stage 2 never compared its treasury with the NFT's | Stage 2 requires them equal, and logs both and the fee recipient. `test_Fork_StageTwoRefusesADifferentTreasury`. |
+| 5 | Info: the one-shot `setGame` took any address | It reverts `NotThisGame` unless the address is a contract whose `couriers()` is this collection. `test_SetGameOnlyTakesThisCollectionsPostOffice`. |
+
+95 tests, plus 4 against a Robinhood Chain fork (`--match-contract "StampHookForkTest|LaunchStagesForkTest"`).

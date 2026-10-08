@@ -476,7 +476,7 @@ abstract contract StampHookTest is Test {
         assertEq(hook.owner(), alice);
     }
 
-    function test_RenounceMakesTheFeeRecipientFinal() public {
+    function test_RenounceEndsTheOwnersPowers() public {
         vm.expectRevert(StampHook.NotOwner.selector);
         hook.renounceOwnership();
         vm.prank(owner);
@@ -495,6 +495,32 @@ abstract contract StampHookTest is Test {
         _extSwap(alice, true, -1_000e18);
         hook.collectProtocolFees(address(imd));
         assertEq(imd.balanceOf(feeRecipient), 40e18);
+    }
+
+    /// Final check 19b34b9b finding 3: after the renounce, only the fee recipient can move its own fees (say, if
+    /// IMD's issuer blocks its address); nobody else can redirect them.
+    function test_FeeRecipientCanMoveItsOwnFees() public {
+        vm.prank(owner);
+        hook.renounceOwnership();
+        address next = makeAddr("next");
+        vm.prank(owner);
+        vm.expectRevert(StampHook.NotOwner.selector);
+        hook.setFeeRecipient(owner);
+        vm.prank(alice);
+        vm.expectRevert(StampHook.NotOwner.selector);
+        hook.setFeeRecipient(alice);
+
+        vm.prank(feeRecipient);
+        hook.setFeeRecipient(next);
+        assertEq(hook.feeRecipient(), next);
+        _extSwap(alice, true, -1_000e18);
+        hook.collectProtocolFees(address(imd));
+        assertEq(imd.balanceOf(next), 40e18);
+
+        // The old recipient has no say any more.
+        vm.prank(feeRecipient);
+        vm.expectRevert(StampHook.NotOwner.selector);
+        hook.setFeeRecipient(feeRecipient);
     }
 
     function test_CannotRenounceBeforeTheLaunch() public {

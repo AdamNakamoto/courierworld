@@ -348,7 +348,11 @@ contract StampHook is IHooks, IUnlockCallback {
 
     // ---------------------------------------------------------------- Admin
 
-    function setFeeRecipient(address feeRecipient_) external onlyOwner {
+    /// @notice The owner (until renounced) or the fee recipient itself can point the fees somewhere new. After the
+    ///         renounce only the recipient can move its own fees, for example if a token's issuer blocks the
+    ///         current address; nobody else can redirect them.
+    function setFeeRecipient(address feeRecipient_) external {
+        if (msg.sender != owner && msg.sender != feeRecipient) revert NotOwner();
         if (feeRecipient_ == address(0)) revert ZeroAddress();
         feeRecipient = feeRecipient_;
         emit FeeRecipientUpdated(feeRecipient_);

@@ -11,6 +11,10 @@ interface ICourierRenderer {
     function tokenURI(uint256 tokenId) external view returns (string memory);
 }
 
+interface ICourierGame {
+    function couriers() external view returns (address);
+}
+
 /// @title CourierNFT
 /// @notice 3,333 couriers. Traits come from keccak256(abi.encode(seed, id)); the
 ///         contract only reads the ride (it sets delivery power in the game), the
@@ -57,6 +61,8 @@ contract CourierNFT is ERC721, ERC2981, Ownable2Step {
     error CourierOnDuty(uint256 tokenId);
     error RendererIsFrozen();
     error NotFinished();
+    error NoRenderer();
+    error NotThisGame();
 
     constructor(address owner_, address treasury_, uint256 price_, bytes32 seedCommit_)
         ERC721("Courier", "COURIER")
@@ -131,10 +137,12 @@ contract CourierNFT is ERC721, ERC2981, Ownable2Step {
 
     // ---------------------------------------------------------------- game hooks
 
-    /// @notice One-shot: the post office contract that may lock couriers on duty.
+    /// @notice One-shot: the post office contract that may lock couriers on duty. It must be a contract built for
+    ///         this collection, so a mistaken address can't take the only slot.
     function setGame(address game_) external onlyOwner {
         if (game != address(0)) revert GameAlreadySet();
         if (game_ == address(0)) revert ZeroAddress();
+        if (game_.code.length == 0 || ICourierGame(game_).couriers() != address(this)) revert NotThisGame();
         game = game_;
         emit GameSet(game_);
     }
@@ -176,8 +184,10 @@ contract CourierNFT is ERC721, ERC2981, Ownable2Step {
         super.renounceOwnership();
     }
 
-    /// @notice Lock the on-chain renderer forever: the art can never be changed again.
+    /// @notice Lock the on-chain renderer forever: the art can never be changed again. Only a real renderer can be
+    ///         frozen, so the collection can't end up "final" with no art.
     function freezeRenderer() external onlyOwner {
+        if (address(renderer).code.length == 0) revert NoRenderer();
         rendererFrozen = true;
         emit RendererFrozen();
     }
@@ -190,12 +200,13 @@ contract CourierNFT is ERC721, ERC2981, Ownable2Step {
         unrevealedURI = uri;
     }
 
-    /// @notice Mint payments and marketplace royalties both follow the treasury (royalty rate unchanged).
+    /// @notice Moves mint payments, and royalties too while they go to the treasury (rate unchanged). Royalties
+    ///         pointed elsewhere with setRoyalty stay where they are.
     function setTreasury(address treasury_) external onlyOwner {
         if (treasury_ == address(0)) revert ZeroAddress();
+        (address receiver, uint256 bps) = royaltyInfo(0, _feeDenominator());
+        if (receiver == treasury) _setDefaultRoyalty(treasury_, uint96(bps));
         treasury = treasury_;
-        (, uint256 bps) = royaltyInfo(0, _feeDenominator());
-        _setDefaultRoyalty(treasury_, uint96(bps));
     }
 
     function setRoyalty(address receiver, uint96 bps) external onlyOwner {

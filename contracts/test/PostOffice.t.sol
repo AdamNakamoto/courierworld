@@ -3,8 +3,10 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {StampToken} from "../src/StampToken.sol";
-import {CourierNFT} from "../src/CourierNFT.sol";
+import {CourierNFT, ICourierRenderer} from "../src/CourierNFT.sol";
 import {PostOffice} from "../src/PostOffice.sol";
+import {CourierSVG} from "../src/CourierSVG.sol";
+import {CourierRenderer, ICourierSeed} from "../src/CourierRenderer.sol";
 
 abstract contract CourierFixture is Test {
     StampToken stamp;
@@ -24,6 +26,8 @@ abstract contract CourierFixture is Test {
         vm.startPrank(owner);
         stamp = new StampToken(owner, address(0), 0);
         nft = new CourierNFT(owner, treasury, PRICE, keccak256(abi.encode(SECRET)));
+        // Stage 1 attaches the on-chain art right away.
+        nft.setRenderer(ICourierRenderer(address(new CourierRenderer(ICourierSeed(address(nft)), new CourierSVG(), owner))));
         nft.setSaleOpen(true);
         vm.stopPrank();
         vm.deal(alice, 10 ether);
@@ -133,6 +137,7 @@ contract CourierNFTTest is CourierFixture {
     function test_TokenURIBeforeAndAfterReveal() public {
         _mint(alice, 1);
         vm.startPrank(owner);
+        nft.setRenderer(ICourierRenderer(address(0))); // without on-chain art, the URIs are used
         nft.setUnrevealedURI("ipfs://sealed.json");
         nft.setBaseURI("ipfs://cid/");
         vm.stopPrank();
@@ -146,6 +151,53 @@ contract CourierNFTTest is CourierFixture {
         (address to, uint256 amount) = nft.royaltyInfo(1, 1 ether);
         assertEq(to, treasury);
         assertEq(amount, 0.05 ether);
+    }
+
+    /// Final check 19b34b9b finding 1: only a real renderer can be frozen, so the art can't be final and missing.
+    function test_FreezeNeedsARenderer() public {
+        vm.startPrank(owner);
+        nft.setRenderer(ICourierRenderer(address(0)));
+        vm.expectRevert(CourierNFT.NoRenderer.selector);
+        nft.freezeRenderer();
+        nft.setRenderer(ICourierRenderer(makeAddr("not a contract")));
+        vm.expectRevert(CourierNFT.NoRenderer.selector);
+        nft.freezeRenderer();
+        vm.stopPrank();
+        assertFalse(nft.rendererFrozen());
+    }
+
+    /// Final check 19b34b9b finding 5: the one game slot only takes a post office built for this collection.
+    function test_SetGameOnlyTakesThisCollectionsPostOffice() public {
+        _reveal();
+        vm.startPrank(owner);
+        vm.expectRevert(CourierNFT.NotThisGame.selector);
+        nft.setGame(makeAddr("not a contract"));
+
+        CourierNFT other = new CourierNFT(owner, treasury, PRICE, keccak256(abi.encode(SECRET)));
+        other.reveal(SECRET);
+        address otherGame = address(new PostOffice(stamp, other, 1000, 2.5e18, OFFICE, treasury, _tiers()));
+        vm.expectRevert(CourierNFT.NotThisGame.selector);
+        nft.setGame(otherGame);
+
+        address game = address(new PostOffice(stamp, nft, 1000, 2.5e18, OFFICE, treasury, _tiers()));
+        nft.setGame(game);
+        vm.stopPrank();
+        assertEq(nft.game(), game);
+    }
+
+    /// Final check 19b34b9b finding 2: royalties pointed elsewhere on purpose stay there when the treasury moves.
+    function test_SetTreasuryKeepsADeliberateRoyaltyReceiver() public {
+        address artist = makeAddr("artist");
+        address newTreasury = makeAddr("newTreasury");
+        vm.startPrank(owner);
+        nft.setRoyalty(artist, 700);
+        nft.setTreasury(newTreasury);
+        vm.stopPrank();
+        (address to, uint256 amount) = nft.royaltyInfo(1, 1 ether);
+        assertEq(to, artist);
+        assertEq(amount, 0.07 ether);
+        _mint(alice, 1);
+        assertEq(newTreasury.balance, PRICE);
     }
 
     /// Re-check ca28d248 finding 3: royalties follow the treasury, at the same rate.
@@ -182,7 +234,7 @@ contract CourierNFTTest is CourierFixture {
         nft.reveal(SECRET);
         vm.expectRevert(CourierNFT.NotFinished.selector);
         nft.renounceOwnership();
-        nft.setGame(makeAddr("game"));
+        nft.setGame(address(new PostOffice(stamp, nft, 1000, 2.5e18, OFFICE, treasury, _tiers())));
         vm.expectRevert(CourierNFT.NotFinished.selector);
         nft.renounceOwnership();
         nft.freezeRenderer();
