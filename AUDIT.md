@@ -9,7 +9,7 @@ Courier is a game on **Robinhood Chain** (chain ID 4663, an Arbitrum Orbit L2). 
 Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** pool against **IMD**
 (`0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127`).
 
-- **$STAMP** (`StampToken`): ERC-20 + EIP-2612, hard cap 21,000,000 counting every mint (burns are permanent).
+- **$STAMP** (`StampToken`, name "Courier World", symbol STAMP): ERC-20 + EIP-2612, hard cap 21,000,000 counting every mint (burns are permanent).
   The launch allocation (2,100,000) is minted to `StampHook` in the constructor; everything else is minted by
   `PostOffice` as players claim. `setMinter` is one-shot and the deploy script renounces the token's ownership
   right after it. No transfer tax, blocklist, pause or upgradeability.
@@ -17,7 +17,8 @@ Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** poo
   $STAMP/IMD pool at a start tick fixed in the constructor and adds the launch allocation as single-sided
   $STAMP liquidity above the start price, owned by the hook, which has no function to remove it. The hook
   rejects other pools that use it and outside liquidity in its pool (`beforeInitialize`/`beforeAddLiquidity`
-  revert for any caller but the hook). LP fee is 0.
+  revert for any caller but the hook). LP fee is 0. The deploy script renounces the hook's ownership right
+  after `openPool` (`renounceOwnership` refuses before the launch), so `feeRecipient` is final.
 - **The fee:** 4% of the IMD side of every swap in the hook's pool, through any router, both directions,
   exact-in and exact-out, all of it to the protocol. The fee is taken through the swap's return deltas
   (specified side in `beforeSwap`, unspecified side in `afterSwap`), held as ERC-6909 IMD claims in the
@@ -33,13 +34,17 @@ Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** poo
   `initialReward` = (21M − launch allocation) / 8.4M = 2.25 $STAMP, so allocation + emissions ≤ 21M (checked
   in the constructor; `claim` also clamps to the remaining cap). Spending $STAMP (levels, office tiers) burns
   75% and sends 25% to the treasury. A referrer gets 2.5% of what the offices they invited claim, taken from
-  the claimer's share.
+  the claimer's share. Office payments go straight to the treasury. The deploy script adds the tiers and then
+  renounces ownership, so every price, rate and tier is final.
 - **Couriers** (`CourierNFT`): 3,333 NFTs, minted for ETH (0.003, up to 10 per transaction). Traits come from
-  `keccak256(abi.encode(seed, id))`. `seedCommit` is fixed at deploy; after the sale is closed the owner calls
-  `reveal(secret)`, which mixes the secret with `blockhash(block.number - 1)`. The ride sets delivery power. A
-  courier on duty is locked (`setLocked`, callable only by the one-shot `game`) and can't be transferred.
+  `keccak256(abi.encode(seed, id))`. `seedCommit` is fixed at deploy; when the mint is over the owner calls
+  `reveal(secret)`, which ends the sale for good and mixes the secret with `blockhash(block.number - 1)`. Mint
+  payments go straight to the treasury. After the reveal and `freezeRenderer()` the owner renounces. The ride
+  sets delivery power. A courier on duty is locked (`setLocked`, callable only by the one-shot `game`) and
+  can't be transferred.
 - **Art:** `CourierRenderer` / `CourierSVG` / `CourierTraits` build `tokenURI` on-chain (view-only; the NFT
-  owner can swap the renderer until `freezeRenderer()`).
+  owner can swap the renderer until `freezeRenderer()`). The renderer's own owner is renounced at deploy, after
+  its one-shot `setOffice`.
 
 ## 2. Scope
 
@@ -87,21 +92,28 @@ forge test --match-contract StampHookForkTest --fork-url https://robinhood.drpc.
    the mint ends.
 7. **Routers:** they only move the caller's tokens; deadlines and minimum outputs hold; the ETH router returns
    unused ETH and IMD; permit front-running can't make a sell fail.
-8. **No privileged control over user funds:** the admin powers are listed in section 4; none of them can move a
-   player's $STAMP, NFTs or IMD, or change the fee.
+8. **No owner after launch:** once the deploy script has run, `StampToken`, `StampHook`, `PostOffice` and
+   `CourierRenderer` have no owner and nothing can give them one; the NFT's owner can only do what section 4
+   lists, and renounces after the reveal. No owner, at any point, can move a player's $STAMP, NFTs or IMD,
+   change the fee, or hold player money (mint and office payments go straight to the treasury).
 
-## 4. Admin powers (intended)
+## 4. Admin powers, and when they end
 
-- `StampHook` owner (two-step transfer): `openPool` once, `setFeeRecipient`.
-- `PostOffice` owner (two-step): `addTier` (tiers never shrink), `setTierUpgradeCost`, `setOfficePrice`,
-  `setLevelCostBase`, `setTreasury`, `setBurnBps` (≤ 100%), `setReferralBps` (≤ 10%), `setUpgradeCooldown`
-  (≤ 7 days), `withdrawETH` (to the treasury only).
-- `CourierNFT` owner: open/close the sale (never after the reveal), `setPrice`, `reveal`, `setRenderer` until
-  frozen, URIs, treasury, royalty, `withdraw` (to the treasury only). `setGame` is one-shot.
-- `StampToken`: owner renounced at deploy, after the one-shot `setMinter`.
+`DeployMainnet.s.sol` renounces every owner but the NFT's in the same run and logs each owner at the end.
 
-Deploy settings (`contracts/launch.env`): fee recipient, treasury and every owner
-`0x72215670C2266Bc224949A12C514a77D7fD5D566` (ownership is planned to move to a multisig after the mint);
+- `StampToken`: one-shot `setMinter`, then renounced at deploy.
+- `StampHook` (two-step transfer): `openPool` once and `setFeeRecipient`, until `renounceOwnership` right after
+  `openPool` at deploy.
+- `PostOffice` (two-step): used at deploy only, to `addTier`, then renounced. Before that it could also set
+  tier costs, the office price, the level cost base, the treasury, the burn rate (≤ 100%), the referral rate
+  (≤ 10%) and the upgrade cooldown (≤ 7 days).
+- `CourierRenderer`: one-shot `setOffice`, then renounced at deploy.
+- `CourierNFT`, during the mint only: open/close the sale (never after the reveal), `setPrice`, `reveal` (ends
+  the sale), `setRenderer` until frozen, URIs, treasury, royalty. `setGame` is one-shot. Renounced after the
+  reveal and `freezeRenderer()`.
+
+Deploy settings (`contracts/launch.env`): fee recipient, treasury and deployer
+`0x72215670C2266Bc224949A12C514a77D7fD5D566`;
 launch allocation 2,100,000 $STAMP; start price a $3,000 fully diluted market cap for 21M $STAMP, converted to
 IMD at deploy time from the IMD/ETH pool and Chainlink ETH/USD (a dry run on 2026-10-08 gave 326 IMD, 330 IMD
 after rounding to the pool's tick spacing).
@@ -122,6 +134,20 @@ after rounding to the pool's tick spacing).
 - The virtual block clock uses `block.timestamp`, which the sequencer sets within the chain's bounds.
 - The start price is read from live pools when the deploy script runs; the deployer checks the logged market
   cap before broadcasting.
-- Owner-set prices and costs (office price, level and tier costs, burn and referral rates within their bounds)
-  can change the game's economy, but never balances.
+- **Everything is final after renouncing:** the fee recipient, the treasury, the office price (in ETH), level
+  and tier costs, and the burn and referral rates can never change, even if ETH's price moves a lot or the
+  fee recipient's key is lost. The treasury must be able to receive ETH (a normal wallet or a Safe), since
+  mints and office purchases pay it directly and would fail otherwise.
 - `tokensOfOwner` loops over every token ID; it is meant for off-chain reads.
+
+
+## 6. Changes since the first audit request (commit `0d2bf19`)
+
+- `StampToken` is named "Courier World" (symbol STAMP); the EIP-712 permit domain uses the same name.
+- `StampHook.renounceOwnership()` (only after `openPool`); the deploy script renounces the hook, `PostOffice`
+  and `CourierRenderer`.
+- `PostOffice.openOffice` and `CourierNFT.mint` pay the treasury directly; `withdrawETH` and `withdraw` are gone.
+- `CourierNFT.reveal` ends the sale itself instead of requiring it to be closed first (`SaleStillOpen` is gone).
+- Tests: `test_TokenNameAndSymbol`, `test_RenounceMakesTheFeeRecipientFinal`, `test_CannotRenounceBeforeTheLaunch`,
+  `test_SalesGoStraightToTreasury`, `test_RenouncedContractsHaveNoAdmin`,
+  `test_RevealNeedsTheCommittedSecretAndEndsTheSale` (47 tests in all).

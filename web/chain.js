@@ -336,9 +336,8 @@ export async function connectChain() {
     },
     claim: () => send(C.office, "claim"),
     trade: T ? { quote, market, execute: trade } : null,
-    /// Local chain only: close the sale and reveal with the dev secret, as the owner.
+    /// Local chain only: reveal with the dev secret, as the owner (the reveal also ends the sale).
     async devReveal() {
-      await send(C.nft, "setSaleOpen", [false], undefined, accounts[0], devWallet);
       await send(C.nft, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
     },
     /// Local chain only: top up the logged-in wallet with play ETH.

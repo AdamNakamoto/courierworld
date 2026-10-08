@@ -35,7 +35,8 @@ interface IAggregatorV3 {
 
 /// @notice Deploys everything on Robinhood Chain and opens the taxed $STAMP/IMD pool:
 ///   StampHook (mined CREATE2 address) with its IMD and ETH routers, $STAMP (launch allocation minted to the hook,
-///   then token ownership renounced), Courier NFT + on-chain renderer, and the post office.
+///   then token ownership renounced), Courier NFT + on-chain renderer, and the post office. Everything but the
+///   NFT is renounced here; the NFT's owner runs the mint and reveal, then renounces.
 ///
 ///   FEE_RECIPIENT=0x... SEED_COMMIT=0x... START_MCAP=<IMD wei> \
 ///   forge script script/DeployMainnet.s.sol --rpc-url robinhood --broadcast --interactive
@@ -81,6 +82,12 @@ contract DeployMainnet is Script {
         console.log("Renderer    ", d.renderer);
         console.log("STAMP price at launch (IMD wei per STAMP)", StampHook(d.hook).price(d.stamp));
         console.log("FDV at launch (IMD wei, 21M STAMP)        ", StampHook(d.hook).marketCap(d.stamp));
+        // Every owner should be 0 except the NFT's, which renounces after the reveal.
+        console.log("Owner: StampToken ", StampToken(d.stamp).owner());
+        console.log("Owner: StampHook  ", StampHook(d.hook).owner());
+        console.log("Owner: PostOffice ", PostOffice(d.office).owner());
+        console.log("Owner: Renderer   ", CourierRenderer(d.renderer).owner());
+        console.log("Owner: CourierNFT ", CourierNFT(d.nft).owner());
 
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
         string memory json = "courier";
@@ -162,6 +169,7 @@ contract DeployMainnet is Script {
         nft.setGame(address(office));
         nft.setRenderer(ICourierRenderer(address(renderer)));
         renderer.setOffice(ICourierDuty(address(office)));
+        renderer.renounceOwnership();
 
         //             slots routes upgradeCost
         office.addTier(2, 3, 0); // Kiosk
@@ -169,9 +177,12 @@ contract DeployMainnet is Script {
         office.addTier(6, 14, 400e18); // Depot
         office.addTier(9, 24, 1_500e18); // Hub
         office.addTier(12, 40, 5_000e18); // HQ
+        office.renounceOwnership(); // prices, rates and tiers are final
 
-        // 4. Open the pool: locks the launch allocation forever.
+        // 4. Open the pool (locks the launch allocation forever), then give up the hook: the fee recipient is final.
         StampHook(d.hook).openPool(d.stamp);
+        StampHook(d.hook).renounceOwnership();
+        // The NFT keeps its owner only for the mint and reveal; renounce it after reveal + freezeRenderer.
         if (vm.envOr("OPEN_SALE", false)) nft.setSaleOpen(true);
     }
 }

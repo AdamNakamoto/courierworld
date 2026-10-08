@@ -173,6 +173,8 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         if (referrer != msg.sender) o.referrer = referrer;
         _addPower(o, TRAINEE_POWER);
         emit OfficeOpened(msg.sender, o.referrer);
+        // Paid straight to the treasury, so nothing is held here once ownership is renounced.
+        Address.sendValue(payable(treasury), msg.value);
     }
 
     /// @notice Put one of your couriers on duty. It's locked until you take it off.
@@ -340,11 +342,6 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         if (cooldown > MAX_UPGRADE_COOLDOWN) revert InvalidSetting();
         upgradeCooldown = cooldown;
         emit SettingsUpdated();
-    }
-
-    /// @notice Sends office sales to the treasury.
-    function withdrawETH() external onlyOwner {
-        Address.sendValue(payable(treasury), address(this).balance);
     }
 
     // ---------------------------------------------------------------------

@@ -47,6 +47,7 @@ contract StampHook is IHooks, IUnlockCallback {
     error ZeroAddress();
     error HookNotAllowed();
     error PartialFill();
+    error NotLaunched();
 
     event PoolOpened(address indexed token, PoolId poolId, int24 startTick);
     /// @param quoteAmount IMD paid by the buyer / received by the seller, fee included
@@ -353,6 +354,15 @@ contract StampHook is IHooks, IUnlockCallback {
         if (msg.sender != pendingOwner) revert NotOwner();
         emit OwnershipTransferred(owner, msg.sender);
         owner = msg.sender;
+        pendingOwner = address(0);
+    }
+
+    /// @notice Gives up ownership for good: the fee recipient can never change again. Only after `openPool`, so
+    ///         the launch can't be locked out by renouncing too early.
+    function renounceOwnership() external onlyOwner {
+        if (token == address(0)) revert NotLaunched();
+        emit OwnershipTransferred(owner, address(0));
+        owner = address(0);
         pendingOwner = address(0);
     }
 

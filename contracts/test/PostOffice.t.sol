@@ -47,10 +47,8 @@ contract PostOfficeTest is Test {
     }
 
     function _reveal() internal {
-        vm.startPrank(owner);
-        nft.setSaleOpen(false);
+        vm.prank(owner);
         nft.reveal(SECRET);
-        vm.stopPrank();
     }
 
     function _open(address who, address referrer) internal {
@@ -78,7 +76,8 @@ contract PostOfficeTest is Test {
         _mint(alice, 3);
         assertEq(nft.balanceOf(alice), 3);
         assertEq(nft.totalMinted(), 3);
-        assertEq(address(nft).balance, 3 * PRICE);
+        assertEq(treasury.balance, 3 * PRICE);
+        assertEq(address(nft).balance, 0);
     }
 
     function test_MintRules() public {
@@ -106,18 +105,21 @@ contract PostOfficeTest is Test {
         nft.mint{value: PRICE}(1);
     }
 
-    function test_RevealNeedsTheCommittedSecretAndAClosedSale() public {
+    function test_RevealNeedsTheCommittedSecretAndEndsTheSale() public {
         _mint(alice, 1);
         vm.startPrank(owner);
-        vm.expectRevert(CourierNFT.SaleStillOpen.selector);
-        nft.reveal(SECRET);
-        nft.setSaleOpen(false);
         vm.expectRevert(CourierNFT.BadSecret.selector);
         nft.reveal(SECRET + 1);
-        nft.reveal(SECRET);
+        nft.reveal(SECRET); // straight from an open sale: the reveal closes it
+        assertFalse(nft.saleOpen());
         vm.expectRevert(CourierNFT.AlreadyRevealed.selector);
         nft.setSaleOpen(true);
+        vm.expectRevert(CourierNFT.AlreadyRevealed.selector);
+        nft.reveal(SECRET);
         vm.stopPrank();
+        vm.prank(alice);
+        vm.expectRevert(CourierNFT.SaleClosed.selector);
+        nft.mint{value: PRICE}(1);
     }
 
     function test_RidesAreHiddenUntilReveal() public {
@@ -339,14 +341,43 @@ contract PostOfficeTest is Test {
 
     // ------------------------------------------------------------------ money out
 
-    function test_WithdrawalsGoToTreasury() public {
+    function test_SalesGoStraightToTreasury() public {
         _mint(alice, 2);
         _open(alice, address(0));
-        vm.startPrank(owner);
-        nft.withdraw();
-        office.withdrawETH();
-        vm.stopPrank();
         assertEq(treasury.balance, 2 * PRICE + OFFICE);
+        assertEq(address(nft).balance, 0);
+        assertEq(address(office).balance, 0);
+    }
+
+    function test_RenouncedContractsHaveNoAdmin() public {
+        _mint(alice, 1);
+        vm.startPrank(owner);
+        office.renounceOwnership(); // at deploy
+        nft.reveal(SECRET);
+        nft.freezeRenderer();
+        nft.renounceOwnership(); // after the reveal
+        vm.stopPrank();
+        assertEq(office.owner(), address(0));
+        assertEq(nft.owner(), address(0));
+
+        bytes memory notOwner = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", owner);
+        vm.startPrank(owner);
+        vm.expectRevert(notOwner);
+        office.setOfficePrice(0);
+        vm.expectRevert(notOwner);
+        office.setTreasury(owner);
+        vm.expectRevert(notOwner);
+        office.addTier(20, 80, 1e18);
+        vm.expectRevert(notOwner);
+        nft.setPrice(0);
+        vm.expectRevert(notOwner);
+        nft.setTreasury(owner);
+        vm.stopPrank();
+
+        // The game keeps running with nobody in charge.
+        _open(alice, address(0));
+        _earn(alice, 1 hours);
+        assertGt(stamp.balanceOf(alice), 0);
     }
 
     function testFuzz_ClaimsNeverExceedEmission(uint32 gap1, uint32 gap2) public {

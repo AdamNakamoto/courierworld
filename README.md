@@ -87,15 +87,15 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 
 | | |
 |---|---|
-| `StampHook.sol` | v4 hook and pool owner: 4% fee on the IMD side to the protocol, locked launch liquidity, one pool, one-time `openPool` |
+| `StampHook.sol` | v4 hook and pool owner: 4% fee on the IMD side to the protocol, locked launch liquidity, one pool, one-time `openPool`; ownership renounced at deploy |
 | `StampRouter.sol`, `StampEthRouter.sol` | Buy/sell with IMD (and permit sells), or with ETH through the IMD/ETH pool |
-| `StampToken.sol` | $STAMP: ERC-20 + permit, 21M cap, launch allocation to the hook, minted by the post office; ownership renounced at deploy |
+| `StampToken.sol` | $STAMP ("Courier World"): ERC-20 + permit, 21M cap, launch allocation to the hook, minted by the post office; ownership renounced at deploy |
 | `PostOffice.sol` | The game: offices, couriers on duty, levels, emissions, halvings, referrals |
-| `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner` |
+| `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner`; ownership renounced after the reveal |
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 
 ```bash
-cd contracts && forge test                                             # 44 tests
+cd contracts && forge test                                             # 47 tests
 forge test --match-contract StampHookForkTest --fork-url robinhood     # real PoolManager, IMD, IMD/ETH pool
 ```
 
@@ -113,10 +113,14 @@ IMD. A dry run against a fork uses about 23.4M gas (~0.001 ETH at today's fees).
 
 ## Launch checklist
 
+Nothing has an owner after launch: the deploy renounces the token, the pool hook, the post office and
+the renderer, and the NFT is renounced right after its reveal. Prices, rates, the fee recipient and the
+treasury are final from then on, so pick addresses that can never be lost (a Safe works well) and that
+accept ETH.
+
 1. Choose the fee recipient, treasury, launch allocation and starting price.
-2. Deploy with a secret's commit; keep the secret private.
-3. Open the mint (`setSaleOpen(true)`), close it, `reveal(secret)`.
-4. Check a few tokens on a marketplace, then `freezeRenderer()` to lock the art.
-5. Move contract ownership to a multisig.
+2. Deploy with a secret's commit; keep the secret private. The script logs every owner: all `0x0` but the NFT's.
+3. Open the mint (`setSaleOpen(true)`). When it's over, `reveal(secret)` ends the sale and reveals the couriers.
+4. Check a few tokens on a marketplace, then `freezeRenderer()` and `renounceOwnership()` on the NFT.
 
 The contracts are audited before the deploy; `AUDIT.md` is the brief for reviewers.

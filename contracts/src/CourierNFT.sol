@@ -51,7 +51,6 @@ contract CourierNFT is ERC721, ERC2981, Ownable {
     error NotRevealed();
     error AlreadyRevealed();
     error BadSecret();
-    error SaleStillOpen();
     error NotGame();
     error GameAlreadySet();
     error ZeroAddress();
@@ -79,16 +78,21 @@ contract CourierNFT is ERC721, ERC2981, Ownable {
         for (uint256 i = 0; i < quantity; i++) {
             _mint(msg.sender, ++totalMinted);
         }
+        // Paid straight to the treasury, so nothing is held here once ownership is renounced.
+        Address.sendValue(payable(treasury), msg.value);
     }
 
     // ---------------------------------------------------------------- reveal
 
-    /// @notice Close the sale for good and fix the traits. The committed secret is
+    /// @notice End the sale for good and fix the traits. The committed secret is
     ///         mixed with a recent blockhash so the owner can't pre-compute them either.
     function reveal(uint256 secret) external onlyOwner {
         if (seed != 0) revert AlreadyRevealed();
-        if (saleOpen) revert SaleStillOpen();
         if (keccak256(abi.encode(secret)) != seedCommit) revert BadSecret();
+        if (saleOpen) {
+            saleOpen = false;
+            emit SaleOpen(false);
+        }
         uint256 s = uint256(keccak256(abi.encode(secret, blockhash(block.number - 1))));
         seed = s == 0 ? 1 : s;
         emit Revealed(seed);
@@ -184,10 +188,6 @@ contract CourierNFT is ERC721, ERC2981, Ownable {
 
     function setRoyalty(address receiver, uint96 bps) external onlyOwner {
         _setDefaultRoyalty(receiver, bps);
-    }
-
-    function withdraw() external onlyOwner {
-        Address.sendValue(payable(treasury), address(this).balance);
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC2981) returns (bool) {

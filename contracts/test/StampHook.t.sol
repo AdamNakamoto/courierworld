@@ -173,19 +173,23 @@ contract StampHookTest is Test {
         hook.openPool(address(stamp));
     }
 
-    function test_DonationBeforeLaunchCannotBlockOpenPool() public {
+    /// @dev A second hook, not yet launched (a different fee recipient gives it a different address).
+    function _unlaunchedHook(address feeTo) internal returns (address h) {
         bytes memory initCode = abi.encodePacked(
             type(StampHook).creationCode,
             abi.encode(
-                pm, address(imd), owner, alice, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH,
+                pm, address(imd), owner, feeTo, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH,
                 StampHook.ImdEthPool(10_000, 100, address(0))
             )
         );
         (bytes32 salt,) = DeployLib.mineSalt(address(this), _flags(), initCode, 0);
-        address h;
         assembly {
             h := create2(0, add(initCode, 0x20), mload(initCode), salt)
         }
+    }
+
+    function test_DonationBeforeLaunchCannotBlockOpenPool() public {
+        address h = _unlaunchedHook(alice);
         StampToken s2 = new StampToken(owner, h, LAUNCH);
         vm.prank(owner);
         s2.setMinter(address(this));
@@ -308,6 +312,34 @@ contract StampHookTest is Test {
         vm.prank(alice);
         hook.acceptOwnership();
         assertEq(hook.owner(), alice);
+    }
+
+    function test_RenounceMakesTheFeeRecipientFinal() public {
+        vm.expectRevert(StampHook.NotOwner.selector);
+        hook.renounceOwnership();
+        vm.prank(owner);
+        hook.renounceOwnership();
+        assertEq(hook.owner(), address(0));
+
+        vm.startPrank(owner);
+        vm.expectRevert(StampHook.NotOwner.selector);
+        hook.setFeeRecipient(bob);
+        vm.expectRevert(StampHook.NotOwner.selector);
+        hook.transferOwnership(bob);
+        vm.stopPrank();
+        assertEq(hook.feeRecipient(), feeRecipient);
+
+        // Fees keep flowing to the same address.
+        _extSwap(alice, true, -1_000e18);
+        hook.collectProtocolFees(address(imd));
+        assertEq(imd.balanceOf(feeRecipient), 40e18);
+    }
+
+    function test_CannotRenounceBeforeTheLaunch() public {
+        StampHook h = StampHook(_unlaunchedHook(bob));
+        vm.prank(owner);
+        vm.expectRevert(StampHook.NotLaunched.selector);
+        h.renounceOwnership();
     }
 
     // ------------------------------------------------------------------ with the game
