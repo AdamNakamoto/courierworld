@@ -74,7 +74,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 
 ```bash
-cd contracts && forge test                                             # 41 tests
+cd contracts && forge test                                             # 43 tests
 forge test --match-contract StampHookForkTest --fork-url robinhood     # real PoolManager, IMD, IMD/ETH pool
 ```
 
@@ -96,5 +96,6 @@ IMD. A dry run against a fork uses about 23.4M gas (~0.001 ETH at today's fees).
 2. Deploy with a secret's commit; keep the secret private.
 3. Open the mint (`setSaleOpen(true)`), close it, `reveal(secret)`.
 4. Check a few tokens on a marketplace, then `freezeRenderer()` to lock the art.
-5. Move contract ownership to a multisig. The pool hook and the game contracts are
-   tested but have not been audited.
+5. Move contract ownership to a multisig.
+
+The contracts are audited before the deploy; `AUDIT.md` is the brief for reviewers.

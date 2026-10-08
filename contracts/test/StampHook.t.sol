@@ -166,6 +166,31 @@ contract StampHookTest is Test {
         hook.openPool(address(stamp));
     }
 
+    function test_DonationBeforeLaunchCannotBlockOpenPool() public {
+        bytes memory initCode = abi.encodePacked(
+            type(StampHook).creationCode,
+            abi.encode(
+                pm, address(imd), owner, alice, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH,
+                StampHook.ImdEthPool(10_000, 100, address(0))
+            )
+        );
+        (bytes32 salt,) = DeployLib.mineSalt(address(this), _flags(), initCode, 0);
+        address h;
+        assembly {
+            h := create2(0, add(initCode, 0x20), mload(initCode), salt)
+        }
+        StampToken s2 = new StampToken(owner, h, LAUNCH);
+        vm.prank(owner);
+        s2.setMinter(address(this));
+        s2.mint(h, 1); // someone sends 1 wei to the hook before the launch
+
+        vm.prank(owner);
+        StampHook(h).openPool(address(s2));
+        address dead = 0x000000000000000000000000000000000000dEaD;
+        assertEq(s2.balanceOf(h), 0);
+        assertEq(s2.balanceOf(address(pm)) + s2.balanceOf(dead), LAUNCH + 1);
+    }
+
     function test_NobodyCanAddLiquidityOrReuseTheHook() public {
         PoolKey memory k = _key();
         vm.expectRevert();

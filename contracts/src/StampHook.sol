@@ -174,9 +174,11 @@ contract StampHook is IHooks, IUnlockCallback {
     // --------------------------------------------------------------- Launch
 
     /// @notice One-time: locks the launch allocation of `token_` ($STAMP, minted to this contract) in its pool.
+    ///         $STAMP sent to this contract on top of the allocation is burned with the rounding buffer, so a
+    ///         donation can't block the launch.
     function openPool(address token_) external onlyOwner {
         if (token != address(0)) revert AlreadyLaunched();
-        if (IStampSupply(token_).balanceOf(address(this)) != launchSupply) revert BadToken();
+        if (IStampSupply(token_).balanceOf(address(this)) < launchSupply) revert BadToken();
 
         token = token_;
         bool quoteIs0 = uint160(IMD) < uint160(token_);
