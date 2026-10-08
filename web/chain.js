@@ -2,7 +2,7 @@
 // Uses web/chain.json from ./dev.sh when present, otherwise the mainnet deployment.
 import {
   createPublicClient, createWalletClient, createTestClient, http, custom, defineChain,
-  maxUint256, zeroAddress, keccak256, encodeAbiParameters, parseSignature, decodeErrorResult, parseAbi,
+  maxUint256, zeroAddress, keccak256, encodeAbiParameters, parseSignature, decodeErrorResult, parseAbi, parseEther,
   BaseError, ContractFunctionRevertedError,
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
@@ -116,10 +116,14 @@ export async function connectChain() {
     ethUsd: { address: dep.contracts.ethUsd, abi: FEED_ABI },
   } : null;
 
+  // Players log in with a browser wallet on mainnet, and on a dev chain started with ./dev.sh --wallet.
+  // Otherwise a dev chain plays as Anvil's unlocked accounts. Dev tools always act through those.
+  const browserWallet = !dep.local || !!dep.wallet;
+  const devWallet = dep.local ? createWalletClient({ chain, transport: http(dep.rpcUrl) }) : null;
   let wallet = null, account = null, accounts = [], provider = null;
-  if (dep.local) {
-    wallet = createWalletClient({ chain, transport: http(dep.rpcUrl) });
-    accounts = await pub.request({ method: "eth_accounts" });
+  if (dep.local) accounts = await pub.request({ method: "eth_accounts" });
+  if (!browserWallet) {
+    wallet = devWallet;
     let saved = null;
     try { saved = localStorage.getItem("courier:account"); } catch {}
     account = accounts.includes(saved) ? saved : accounts[2];
@@ -165,6 +169,7 @@ export async function connectChain() {
     const s = {
       now: block.timestamp, minted: Number(minted), price, saleOpen, seed, totalPower, rewardPerBlock,
       officePrice, cooldown, levelBase, tiers, account, accounts, local: dep.local, explorer: dep.explorer,
+      devAccounts: !browserWallet, browserWallet,
     };
     if (!account) return s;
     const [o, pending, stampBal, eth, allowance, mine, imd] = await Promise.all([
@@ -183,8 +188,8 @@ export async function connectChain() {
     return s;
   }
 
-  async function send(c, fn, args = [], value, from = account) {
-    const hash = await wallet.writeContract({ ...c, functionName: fn, args, value, account: from, chain });
+  async function send(c, fn, args = [], value, from = account, client = wallet) {
+    const hash = await client.writeContract({ ...c, functionName: fn, args, value, account: from, chain });
     const receipt = await pub.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error(`${fn} reverted`);
   }
@@ -283,6 +288,8 @@ export async function connectChain() {
 
   return {
     local: dep.local,
+    browserWallet,
+    chainName: chain.name,
     snapshot,
     get account() { return account; },
     setAccount(a) {
@@ -331,8 +338,13 @@ export async function connectChain() {
     trade: T ? { quote, market, execute: trade } : null,
     /// Local chain only: close the sale and reveal with the dev secret, as the owner.
     async devReveal() {
-      await send(C.nft, "setSaleOpen", [false], undefined, accounts[0]);
-      await send(C.nft, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0]);
+      await send(C.nft, "setSaleOpen", [false], undefined, accounts[0], devWallet);
+      await send(C.nft, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
+    },
+    /// Local chain only: top up the logged-in wallet with play ETH.
+    async devFund() {
+      const balance = await pub.getBalance({ address: account });
+      await test.setBalance({ address: account, value: balance + parseEther("10") });
     },
     async devWarp(seconds) {
       await test.increaseTime({ seconds });

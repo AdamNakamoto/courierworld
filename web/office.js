@@ -84,7 +84,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
 
     // ---- who's playing
     html += `<div class="who">`;
-    if (s.local) {
+    if (s.devAccounts) {
       html += `<select data-act="account">${s.accounts.map((a, i) => `<option value="${a}" ${a === s.account ? "selected" : ""}>${["Owner", "Treasury"][i] ?? `Player ${i - 1}`} · ${short(a)}</option>`).join("")}</select>`;
     } else if (!s.account) {
       html += `<button class="pbtn primary" data-act="connect">Log in with wallet</button>`;
@@ -175,6 +175,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     // ---- dev tools on the local chain
     if (s.local) {
       html += `<section class="dev"><h3>Local chain</h3><div class="mintrow">
+        ${s.browserWallet && s.account ? `<button class="pbtn" data-act="fund" ${busy ? "disabled" : ""}>+10 play ETH</button>` : ""}
         ${revealed ? "" : `<button class="pbtn" data-act="reveal" ${busy ? "disabled" : ""}>Close mint &amp; reveal</button>`}
         <button class="pbtn" data-act="warp" data-s="3600" ${busy ? "disabled" : ""}>+1 hour</button>
         <button class="pbtn" data-act="warp" data-s="86400" ${busy ? "disabled" : ""}>+1 day</button></div></section>`;
@@ -220,6 +221,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       case "qty": qty = Math.min(10, Math.max(1, qty + Number(b.dataset.d))); return draw(true);
       case "mint": return run(`Minting ${qty} courier${qty > 1 ? "s" : ""}`, () => chain.mint(snap, qty));
       case "reveal": return run("Revealing the collection", () => chain.devReveal());
+      case "fund": return run("Adding 10 play ETH", () => chain.devFund());
       case "warp": return run(`Skipping ${duration(Number(b.dataset.s))}`, () => chain.devWarp(Number(b.dataset.s)));
     }
   });

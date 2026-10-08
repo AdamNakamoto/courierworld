@@ -36,6 +36,17 @@ section works with play money. It buys and sells $STAMP with ETH or IMD, quotes 
 Uniswap's v4 quoter (fees and price impact included), and protects each trade with a
 slippage minimum. Sells use a permit signature in place of a separate approval.
 
+```bash
+./dev.sh --fork --wallet
+```
+
+Launch rehearsal with your own browser wallet (MetaMask or another extension): you log in exactly
+as on mainnet, and the page asks the wallet to add the "Courier practice" network (chain ID 466399,
+RPC `http://127.0.0.1:8600`). That ID belongs to no public chain and is never Robinhood Chain's,
+so nothing signed on the practice chain can be replayed on a real one. In the post office panel,
+**+10 play ETH** funds your wallet; the reveal and time skips act as the deployer. After
+restarting `dev.sh`, MetaMask may show a nonce error: Settings > Advanced > Clear activity tab data.
+
 ## On Robinhood Chain
 
 Without `web/chain.json` the site loads `web/deployments/robinhood.json`. Players log in

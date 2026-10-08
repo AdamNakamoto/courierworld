@@ -356,7 +356,7 @@ $("begin").addEventListener("click", async () => {
   if (mode !== "title") return;
   // On a real chain you log in with your wallet before playing.
   const chain = await chainReady;
-  if (chain && !chain.local && !chain.account) {
+  if (chain && chain.browserWallet && !chain.account) {
     try {
       if (!(await chain.login())) return;
     } catch (e) {
@@ -500,8 +500,10 @@ let office = null;
 const chainReady = connectChain()
   .then(async (chain) => {
     if (!chain) return null;
-    if (!chain.local) {
+    if (chain.browserWallet) {
       $("begin").textContent = "Log in & play";
+      $("wallets").querySelector(".note").textContent =
+        `Pick a wallet to play. Courier runs on ${chain.chainName}; your wallet will be asked to switch to it.`;
       await chain.resume().catch(() => false);
       if (chain.account) $("begin").textContent = "Begin";
       chain.onAccountChange(() => office?.refresh());

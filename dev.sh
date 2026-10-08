@@ -2,16 +2,27 @@
 # Local dev: fresh Anvil chain, deploy the courier contracts, write chain.json, serve
 # the game. Anvil's dev accounts are unlocked, so the page plays as any of them.
 #
-#   ./dev.sh          # empty chain, game contracts only (no $STAMP pool)
-#   ./dev.sh --fork   # fork of Robinhood Chain: the full mainnet deployment against the real
-#                     # PoolManager, IMD and IMD/ETH pool, so the trade panel works (no real money)
+#   ./dev.sh                   # empty chain, game contracts only (no $STAMP pool)
+#   ./dev.sh --fork            # fork of Robinhood Chain: the full mainnet deployment against the real
+#                              # PoolManager, IMD and IMD/ETH pool, so the trade panel works (no real money)
+#   ./dev.sh --fork --wallet   # same, but you log in with your own browser wallet (MetaMask...) as on
+#                              # mainnet. The chain gets its own ID, so nothing signed there works elsewhere.
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.foundry/bin:$PATH"
 
-FORK=0
-[ "${1:-}" = "--fork" ] && FORK=1
+FORK=0 WALLET=0
+for a in "$@"; do
+  case "$a" in
+    --fork) FORK=1 ;;
+    --wallet) WALLET=1 ;;
+    *) echo "Unknown option $a (use --fork and/or --wallet)" >&2; exit 1 ;;
+  esac
+done
 FORK_URL="${FORK_URL:-https://robinhood.drpc.org}"
+# Chain ID for --wallet: unused by any public chain and never Robinhood Chain's 4663, so a transaction
+# or permit signed on the practice chain can't be replayed on a real one.
+PRACTICE_CHAIN_ID="${PRACTICE_CHAIN_ID:-466399}"
 RPC_PORT="${RPC_PORT:-8600}"
 WEB_PORT="${WEB_PORT:-5792}"
 RPC="http://127.0.0.1:$RPC_PORT"
@@ -23,11 +34,10 @@ for port in "$RPC_PORT" "$WEB_PORT"; do
   fi
 done
 
-if [ "$FORK" = 1 ]; then
-  anvil --silent --port "$RPC_PORT" --block-time 1 --fork-url "$FORK_URL" &
-else
-  anvil --silent --port "$RPC_PORT" --block-time 1 &
-fi
+ANVIL_ARGS=(--silent --port "$RPC_PORT" --block-time 1)
+[ "$FORK" = 1 ] && ANVIL_ARGS+=(--fork-url "$FORK_URL")
+[ "$WALLET" = 1 ] && ANVIL_ARGS+=(--chain-id "$PRACTICE_CHAIN_ID")
+anvil "${ANVIL_ARGS[@]}" &
 ANVIL_PID=$!
 trap 'kill $ANVIL_PID 2>/dev/null' EXIT INT TERM
 until cast chain-id --rpc-url "$RPC" >/dev/null 2>&1; do sleep 0.2; done
@@ -73,13 +83,27 @@ if [ "$FORK" = 1 ]; then
   ABIS=$(echo "$ABIS" | jq --argjson hook "$(abi StampHook)" --argjson router "$(abi StampRouter)" --argjson ethRouter "$(abi StampEthRouter)" \
     '. + {hook: $hook, router: $router, ethRouter: $ethRouter}')
 fi
+if [ "$WALLET" = 1 ]; then
+  NAME="Courier practice"
+  [ "$FORK" = 1 ] && NAME="Courier practice (Robinhood fork)"
+fi
+CHAIN_ID=$(cast chain-id --rpc-url "$RPC")
 
-jq -n --arg rpc "$RPC" --argjson chainId "$(cast chain-id --rpc-url "$RPC")" --arg name "$NAME" --arg secret "$SECRET" \
-  --argjson contracts "$CONTRACTS" --argjson abis "$ABIS" \
-  '{local: true, chainId: $chainId, chainName: $name, rpcUrl: $rpc, devSecret: $secret, contracts: $contracts, abis: $abis}' \
+jq -n --arg rpc "$RPC" --argjson chainId "$CHAIN_ID" --arg name "$NAME" --arg secret "$SECRET" \
+  --argjson wallet "$([ "$WALLET" = 1 ] && echo true || echo false)" --argjson contracts "$CONTRACTS" --argjson abis "$ABIS" \
+  '{local: true, wallet: $wallet, chainId: $chainId, chainName: $name, rpcUrl: $rpc, devSecret: $secret,
+    contracts: $contracts, abis: $abis}' \
   > web/chain.json
 
 echo "PostOffice $OFFICE"
-echo "Chain      $RPC ($NAME)"
+echo "Chain      $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Game       http://localhost:$WEB_PORT"
+if [ "$WALLET" = 1 ]; then
+  echo
+  echo "Log in with your browser wallet; the page asks it to add \"$NAME\"."
+  echo "In the post office panel, \"+10 play ETH\" funds your wallet, and the reveal and time skips act as the owner."
+  echo "Transactions and signatures on this chain only work here, never on Robinhood Chain."
+  echo "After restarting dev.sh, if MetaMask shows a nonce error: Settings > Advanced > Clear activity tab data."
+  echo
+fi
 python3 -m http.server "$WEB_PORT" --bind 127.0.0.1 --directory web
