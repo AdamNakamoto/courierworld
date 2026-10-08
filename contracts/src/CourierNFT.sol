@@ -168,10 +168,11 @@ contract CourierNFT is ERC721, ERC2981, Ownable2Step {
         emit RendererSet(address(renderer_));
     }
 
-    /// @notice Give up ownership for good. Only once the couriers are revealed and linked to the game, so
-    ///         renouncing early can never leave them unrevealed or unable to go on duty.
+    /// @notice Give up ownership for good. Only once the couriers are revealed, linked to the game and their art
+    ///         frozen, so renouncing early can never leave them unrevealed, unable to go on duty, or with a
+    ///         `rendererFrozen` flag that says the art could still change.
     function renounceOwnership() public override onlyOwner {
-        if (seed == 0 || game == address(0)) revert NotFinished();
+        if (seed == 0 || game == address(0) || !rendererFrozen) revert NotFinished();
         super.renounceOwnership();
     }
 
@@ -189,9 +190,12 @@ contract CourierNFT is ERC721, ERC2981, Ownable2Step {
         unrevealedURI = uri;
     }
 
+    /// @notice Mint payments and marketplace royalties both follow the treasury (royalty rate unchanged).
     function setTreasury(address treasury_) external onlyOwner {
         if (treasury_ == address(0)) revert ZeroAddress();
         treasury = treasury_;
+        (, uint256 bps) = royaltyInfo(0, _feeDenominator());
+        _setDefaultRoyalty(treasury_, uint96(bps));
     }
 
     function setRoyalty(address receiver, uint96 bps) external onlyOwner {

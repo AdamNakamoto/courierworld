@@ -83,6 +83,9 @@ abstract contract CourierDeployer is Script {
         uint256 blockTimeMs,
         Couriers memory c
     ) internal returns (Game memory g) {
+        // The renderer to link and give up is the one the NFT actually uses, the same one freezeRenderer locks.
+        require(address(CourierNFT(c.nft).renderer()) == c.renderer, "the NFT uses a different renderer");
+
         // The hook, at an address carrying its permission flags.
         bytes memory initCode = abi.encodePacked(
             type(StampHook).creationCode,
@@ -190,8 +193,8 @@ abstract contract CourierDeployer is Script {
 /// Env: FEE_RECIPIENT (the 4% trading fee, in IMD), TREASURY (default FEE_RECIPIENT), START_MCAP_USD (launch price
 /// as a fully diluted market cap for all 21M $STAMP in whole dollars, converted to IMD from the IMD/ETH pool and
 /// Chainlink ETH/USD; or START_MCAP in IMD wei), LAUNCH_STAMP (2,100,000e18), OFFICE_PRICE (0.005 ether),
-/// BLOCK_TIME_MS (1100), SALT_START (0). The couriers come from deployments/robinhood-couriers.json, or NFT and
-/// RENDERER. Run it from the wallet that deployed the couriers.
+/// BLOCK_TIME_MS (1100), SALT_START (0). The couriers come from deployments/robinhood-couriers.json, or NFT. Run it
+/// from the wallet that deployed the couriers.
 contract DeployMainnet is CourierDeployer {
     function run() external {
         address feeRecipient = vm.envAddress("FEE_RECIPIENT");
@@ -234,13 +237,10 @@ contract DeployMainnet is CourierDeployer {
         vm.writeJson(out, "./deployments/robinhood.json");
     }
 
+    /// @dev The NFT from NFT or deployments/robinhood-couriers.json; its renderer is read from the NFT itself.
     function _couriers() internal view returns (Couriers memory c) {
         c.nft = vm.envOr("NFT", address(0));
-        c.renderer = vm.envOr("RENDERER", address(0));
-        if (c.nft == address(0)) {
-            string memory json = vm.readFile("./deployments/robinhood-couriers.json");
-            c.nft = vm.parseJsonAddress(json, ".nft");
-            c.renderer = vm.parseJsonAddress(json, ".renderer");
-        }
+        if (c.nft == address(0)) c.nft = vm.parseJsonAddress(vm.readFile("./deployments/robinhood-couriers.json"), ".nft");
+        c.renderer = address(CourierNFT(c.nft).renderer());
     }
 }

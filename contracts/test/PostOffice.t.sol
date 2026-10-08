@@ -148,6 +148,20 @@ contract CourierNFTTest is CourierFixture {
         assertEq(amount, 0.05 ether);
     }
 
+    /// Re-check ca28d248 finding 3: royalties follow the treasury, at the same rate.
+    function test_SetTreasuryMovesRoyaltiesToo() public {
+        address newTreasury = makeAddr("newTreasury");
+        vm.startPrank(owner);
+        nft.setRoyalty(treasury, 300);
+        nft.setTreasury(newTreasury);
+        vm.stopPrank();
+        _mint(alice, 1);
+        assertEq(newTreasury.balance, PRICE);
+        (address to, uint256 amount) = nft.royaltyInfo(1, 1 ether);
+        assertEq(to, newTreasury);
+        assertEq(amount, 0.03 ether);
+    }
+
     /// Audit ea514609 finding 4: a mistyped transfer can't take the collection away before the reveal.
     function test_OwnershipTransferTakesTwoSteps() public {
         vm.prank(owner);
@@ -159,8 +173,9 @@ contract CourierNFTTest is CourierFixture {
         assertEq(nft.owner(), bob);
     }
 
-    /// Audit ea514609 finding 4: renouncing early would freeze the collection unrevealed or unplayable.
-    function test_RenounceOnlyOnceRevealedAndLinkedToTheGame() public {
+    /// Audit ea514609 finding 4 and re-check ca28d248 finding 4: renouncing early would leave the collection
+    /// unrevealed, unplayable, or with art that reads as changeable.
+    function test_RenounceOnlyOnceRevealedLinkedAndFrozen() public {
         vm.startPrank(owner);
         vm.expectRevert(CourierNFT.NotFinished.selector);
         nft.renounceOwnership();
@@ -168,6 +183,9 @@ contract CourierNFTTest is CourierFixture {
         vm.expectRevert(CourierNFT.NotFinished.selector);
         nft.renounceOwnership();
         nft.setGame(makeAddr("game"));
+        vm.expectRevert(CourierNFT.NotFinished.selector);
+        nft.renounceOwnership();
+        nft.freezeRenderer();
         nft.renounceOwnership();
         vm.stopPrank();
         assertEq(nft.owner(), address(0));
@@ -241,7 +259,7 @@ contract PostOfficeTest is CourierFixture {
     }
 
     /// Audit ea514609 findings 1 and 9: nobody owns the post office, so no price, rate or cost can ever change.
-    function test_NoOwnerAndFixedSettings() public {
+    function test_NoOwnerAndFixedSettings() public view {
         (bool hasOwner,) = address(office).staticcall(abi.encodeWithSignature("owner()"));
         assertFalse(hasOwner);
         assertEq(office.officePrice(), OFFICE);

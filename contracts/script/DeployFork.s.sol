@@ -9,7 +9,7 @@ import {CourierDeployer} from "./DeployMainnet.s.sol";
 ///
 ///   runAll()       couriers, PLAYERS each get COURIERS_EACH (6) couriers, reveal, then the game
 ///   runCouriers()  stage 1 only, with the mint open
-///   runGame()      reveal NFT/RENDERER with SECRET, then the game
+///   runGame()      reveal NFT with SECRET, then the game
 ///
 ///   FEE_RECIPIENT=0x... TREASURY=0x... SECRET=<n> PLAYERS=0x..,0x.. \
 ///   forge script script/DeployFork.s.sol --sig "runAll()" --rpc-url <fork> --unlocked --sender <dev account> --broadcast
@@ -33,7 +33,8 @@ contract DeployFork is CourierDeployer {
     }
 
     function runGame() external {
-        Couriers memory c = Couriers(vm.envAddress("NFT"), vm.envAddress("RENDERER"));
+        address nft = vm.envAddress("NFT");
+        Couriers memory c = Couriers(nft, address(CourierNFT(nft).renderer()));
         uint256 startMcap = _startMcap();
         vm.startBroadcast();
         if (CourierNFT(c.nft).seed() == 0) CourierNFT(c.nft).reveal(_secret());

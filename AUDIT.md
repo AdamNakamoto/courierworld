@@ -19,8 +19,8 @@ Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** poo
   constructor; everything else is minted by `PostOffice` as players claim. `setMinter` is one-shot and the
   deploy renounces the token's ownership right after it. No transfer tax, blocklist, pause or upgradeability.
 - **The pool** (`StampHook`): the hook is also the pool's owner. `openPool` (owner, once) initializes the
-  $STAMP/IMD pool at a start tick fixed in the constructor (|tick| ≤ 400,000, launch ≤ 21M, so `openPool` always
-  works) and adds the launch allocation as single-sided $STAMP liquidity, owned by the hook, which has no
+  $STAMP/IMD pool at a start tick fixed in the constructor (|tick| ≤ 400,000, launch between 1 and 21M $STAMP,
+  so `openPool` always works) and adds the launch allocation as single-sided $STAMP liquidity, owned by the hook, which has no
   function to remove it. The hook rejects other pools that use it and outside liquidity in its pool
   (`beforeInitialize`/`beforeAddLiquidity` revert for any caller but the hook). LP fee is 0. The deploy
   renounces the hook right after `openPool` (`renounceOwnership` refuses before the launch), so `feeRecipient`
@@ -50,10 +50,11 @@ Courier NFTs on duty and earn **$STAMP**, which trades in one **Uniswap v4** poo
   is over the owner calls `reveal(secret)`, which ends the sale for good and mixes the secret with
   `blockhash(block.number - 1)`. The ride sets delivery power. A courier on duty is locked (`setLocked`, callable
   only by the one-shot `game`) and can't be transferred. Ownership moves in two steps, and `renounceOwnership`
-  only works once the couriers are revealed and linked to the game.
+  only works once the couriers are revealed, linked to the game and their art frozen. `setTreasury` moves the
+  royalty receiver along with mint payments.
 - **Art:** `CourierRenderer` / `CourierSVG` / `CourierTraits` build `tokenURI` on-chain (view-only). The NFT owner
-  can swap the renderer until `freezeRenderer()`, which the game deploy calls; the renderer's own owner is
-  renounced there too, after its one-shot `setOffice`.
+  can swap the renderer until `freezeRenderer()`, which the game deploy calls; the game deploy also links and
+  renounces the renderer the NFT actually uses (it reads it from the NFT and refuses a different address).
 
 ## 2. Scope
 
@@ -76,7 +77,7 @@ and `contracts/test/StampHook.fork.t.sol` (live Robinhood Chain PoolManager, IMD
 
 ```bash
 cd contracts && git submodule update --init --recursive && forge test
-forge test --match-contract StampHookForkTest --fork-url https://robinhood.drpc.org
+forge test --match-contract "StampHookForkTest|LaunchStagesForkTest" --fork-url https://robinhood.drpc.org
 ./script/deploy-mainnet.sh rehearse   # both launch stages against a fork, with the real settings
 ```
 
@@ -91,7 +92,7 @@ forge test --match-contract StampHookForkTest --fork-url https://robinhood.drpc.
    PoolManager is already unlocked.
 3. **Locked liquidity:** nobody can remove the launch liquidity, add other liquidity to the pool, open another
    pool on this hook, or call `openPool` twice; a donation of $STAMP to the hook before the launch can't block
-   `openPool`, and every start price the constructor accepts opens.
+   `openPool`, and every start price and allocation the constructor accepts opens.
 4. **Supply:** $STAMP's `totalMinted` can never exceed 21M; only `PostOffice` mints; nobody can change the
    minter, balances or transfers after deployment.
 5. **Reward accounting:** total minted ≤ `totalEmitted` ≤ the emission schedule; an office earns only for the
@@ -99,7 +100,7 @@ forge test --match-contract StampHookForkTest --fork-url https://robinhood.drpc.
    nobody earns for time before their courier went on duty; halvings are applied across era boundaries.
 6. **Couriers:** a courier on duty can't be transferred; only its owner can put it on duty and only that office
    can take it off; levels stay with the NFT; nobody can learn or influence a token's traits before the mint
-   ends; the collection can't be left unrevealed or unlinked by an ownership mistake.
+   ends; the collection can't be left unrevealed, unlinked or with unfrozen art by an ownership mistake.
 7. **Routers:** they only move the caller's tokens; deadlines and minimum outputs hold; the ETH router returns
    unused ETH and IMD; permit front-running can't make a sell fail; sells stop at the launch price.
 8. **No owner after launch:** once the game deploy has run, no contract has an owner, nothing can give one
@@ -114,13 +115,14 @@ forge test --match-contract StampHookForkTest --fork-url https://robinhood.drpc.
 - `PostOffice`: none, ever.
 - `CourierRenderer`: one-shot `setOffice`, then renounced by the game deploy.
 - `CourierNFT` (two-step transfer), from stage 1 until the game deploy: open/close the sale (never after the
-  reveal), `setPrice`, `reveal` (ends the sale), `setRenderer` until frozen, URIs, treasury, royalty, the
-  one-shot `setGame`. The game deploy freezes the renderer and renounces.
+  reveal), `setPrice`, `reveal` (ends the sale), `setRenderer` until frozen, URIs, treasury (with royalties),
+  royalty, the one-shot `setGame`. The game deploy freezes the renderer and renounces; renouncing earlier
+  reverts.
 
 Deploy settings (`contracts/launch.env`): fee recipient, treasury and deployer
 `0x72215670C2266Bc224949A12C514a77D7fD5D566`; launch allocation 2,100,000 $STAMP; start price a $3,000 fully
 diluted market cap for 21M $STAMP, converted to IMD at deploy time from the IMD/ETH pool and Chainlink ETH/USD
-(a rehearsal on 2026-10-09 gave 359 IMD, 365 IMD after rounding to the pool's tick spacing).
+(a rehearsal on 2026-10-09 gave 382 IMD, 388 IMD after rounding to the pool's tick spacing).
 
 ## 5. Known and accepted
 
@@ -134,6 +136,8 @@ diluted market cap for 21M $STAMP, converted to IMD at deploy time from the IMD/
 - A sell through another router can walk the pool price past the launch price into the empty range; `price()`
   and `marketCap()` report the launch price there, which is where the next trade fills.
 - `Trade` logs the user reported by our routers, or `tx.origin` for any other router.
+- The fee rounds up, so a 1-wei exact-in buy through another router pays its 1 wei as the fee and receives
+  nothing (within the stated tolerance of 1 wei over 4%).
 - **Reveal timing:** the owner, who knows the secret, chooses when to call `reveal`. On an Arbitrum chain
   `blockhash(block.number - 1)` is a pseudo-random value, not a secure source, so the owner could wait for a
   seed they like. Minters can't predict traits (the secret is private until the reveal); the owner is trusted
@@ -170,3 +174,14 @@ Also changed since that commit: the token's name ("Courier World", same in the p
 renounced at launch (`StampHook.renounceOwnership`, the deploy scripts); mint and office payments go straight to
 the treasury (`withdraw` and `withdrawETH` are gone); `reveal` ends the sale itself; the deploy is split into the
 two stages. 86 tests in all.
+
+## 7. Resolved: IMD Swarm re-check ca28d248 (on commit d5a04ed)
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 1 | Low: a tiny accepted launch allocation at the top start tick gives zero liquidity, so `openPool` reverts | The launch must be at least 1 $STAMP (`MIN_LAUNCH_SUPPLY`), which gives ~2e9 liquidity at the top tick. `test_StartPriceIsBoundedSoOpenPoolAlwaysWorks` now rejects 1e18 − 1 and opens 1, 2.1M and 21M at both extreme ticks, in both orderings. |
+| 2 | Low: stage 2 could link and renounce a stale renderer while freezing a different one | `_deployGame` requires the NFT's current renderer, and `DeployMainnet` reads it from the NFT. `LaunchStagesForkTest.test_Fork_StageTwoRenouncesTheRendererTheNftUses` swaps the renderer between stages, sees stage 2 refuse the stale address, then checks everything is linked, frozen and ownerless. |
+| 3 | Info: `setTreasury` left royalties on the old treasury | `setTreasury` moves the default royalty receiver too, keeping the rate. `test_SetTreasuryMovesRoyaltiesToo`. |
+| 4 | Info: the NFT could renounce without freezing its art | `renounceOwnership` also requires `rendererFrozen`. `test_RenounceOnlyOnceRevealedLinkedAndFrozen`. |
+
+88 tests, plus 2 against a Robinhood Chain fork (`--match-contract "StampHookForkTest|LaunchStagesForkTest"`).

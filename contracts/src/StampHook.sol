@@ -77,9 +77,11 @@ contract StampHook is IHooks, IUnlockCallback {
     /// @dev Kept out of the liquidity calculation so rounding can never ask for more than the allocation; burned.
     uint256 internal constant LIQUIDITY_BUFFER = 1e9;
     uint256 internal constant Q96 = 2 ** 96;
-    /// @dev Bounds that keep the launch position's liquidity within what one tick range can hold (any launch up to
-    ///      the full 21M supply), so a constructor that accepts its arguments always leads to a working openPool.
+    /// @dev Bounds that keep the launch position's liquidity above zero and within what one tick range can hold,
+    ///      at every start tick allowed, so a constructor that accepts its arguments always leads to a working
+    ///      openPool. At the top tick a whole token buys about 2e9 units of liquidity; 21M stays far below the cap.
     int24 internal constant MAX_START_TICK = 400_000;
+    uint256 internal constant MIN_LAUNCH_SUPPLY = 1e18;
     uint256 internal constant MAX_LAUNCH_SUPPLY = 21_000_000e18;
     /// @dev keccak256("Stamp.beforeSwapFee") - transient slot passing the fee from beforeSwap to afterSwap.
     bytes32 internal constant FEE_SLOT = 0x0e7a214e2bfdcb5a3f6eeb3feb3428d747006b85ea848e6432dc8645d4c1524d;
@@ -141,7 +143,7 @@ contract StampHook is IHooks, IUnlockCallback {
     ) {
         if (imd == address(0) || owner_ == address(0) || feeRecipient_ == address(0)) revert ZeroAddress();
         if (startTick_ % TICK_SPACING != 0 || startTick_ > MAX_START_TICK || startTick_ < -MAX_START_TICK) revert BadTick();
-        if (launchSupply_ <= LIQUIDITY_BUFFER || launchSupply_ > MAX_LAUNCH_SUPPLY) revert BadToken();
+        if (launchSupply_ < MIN_LAUNCH_SUPPLY || launchSupply_ > MAX_LAUNCH_SUPPLY) revert BadToken();
         Hooks.validateHookPermissions(
             IHooks(address(this)),
             Hooks.Permissions({

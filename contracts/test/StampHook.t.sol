@@ -212,7 +212,8 @@ abstract contract StampHookTest is Test {
         assertEq(s2.balanceOf(address(pm)) + s2.balanceOf(dead), LAUNCH + 1);
     }
 
-    /// Audit ea514609 finding 11: a start price the constructor accepts always opens.
+    /// Audit ea514609 finding 11 and re-check ca28d248 finding 1: every start price and allocation the
+    /// constructor accepts opens.
     function test_StartPriceIsBoundedSoOpenPoolAlwaysWorks() public {
         StampHook.ImdEthPool memory ie = StampHook.ImdEthPool(10_000, 100, address(0));
         vm.expectRevert(StampHook.BadTick.selector);
@@ -221,12 +222,14 @@ abstract contract StampHookTest is Test {
         new StampHook(pm, address(imd), owner, feeRecipient, -400_200, LAUNCH, ie);
         vm.expectRevert(StampHook.BadToken.selector);
         new StampHook(pm, address(imd), owner, feeRecipient, 0, 21_000_000e18 + 1, ie);
+        vm.expectRevert(StampHook.BadToken.selector);
+        new StampHook(pm, address(imd), owner, feeRecipient, 400_000, 1e18 - 1, ie); // a few wei: no liquidity
 
-        // The extremes, with the smallest and the largest allocation, all open.
+        // The extreme start prices, with the smallest, the planned and the largest allocation, all open.
         int24[2] memory ticks = [int24(-400_000), int24(400_000)];
-        uint256[2] memory launches = [LAUNCH, uint256(21_000_000e18)];
+        uint256[3] memory launches = [uint256(1e18), LAUNCH, uint256(21_000_000e18)];
         for (uint256 i; i < 2; i++) {
-            for (uint256 j; j < 2; j++) {
+            for (uint256 j; j < 3; j++) {
                 address h = _hookWith(makeAddr(string(abi.encode(i, j))), ticks[i], launches[j]);
                 StampToken s = new StampToken(owner, h, launches[j]);
                 vm.prank(owner);

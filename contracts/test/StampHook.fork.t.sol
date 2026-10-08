@@ -5,8 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {StampHook} from "../src/StampHook.sol";
 import {StampToken} from "../src/StampToken.sol";
 import {StampEthRouter} from "../src/StampEthRouter.sol";
+import {CourierNFT, ICourierRenderer} from "../src/CourierNFT.sol";
+import {CourierSVG} from "../src/CourierSVG.sol";
+import {CourierRenderer, ICourierSeed} from "../src/CourierRenderer.sol";
 import {DeployLib} from "../script/DeployLib.sol";
-import {RobinhoodConfig} from "../script/DeployMainnet.s.sol";
+import {RobinhoodConfig, CourierDeployer} from "../script/DeployMainnet.s.sol";
 
 interface IERC20 {
     function balanceOf(address) external view returns (uint256);
@@ -62,5 +65,43 @@ contract StampHookForkTest is Test {
 
         hook.collectProtocolFees(RobinhoodConfig.IMD);
         assertGt(IERC20(RobinhoodConfig.IMD).balanceOf(feeRecipient), 0);
+    }
+}
+
+/// @notice The real launch stages (the deploy script's own functions) against the live PoolManager.
+///   forge test --match-contract LaunchStagesForkTest --fork-url robinhood
+/// Skipped when not forked.
+contract LaunchStagesForkTest is Test, CourierDeployer {
+    uint256 constant SECRET = 42;
+    address treasury = makeAddr("treasury");
+    address feeRecipient = makeAddr("feeRecipient");
+
+    /// External, so a revert inside stage 2 can be expected.
+    function stageTwo(Couriers memory c) external returns (Game memory) {
+        return _deployGame(address(this), feeRecipient, treasury, 3_000e18, 2_100_000e18, 0.005 ether, 1_100, c);
+    }
+
+    /// Re-check ca28d248 finding 2: stage 2 links, freezes and renounces the renderer the NFT actually uses.
+    function test_Fork_StageTwoRenouncesTheRendererTheNftUses() public {
+        if (block.chainid != 4663) return;
+        Couriers memory c = _deployCouriers(address(this), treasury, 0.003 ether, keccak256(abi.encode(SECRET)));
+        CourierNFT nft = CourierNFT(c.nft);
+        nft.reveal(SECRET);
+
+        // The renderer is swapped between the stages; stage 2 refuses the stale address.
+        CourierRenderer swapped = new CourierRenderer(ICourierSeed(c.nft), new CourierSVG(), address(this));
+        nft.setRenderer(ICourierRenderer(address(swapped)));
+        vm.expectRevert(bytes("the NFT uses a different renderer"));
+        this.stageTwo(c);
+
+        c.renderer = address(nft.renderer());
+        Game memory g = this.stageTwo(c);
+        assertEq(swapped.owner(), address(0));
+        assertEq(address(swapped.office()), g.office);
+        assertTrue(nft.rendererFrozen());
+        assertEq(nft.owner(), address(0));
+        assertEq(StampToken(g.stamp).owner(), address(0));
+        assertEq(StampHook(g.hook).owner(), address(0));
+        assertEq(nft.game(), g.office);
     }
 }
