@@ -20,7 +20,7 @@ CHAIN='{
   chainId: 4663,
   chainName: "Robinhood Chain",
   rpcUrl: "https://robinhood-rpc.publicnode.com",
-  walletRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+  walletRpcUrl: "https://robinhood-rpc.publicnode.com",
   explorer: "https://robinhoodchain.blockscout.com"
 }'
 
