@@ -8,12 +8,13 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 
 import {StampHook} from "../src/StampHook.sol";
-import {StampRouter} from "../src/StampRouter.sol";
+import {StampRouter, PermitHelper} from "../src/StampRouter.sol";
 import {StampEthRouter} from "../src/StampEthRouter.sol";
 import {StampToken} from "../src/StampToken.sol";
 import {CourierNFT} from "../src/CourierNFT.sol";
@@ -50,7 +51,11 @@ contract MockIMD {
     }
 }
 
-contract StampHookTest is Test {
+/// @dev Runs twice (see the two contracts at the end): with IMD as the pool's currency0 and as its currency1, since
+///      the order on mainnet depends on the $STAMP address and every code path has a branch for each.
+abstract contract StampHookTest is Test {
+    using StateLibrary for IPoolManager;
+
     PoolManager pm;
     MockIMD imd;
     StampHook hook;
@@ -69,10 +74,14 @@ contract StampHookTest is Test {
     uint256 constant START_MCAP = 50_000e18; // IMD, for the full 21M
     int24 constant FULL_100 = 887_200;
 
+    /// @dev Where the mock IMD lives: a low address makes it currency0, a high one currency1.
+    function _imdAddress() internal pure virtual returns (address);
+
     function setUp() public {
         vm.warp(1_800_000_000);
         pm = new PoolManager(address(this));
-        imd = new MockIMD();
+        vm.etch(_imdAddress(), address(new MockIMD()).code);
+        imd = MockIMD(_imdAddress());
         extRouter = new PoolSwapTest(pm);
         lp = new PoolModifyLiquidityTest(pm);
         vm.deal(address(this), 1_000_000 ether);
@@ -85,26 +94,14 @@ contract StampHookTest is Test {
         lp.modifyLiquidity{value: 20_000 ether}(imdEth, ModifyLiquidityParams(-FULL_100, FULL_100, 10_000e18, 0), "");
 
         // The hook lives at a mined address carrying its permission flags.
-        bytes memory initCode = abi.encodePacked(
-            type(StampHook).creationCode,
-            abi.encode(
-                pm, address(imd), owner, feeRecipient, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH,
-                StampHook.ImdEthPool(10_000, 100, address(0))
-            )
-        );
-        (bytes32 salt, address expected) = DeployLib.mineSalt(address(this), _flags(), initCode, 0);
-        address deployed;
-        assembly {
-            deployed := create2(0, add(initCode, 0x20), mload(initCode), salt)
-        }
-        require(deployed == expected, "hook address");
-        hook = StampHook(deployed);
+        hook = StampHook(_hookWith(feeRecipient, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH));
         router = StampRouter(hook.router());
         ethRouter = StampEthRouter(payable(hook.ethRouter()));
 
         stamp = new StampToken(owner, address(hook), LAUNCH);
         vm.prank(owner);
         hook.openPool(address(stamp));
+        assertEq(_imdIs0(), uint160(address(imd)) < uint160(address(stamp)), "ordering");
 
         for (uint256 i; i < 2; i++) {
             address u = i == 0 ? alice : bob;
@@ -126,6 +123,19 @@ contract StampHookTest is Test {
         return uint160(0x28CC); // beforeInitialize, beforeAddLiquidity, before/afterSwap, both return deltas
     }
 
+    /// @dev A hook at a mined address. Different arguments give it a different address.
+    function _hookWith(address feeTo, int24 startTick, uint256 launch) internal returns (address h) {
+        bytes memory initCode = abi.encodePacked(
+            type(StampHook).creationCode,
+            abi.encode(pm, address(imd), owner, feeTo, startTick, launch, StampHook.ImdEthPool(10_000, 100, address(0)))
+        );
+        (bytes32 salt, address expected) = DeployLib.mineSalt(address(this), _flags(), initCode, 0);
+        assembly {
+            h := create2(0, add(initCode, 0x20), mload(initCode), salt)
+        }
+        require(h == expected, "hook address");
+    }
+
     function _key() internal view returns (PoolKey memory) {
         return hook.poolKey(address(stamp));
     }
@@ -136,14 +146,29 @@ contract StampHookTest is Test {
 
     function _extSwap(address who, bool buy, int256 amountSpecified) internal {
         bool zeroForOne = buy == _imdIs0();
+        _extSwapWithLimit(who, buy, amountSpecified, zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1);
+    }
+
+    function _extSwapWithLimit(address who, bool buy, int256 amountSpecified, uint160 limit) internal {
+        bool zeroForOne = buy == _imdIs0();
         PoolKey memory key = _key();
         vm.prank(who, who);
         extRouter.swap(
             key,
-            SwapParams(zeroForOne, amountSpecified, zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1),
+            SwapParams(zeroForOne, amountSpecified, limit),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
+    }
+
+    function _fees() internal view returns (uint256) {
+        return hook.pendingProtocolFees(address(imd));
+    }
+
+    /// @dev `fee` is 4% of `gross` rounded up: never less, at most 1 wei more.
+    function _assertFourPercentUp(uint256 fee, uint256 gross, string memory mode) internal pure {
+        assertGe(fee * 10_000, gross * 400, mode);
+        assertLt((fee - 1) * 10_000, gross * 400, mode);
     }
 
     // ------------------------------------------------------------------ launch
@@ -173,23 +198,8 @@ contract StampHookTest is Test {
         hook.openPool(address(stamp));
     }
 
-    /// @dev A second hook, not yet launched (a different fee recipient gives it a different address).
-    function _unlaunchedHook(address feeTo) internal returns (address h) {
-        bytes memory initCode = abi.encodePacked(
-            type(StampHook).creationCode,
-            abi.encode(
-                pm, address(imd), owner, feeTo, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH,
-                StampHook.ImdEthPool(10_000, 100, address(0))
-            )
-        );
-        (bytes32 salt,) = DeployLib.mineSalt(address(this), _flags(), initCode, 0);
-        assembly {
-            h := create2(0, add(initCode, 0x20), mload(initCode), salt)
-        }
-    }
-
     function test_DonationBeforeLaunchCannotBlockOpenPool() public {
-        address h = _unlaunchedHook(alice);
+        address h = _hookWith(alice, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH);
         StampToken s2 = new StampToken(owner, h, LAUNCH);
         vm.prank(owner);
         s2.setMinter(address(this));
@@ -200,6 +210,30 @@ contract StampHookTest is Test {
         address dead = 0x000000000000000000000000000000000000dEaD;
         assertEq(s2.balanceOf(h), 0);
         assertEq(s2.balanceOf(address(pm)) + s2.balanceOf(dead), LAUNCH + 1);
+    }
+
+    /// Audit ea514609 finding 11: a start price the constructor accepts always opens.
+    function test_StartPriceIsBoundedSoOpenPoolAlwaysWorks() public {
+        StampHook.ImdEthPool memory ie = StampHook.ImdEthPool(10_000, 100, address(0));
+        vm.expectRevert(StampHook.BadTick.selector);
+        new StampHook(pm, address(imd), owner, feeRecipient, 400_200, LAUNCH, ie);
+        vm.expectRevert(StampHook.BadTick.selector);
+        new StampHook(pm, address(imd), owner, feeRecipient, -400_200, LAUNCH, ie);
+        vm.expectRevert(StampHook.BadToken.selector);
+        new StampHook(pm, address(imd), owner, feeRecipient, 0, 21_000_000e18 + 1, ie);
+
+        // The extremes, with the smallest and the largest allocation, all open.
+        int24[2] memory ticks = [int24(-400_000), int24(400_000)];
+        uint256[2] memory launches = [LAUNCH, uint256(21_000_000e18)];
+        for (uint256 i; i < 2; i++) {
+            for (uint256 j; j < 2; j++) {
+                address h = _hookWith(makeAddr(string(abi.encode(i, j))), ticks[i], launches[j]);
+                StampToken s = new StampToken(owner, h, launches[j]);
+                vm.prank(owner);
+                StampHook(h).openPool(address(s));
+                assertEq(s.balanceOf(h), 0);
+            }
+        }
     }
 
     function test_NobodyCanAddLiquidityOrReuseTheHook() public {
@@ -218,52 +252,82 @@ contract StampHookTest is Test {
         uint256 out = router.buy(address(stamp), 1_000e18, 1, block.timestamp);
         assertGt(out, 0);
         assertEq(stamp.balanceOf(alice), out);
-        assertEq(hook.pendingProtocolFees(address(imd)), 40e18);
+        assertEq(_fees(), 40e18);
     }
 
     function test_SellPaysFourPercentOfTheOutput() public {
         vm.startPrank(alice);
         uint256 got = router.buy(address(stamp), 10_000e18, 1, block.timestamp);
-        uint256 feesAfterBuy = hook.pendingProtocolFees(address(imd));
+        uint256 feesAfterBuy = _fees();
         uint256 imdBefore = imd.balanceOf(alice);
         router.sell(address(stamp), got / 2, 1, block.timestamp);
         vm.stopPrank();
         uint256 received = imd.balanceOf(alice) - imdBefore;
-        uint256 sellFee = hook.pendingProtocolFees(address(imd)) - feesAfterBuy;
-        // The seller gets 96% of what the pool paid; the protocol the other 4%.
-        assertApproxEqRel(sellFee * 96, received * 4, 1e12);
+        _assertFourPercentUp(_fees() - feesAfterBuy, received + _fees() - feesAfterBuy, "router sell");
     }
 
-    function test_EveryRouteAndDirectionIsTaxed() public {
-        // Exact-in buy, exact-out buy, exact-in sell, exact-out sell through a generic v4 router.
-        uint256 before = hook.pendingProtocolFees(address(imd));
+    /// Exact fees in all four modes through a generic v4 router (audit ea514609 findings 6 and 12).
+    function test_EveryModePaysExactlyFourPercentRoundedUp() public {
+        // Exact-in buy: 4% of what the buyer pays.
+        uint256 before = _fees();
+        uint256 imdBefore = imd.balanceOf(alice);
         _extSwap(alice, true, -1_000e18);
-        assertEq(hook.pendingProtocolFees(address(imd)) - before, 40e18, "exact-in buy");
+        assertEq(imdBefore - imd.balanceOf(alice), 1_000e18);
+        assertEq(_fees() - before, 40e18, "exact-in buy");
 
-        before = hook.pendingProtocolFees(address(imd));
-        _extSwap(alice, true, 1_000e18); // exact out: 1,000 STAMP
-        assertGt(hook.pendingProtocolFees(address(imd)), before, "exact-out buy");
+        // Exact-out buy (1,000 $STAMP): 4% of what the buyer pays in total.
+        before = _fees();
+        imdBefore = imd.balanceOf(alice);
+        _extSwap(alice, true, 1_000e18);
+        _assertFourPercentUp(_fees() - before, imdBefore - imd.balanceOf(alice), "exact-out buy");
 
-        before = hook.pendingProtocolFees(address(imd));
-        _extSwap(alice, false, -500e18); // sell 500 STAMP
-        assertGt(hook.pendingProtocolFees(address(imd)), before, "exact-in sell");
+        // Exact-in sell (500 $STAMP): 4% of the gross the pool pays.
+        before = _fees();
+        imdBefore = imd.balanceOf(alice);
+        _extSwap(alice, false, -500e18);
+        uint256 fee = _fees() - before;
+        _assertFourPercentUp(fee, imd.balanceOf(alice) - imdBefore + fee, "exact-in sell");
 
-        before = hook.pendingProtocolFees(address(imd));
-        _extSwap(alice, false, 1e18); // exact out: 1 IMD
-        assertApproxEqAbs(hook.pendingProtocolFees(address(imd)) - before, uint256(1e18) * 400 / 9600, 1, "exact-out sell");
+        // Exact-out sell (1 IMD to the seller).
+        before = _fees();
+        imdBefore = imd.balanceOf(alice);
+        _extSwap(alice, false, 1e18);
+        assertEq(imd.balanceOf(alice) - imdBefore, 1e18);
+        _assertFourPercentUp(_fees() - before, 1e18 + _fees() - before, "exact-out sell");
+    }
+
+    function test_DustSwapsStillPayTheFee() public {
+        uint256 before = _fees();
+        _extSwap(alice, true, -24); // 4% of 24 wei is 0.96 wei: rounds up to 1
+        assertEq(_fees() - before, 1);
+    }
+
+    function test_PartialFillIsRejected() public {
+        // An exact-in buy that would stop at a price limit after filling part of it.
+        PoolKey memory key = _key();
+        (uint160 sqrtP,,,) = IPoolManager(address(pm)).getSlot0(key.toId());
+        bool zeroForOne = _imdIs0(); // a buy pays IMD in
+        uint160 limit = zeroForOne ? sqrtP - sqrtP / 1000 : sqrtP + sqrtP / 1000;
+        PoolSwapTest.TestSettings memory settings = PoolSwapTest.TestSettings(false, false);
+        vm.prank(alice, alice);
+        vm.expectRevert();
+        extRouter.swap(key, SwapParams(zeroForOne, -10_000e18, limit), settings, "");
+
+        // Without the limit the same buy fills completely.
+        _extSwap(alice, true, -10_000e18);
     }
 
     function test_EthRouterBuysAndSellsThroughImd() public {
         vm.startPrank(alice);
         uint256 got = ethRouter.buyWithEth{value: 1 ether}(address(stamp), 1, block.timestamp);
         assertGt(got, 0);
-        uint256 fee = hook.pendingProtocolFees(address(imd));
+        uint256 fee = _fees();
         assertGt(fee, 0);
         uint256 ethBefore = alice.balance;
         uint256 ethOut = ethRouter.sellForEth(address(stamp), got / 2, 1, block.timestamp);
         vm.stopPrank();
         assertEq(alice.balance - ethBefore, ethOut);
-        assertGt(hook.pendingProtocolFees(address(imd)), fee);
+        assertGt(_fees(), fee);
     }
 
     function test_FeesGoToTheProtocolAddress() public {
@@ -271,7 +335,21 @@ contract StampHookTest is Test {
         router.buy(address(stamp), 5_000e18, 1, block.timestamp);
         hook.collectProtocolFees(address(imd));
         assertEq(imd.balanceOf(feeRecipient), 200e18);
-        assertEq(hook.pendingProtocolFees(address(imd)), 0);
+        assertEq(_fees(), 0);
+    }
+
+    /// Collection also works while someone else holds the PoolManager's unlock (the hook settles its own deltas).
+    function test_CollectInsideAnotherCallersUnlock() public {
+        vm.prank(alice);
+        router.buy(address(stamp), 1_000e18, 1, block.timestamp);
+        pm.unlock("");
+        assertEq(imd.balanceOf(feeRecipient), 40e18);
+        assertEq(_fees(), 0);
+    }
+
+    function unlockCallback(bytes calldata) external returns (bytes memory) {
+        hook.collectProtocolFees(address(imd));
+        return "";
     }
 
     function test_SlippageAndDeadline() public {
@@ -295,6 +373,87 @@ contract StampHookTest is Test {
         router.buy(address(stamp), 1_000e18, 1, block.timestamp);
         vm.prank(bob);
         assertGt(router.sell(address(stamp), 100e18, 1, block.timestamp), 0);
+    }
+
+    /// Audit ea514609 finding 3: a sell bigger than the pool's IMD stops at the launch price, and the price view
+    /// never reads 0, even after another router walks the price to the end of the range.
+    function test_PriceSurvivesSellsPastTheLaunchPrice() public {
+        uint256 p0 = hook.price(address(stamp));
+        vm.prank(alice);
+        router.buy(address(stamp), 1e18, 1, block.timestamp);
+        uint256 big = stamp.balanceOf(alice) * 10;
+        deal(address(stamp), alice, big);
+
+        vm.prank(alice);
+        uint256 got = router.sell(address(stamp), big, 1, block.timestamp);
+        assertGt(got, 0);
+        assertGt(stamp.balanceOf(alice), 0, "only what the pool could pay for was sold");
+        assertEq(hook.price(address(stamp)), p0);
+        (uint160 sqrtP,,,) = IPoolManager(address(pm)).getSlot0(_key().toId());
+        assertEq(sqrtP, hook.launchSqrtPrice(address(stamp)), "stopped at the launch price");
+
+        vm.prank(alice);
+        router.buy(address(stamp), 1e18, 1, block.timestamp);
+        _extSwap(alice, false, -int256(stamp.balanceOf(alice)));
+        assertEq(hook.price(address(stamp)), p0);
+        assertGt(hook.marketCap(address(stamp)), 0);
+
+        // And the pool still trades normally from there.
+        vm.prank(bob);
+        assertGt(router.buy(address(stamp), 1e18, 1, block.timestamp), 0);
+    }
+
+    // ------------------------------------------------------------------ permit sells
+
+    function _permit(uint256 key, address holder, address spender, uint256 value, uint256 deadline)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
+                holder,
+                spender,
+                value,
+                stamp.nonces(holder),
+                deadline
+            )
+        );
+        (v, r, s) = vm.sign(key, keccak256(abi.encodePacked("\x19\x01", stamp.DOMAIN_SEPARATOR(), structHash)));
+    }
+
+    function test_SellsWithPermitNeedNoApproval() public {
+        (address carol, uint256 carolKey) = makeAddrAndKey("carol");
+        vm.prank(alice);
+        uint256 got = router.buy(address(stamp), 10_000e18, 1, block.timestamp);
+        vm.prank(alice);
+        stamp.transfer(carol, got);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permit(carolKey, carol, address(router), got / 2, deadline);
+        vm.prank(carol);
+        assertGt(router.sellWithPermit(address(stamp), got / 2, 1, deadline, v, r, s), 0);
+
+        uint256 rest = stamp.balanceOf(carol);
+        (v, r, s) = _permit(carolKey, carol, address(ethRouter), rest, deadline);
+        vm.prank(carol);
+        assertGt(ethRouter.sellForEthWithPermit(address(stamp), rest, 1, deadline, v, r, s), 0);
+        assertEq(stamp.balanceOf(carol), 0);
+    }
+
+    /// Audit ea514609 finding 5: the permit must be signed for exactly the amount sold (as documented).
+    function test_PermitMustMatchTheAmountSold() public {
+        (address carol, uint256 carolKey) = makeAddrAndKey("carol");
+        vm.prank(alice);
+        uint256 got = router.buy(address(stamp), 10_000e18, 1, block.timestamp);
+        vm.prank(alice);
+        stamp.transfer(carol, got);
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permit(carolKey, carol, address(router), got, deadline);
+        vm.prank(carol);
+        vm.expectRevert(PermitHelper.PermitFailed.selector);
+        router.sellWithPermit(address(stamp), got / 2, 1, deadline, v, r, s);
     }
 
     // ------------------------------------------------------------------ admin
@@ -336,7 +495,7 @@ contract StampHookTest is Test {
     }
 
     function test_CannotRenounceBeforeTheLaunch() public {
-        StampHook h = StampHook(_unlaunchedHook(bob));
+        StampHook h = StampHook(_hookWith(bob, DeployLib.startTickForMarketCap(START_MCAP, 21_000_000e18), LAUNCH));
         vm.prank(owner);
         vm.expectRevert(StampHook.NotLaunched.selector);
         h.renounceOwnership();
@@ -344,16 +503,24 @@ contract StampHookTest is Test {
 
     // ------------------------------------------------------------------ with the game
 
+    function _revealedCouriers() internal returns (CourierNFT nft) {
+        nft = new CourierNFT(owner, owner, 0.003 ether, keccak256(abi.encode(uint256(1))));
+        vm.prank(owner);
+        nft.reveal(1);
+    }
+
+    function _kiosk() internal pure returns (PostOffice.Tier[] memory t) {
+        t = new PostOffice.Tier[](1);
+        t[0] = PostOffice.Tier(2, 3, 0);
+    }
+
     function test_GameTransfersAreNotTaxedAndSupplyStaysCapped() public {
         // Emissions sized so launch allocation + all emissions = 21M exactly.
-        CourierNFT nft = new CourierNFT(owner, owner, 0.003 ether, keccak256(abi.encode(uint256(1))));
         uint256 reward = (stamp.MAX_SUPPLY() - LAUNCH) / (2 * 4_200_000);
         assertEq(reward, 2.25e18);
-        PostOffice office = new PostOffice(stamp, nft, 1000, reward, 0.005 ether, owner, owner);
-        vm.startPrank(owner);
+        PostOffice office = new PostOffice(stamp, _revealedCouriers(), 1000, reward, 0.005 ether, owner, _kiosk());
+        vm.prank(owner);
         stamp.setMinter(address(office));
-        office.addTier(2, 3, 0);
-        vm.stopPrank();
 
         vm.prank(alice);
         office.openOffice{value: 0.005 ether}(address(0));
@@ -377,8 +544,21 @@ contract StampHookTest is Test {
     }
 
     function test_PostOfficeRejectsEmissionsPastTheCap() public {
-        CourierNFT nft = new CourierNFT(owner, owner, 0.003 ether, keccak256(abi.encode(uint256(1))));
+        CourierNFT nft = _revealedCouriers();
+        PostOffice.Tier[] memory t = _kiosk();
         vm.expectRevert(PostOffice.InvalidSetting.selector);
-        new PostOffice(stamp, nft, 1000, 2.5e18, 0.005 ether, owner, owner); // 21M of emissions + 2.1M allocation
+        new PostOffice(stamp, nft, 1000, 2.5e18, 0.005 ether, owner, t); // 21M of emissions + 2.1M allocation
+    }
+}
+
+contract StampHookImdFirstTest is StampHookTest {
+    function _imdAddress() internal pure override returns (address) {
+        return address(0x1000);
+    }
+}
+
+contract StampHookImdSecondTest is StampHookTest {
+    function _imdAddress() internal pure override returns (address) {
+        return address(uint160(type(uint160).max) - 0x1000);
     }
 }

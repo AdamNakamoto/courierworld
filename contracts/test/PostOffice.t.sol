@@ -6,10 +6,9 @@ import {StampToken} from "../src/StampToken.sol";
 import {CourierNFT} from "../src/CourierNFT.sol";
 import {PostOffice} from "../src/PostOffice.sol";
 
-contract PostOfficeTest is Test {
+abstract contract CourierFixture is Test {
     StampToken stamp;
     CourierNFT nft;
-    PostOffice office;
 
     address owner = makeAddr("owner");
     address treasury = makeAddr("treasury");
@@ -20,17 +19,11 @@ contract PostOfficeTest is Test {
     uint256 constant PRICE = 0.003 ether;
     uint256 constant OFFICE = 0.005 ether;
 
-    function setUp() public {
+    function _couriers() internal {
         vm.roll(100);
         vm.startPrank(owner);
         stamp = new StampToken(owner, address(0), 0);
         nft = new CourierNFT(owner, treasury, PRICE, keccak256(abi.encode(SECRET)));
-        office = new PostOffice(stamp, nft, 1000, 2.5e18, OFFICE, treasury, owner);
-        stamp.setMinter(address(office));
-        nft.setGame(address(office));
-        office.addTier(2, 3, 0); // Kiosk
-        office.addTier(4, 7, 100e18); // Branch
-        office.addTier(6, 14, 400e18); // Depot
         nft.setSaleOpen(true);
         vm.stopPrank();
         vm.deal(alice, 10 ether);
@@ -51,28 +44,21 @@ contract PostOfficeTest is Test {
         nft.reveal(SECRET);
     }
 
-    function _open(address who, address referrer) internal {
-        vm.prank(who);
-        office.openOffice{value: OFFICE}(referrer);
+    function _tiers() internal pure returns (PostOffice.Tier[] memory t) {
+        t = new PostOffice.Tier[](3);
+        t[0] = PostOffice.Tier(2, 3, 0); // Kiosk
+        t[1] = PostOffice.Tier(4, 7, 100e18); // Branch
+        t[2] = PostOffice.Tier(6, 14, 400e18); // Depot
+    }
+}
+
+/// The collection on its own: the mint, the reveal, ownership.
+contract CourierNFTTest is CourierFixture {
+    function setUp() public {
+        _couriers();
     }
 
-    /// First minted courier owned by `who` with the given ride.
-    function _find(address who, uint8 ride) internal view returns (uint256) {
-        for (uint256 id = 1; id <= nft.totalMinted(); id++) {
-            if (nft.ownerOf(id) == who && nft.rideOf(id) == ride) return id;
-        }
-        revert("no courier with that ride");
-    }
-
-    function _earn(address who, uint256 secs) internal {
-        vm.warp(block.timestamp + secs);
-        vm.prank(who);
-        office.claim();
-    }
-
-    // ------------------------------------------------------------------ mint & reveal
-
-    function test_MintChargesPriceAndCountsUp() public {
+    function test_MintChargesPriceAndPaysTheTreasury() public {
         _mint(alice, 3);
         assertEq(nft.balanceOf(alice), 3);
         assertEq(nft.totalMinted(), 3);
@@ -162,6 +148,111 @@ contract PostOfficeTest is Test {
         assertEq(amount, 0.05 ether);
     }
 
+    /// Audit ea514609 finding 4: a mistyped transfer can't take the collection away before the reveal.
+    function test_OwnershipTransferTakesTwoSteps() public {
+        vm.prank(owner);
+        nft.transferOwnership(bob);
+        assertEq(nft.owner(), owner);
+        assertEq(nft.pendingOwner(), bob);
+        vm.prank(bob);
+        nft.acceptOwnership();
+        assertEq(nft.owner(), bob);
+    }
+
+    /// Audit ea514609 finding 4: renouncing early would freeze the collection unrevealed or unplayable.
+    function test_RenounceOnlyOnceRevealedAndLinkedToTheGame() public {
+        vm.startPrank(owner);
+        vm.expectRevert(CourierNFT.NotFinished.selector);
+        nft.renounceOwnership();
+        nft.reveal(SECRET);
+        vm.expectRevert(CourierNFT.NotFinished.selector);
+        nft.renounceOwnership();
+        nft.setGame(makeAddr("game"));
+        nft.renounceOwnership();
+        vm.stopPrank();
+        assertEq(nft.owner(), address(0));
+
+        bytes memory notOwner = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", owner);
+        vm.startPrank(owner);
+        vm.expectRevert(notOwner);
+        nft.setPrice(0);
+        vm.expectRevert(notOwner);
+        nft.setTreasury(owner);
+        vm.stopPrank();
+    }
+}
+
+/// The game, deployed once the couriers are revealed (it refuses to before).
+contract PostOfficeTest is CourierFixture {
+    PostOffice office;
+
+    function setUp() public {
+        _couriers();
+        _mint(alice, 60); // #1-#60
+        _mint(bob, 5); // #61-#65
+        _reveal();
+        office = new PostOffice(stamp, nft, 1000, 2.5e18, OFFICE, treasury, _tiers());
+        vm.startPrank(owner);
+        stamp.setMinter(address(office));
+        nft.setGame(address(office));
+        vm.stopPrank();
+    }
+
+    function _open(address who, address referrer) internal {
+        vm.prank(who);
+        office.openOffice{value: OFFICE}(referrer);
+    }
+
+    /// First courier owned by `who` with the given ride.
+    function _find(address who, uint8 ride) internal view returns (uint256) {
+        for (uint256 id = 1; id <= nft.totalMinted(); id++) {
+            if (nft.ownerOf(id) == who && nft.rideOf(id) == ride) return id;
+        }
+        revert("no courier with that ride");
+    }
+
+    function _earn(address who, uint256 secs) internal {
+        vm.warp(block.timestamp + secs);
+        vm.prank(who);
+        office.claim();
+    }
+
+    // ------------------------------------------------------------------ deployment
+
+    /// Audit ea514609 finding 10: emissions can't start while couriers can't go on duty.
+    function test_DeploysOnlyAfterTheReveal() public {
+        vm.startPrank(owner);
+        CourierNFT unrevealed = new CourierNFT(owner, treasury, PRICE, keccak256(abi.encode(SECRET)));
+        vm.stopPrank();
+        PostOffice.Tier[] memory t = _tiers();
+        vm.expectRevert(PostOffice.CouriersNotRevealed.selector);
+        new PostOffice(stamp, unrevealed, 1000, 2.5e18, OFFICE, treasury, t);
+    }
+
+    function test_TiersAreCheckedAtDeployment() public {
+        PostOffice.Tier[] memory none = new PostOffice.Tier[](0);
+        vm.expectRevert(PostOffice.InvalidTier.selector);
+        new PostOffice(stamp, nft, 1000, 2.5e18, OFFICE, treasury, none);
+
+        PostOffice.Tier[] memory shrinking = _tiers();
+        shrinking[2].slots = 1;
+        vm.expectRevert(PostOffice.InvalidTier.selector);
+        new PostOffice(stamp, nft, 1000, 2.5e18, OFFICE, treasury, shrinking);
+    }
+
+    /// Audit ea514609 findings 1 and 9: nobody owns the post office, so no price, rate or cost can ever change.
+    function test_NoOwnerAndFixedSettings() public {
+        (bool hasOwner,) = address(office).staticcall(abi.encodeWithSignature("owner()"));
+        assertFalse(hasOwner);
+        assertEq(office.officePrice(), OFFICE);
+        assertEq(office.treasury(), treasury);
+        assertEq(office.levelCost(0), 25e18);
+        assertEq(office.BURN_BPS(), 7_500);
+        assertEq(office.REFERRAL_BPS(), 250);
+        (,, uint256 cost) = office.tiers(2);
+        assertEq(cost, 400e18);
+    }
+
     // ------------------------------------------------------------------ offices & duty
 
     function test_OpenOfficeStartsATraineeEarningEverything() public {
@@ -172,9 +263,14 @@ contract PostOfficeTest is Test {
         assertApproxEqAbs(office.pendingRewards(alice), 250e18, 1e6);
     }
 
+    function test_SalesGoStraightToTreasury() public {
+        uint256 before = treasury.balance;
+        _open(alice, address(0));
+        assertEq(treasury.balance - before, OFFICE);
+        assertEq(address(office).balance, 0);
+    }
+
     function test_AssignAddsRidePowerAndLocksTheNFT() public {
-        _mint(alice, 20);
-        _reveal();
         _open(alice, address(0));
         uint256 id = _find(alice, 2); // bicycle: 260 power, 2 routes
 
@@ -200,8 +296,6 @@ contract PostOfficeTest is Test {
     }
 
     function test_SlotsAndRoutesAreEnforced() public {
-        _mint(alice, 40);
-        _reveal();
         _open(alice, address(0));
         // Kiosk: 2 slots, 3 routes. A bike (2) + a moped (3) needs 5 routes.
         uint256 bike = _find(alice, 2);
@@ -219,19 +313,15 @@ contract PostOfficeTest is Test {
     }
 
     function test_CannotAssignSomeoneElsesCourier() public {
-        _mint(bob, 1);
-        _reveal();
         _open(alice, address(0));
         vm.prank(alice);
         vm.expectRevert(PostOffice.NotCourierOwner.selector);
-        office.assign(1);
+        office.assign(61); // bob's
     }
 
     // ------------------------------------------------------------------ rewards
 
     function test_RewardsSplitByDeliveryPower() public {
-        _mint(alice, 20);
-        _reveal();
         _open(alice, address(0));
         _open(bob, address(0));
         uint256 walker = _find(alice, 0); // 100 power
@@ -259,17 +349,88 @@ contract PostOfficeTest is Test {
         _open(alice, bob);
         vm.warp(block.timestamp + 100);
         uint256 pending = office.pendingRewards(alice);
+        (uint256 forAlice, uint256 forBob) = office.claimable(alice);
+        assertEq(forBob, pending * 250 / 10_000);
+        assertEq(forAlice, pending - forBob);
         vm.prank(alice);
         office.claim();
-        assertEq(stamp.balanceOf(bob), pending * 250 / 10_000);
-        assertEq(stamp.balanceOf(alice), pending - pending * 250 / 10_000);
+        assertEq(stamp.balanceOf(bob), forBob);
+        assertEq(stamp.balanceOf(alice), forAlice);
+    }
+
+    /// Audit ea514609 finding 8: claimable() shows what a claim mints, after the referral cut and the supply cap.
+    function test_ClaimableMatchesTheClaim() public {
+        _open(bob, address(0));
+        _open(alice, bob);
+        vm.warp(block.timestamp + office.HALVING_INTERVAL() * 70); // past the cap
+        (uint256 forAlice, uint256 forBob) = office.claimable(alice);
+        assertLe(forAlice + forBob, stamp.MAX_SUPPLY() - stamp.totalMinted());
+        vm.prank(alice);
+        office.claim();
+        assertEq(stamp.balanceOf(alice), forAlice);
+        assertEq(stamp.balanceOf(bob), forBob);
+    }
+
+    /// Audit ea514609 finding 2: each power change re-floored the reward debt, so an office could be paid a few wei
+    /// more than its share. In this sequence the old accounting minted 1 wei more than was emitted.
+    function test_PowerChangesNeverPayMoreThanEmitted() public {
+        uint256 start = vm.getBlockTimestamp(); // block 0 of the post office's clock (one block per second here)
+        _open(alice, address(0));
+        _open(bob, address(0));
+        uint256 walker = _find(alice, 0);
+        uint256 skater = _find(alice, 1);
+        vm.startPrank(alice);
+        vm.warp(start + 3);
+        office.assign(walker);
+        vm.warp(start + 6);
+        office.assign(skater);
+        vm.warp(start + 8);
+        office.unassign(walker);
+        vm.warp(start + 9);
+        office.assign(walker);
+        vm.warp(start + 10);
+        office.claim();
+        vm.stopPrank();
+        vm.prank(bob);
+        office.claim();
+        assertLe(stamp.totalMinted(), office.totalEmitted());
+    }
+
+    function testFuzz_PowerChangesNeverPayMoreThanEmitted(uint8[12] calldata ops, uint16[12] calldata gaps) public {
+        _open(alice, address(0));
+        _open(bob, alice);
+        uint256[3] memory ids = [_find(alice, 0), _find(alice, 1), _find(alice, 2)];
+        vm.startPrank(alice);
+        stamp.approve(address(office), type(uint256).max);
+        for (uint256 i; i < 12; i++) {
+            vm.warp(block.timestamp + 1 + uint256(gaps[i]) % 600);
+            uint256 id = ids[ops[i] % 3];
+            uint8 op = ops[i] / 3 % 3;
+            if (op == 0) {
+                if (office.dutyOf(id) == address(0)) {
+                    (,, uint8 onDuty, uint16 used,,,,,) = office.offices(alice);
+                    (, uint256 routes) = office.rideStats(nft.rideOf(id));
+                    if (onDuty < 2 && used + routes <= 3) office.assign(id);
+                } else {
+                    office.unassign(id);
+                }
+            } else if (op == 1) {
+                if (office.pendingRewards(alice) > 0) office.claim();
+            } else if (stamp.balanceOf(alice) >= office.levelCost(office.levelOf(id)) && office.levelOf(id) < 9) {
+                office.levelUp(id);
+            }
+        }
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1);
+        if (office.pendingRewards(alice) > 0) _earn(alice, 0);
+        if (office.pendingRewards(bob) > 0) _earn(bob, 0);
+        // Spending burns, so count what was ever minted.
+        assertLe(stamp.totalMinted(), office.totalEmitted());
     }
 
     // ------------------------------------------------------------------ spending
 
     function test_LevelUpBurnsStampAndRaisesPowerOnDuty() public {
-        _mint(alice, 20);
-        _reveal();
         _open(alice, address(0));
         uint256 id = _find(alice, 0); // walker, 100 power
         vm.startPrank(alice);
@@ -297,8 +458,6 @@ contract PostOfficeTest is Test {
     }
 
     function test_LevelStaysWithTheNFT() public {
-        _mint(alice, 1);
-        _reveal();
         _open(alice, address(0));
         _earn(alice, 1000);
         vm.startPrank(alice);
@@ -313,8 +472,6 @@ contract PostOfficeTest is Test {
     }
 
     function test_MaxLevelIsTen() public {
-        _mint(alice, 1);
-        _reveal();
         _open(alice, address(0));
         _earn(alice, 20_000);
         vm.startPrank(alice);
@@ -339,42 +496,13 @@ contract PostOfficeTest is Test {
         vm.stopPrank();
     }
 
-    // ------------------------------------------------------------------ money out
-
-    function test_SalesGoStraightToTreasury() public {
-        _mint(alice, 2);
-        _open(alice, address(0));
-        assertEq(treasury.balance, 2 * PRICE + OFFICE);
-        assertEq(address(nft).balance, 0);
-        assertEq(address(office).balance, 0);
-    }
-
-    function test_RenouncedContractsHaveNoAdmin() public {
-        _mint(alice, 1);
+    /// The launch end state: nothing left to own, and the game keeps running.
+    function test_GameRunsWithNobodyInCharge() public {
         vm.startPrank(owner);
-        office.renounceOwnership(); // at deploy
-        nft.reveal(SECRET);
         nft.freezeRenderer();
-        nft.renounceOwnership(); // after the reveal
+        nft.renounceOwnership();
         vm.stopPrank();
-        assertEq(office.owner(), address(0));
         assertEq(nft.owner(), address(0));
-
-        bytes memory notOwner = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", owner);
-        vm.startPrank(owner);
-        vm.expectRevert(notOwner);
-        office.setOfficePrice(0);
-        vm.expectRevert(notOwner);
-        office.setTreasury(owner);
-        vm.expectRevert(notOwner);
-        office.addTier(20, 80, 1e18);
-        vm.expectRevert(notOwner);
-        nft.setPrice(0);
-        vm.expectRevert(notOwner);
-        nft.setTreasury(owner);
-        vm.stopPrank();
-
-        // The game keeps running with nobody in charge.
         _open(alice, address(0));
         _earn(alice, 1 hours);
         assertGt(stamp.balanceOf(alice), 0);
@@ -383,8 +511,6 @@ contract PostOfficeTest is Test {
     function testFuzz_ClaimsNeverExceedEmission(uint32 gap1, uint32 gap2) public {
         gap1 = uint32(bound(gap1, 1, 60 days));
         gap2 = uint32(bound(gap2, 1, 60 days));
-        _mint(alice, 10);
-        _reveal();
         _open(alice, address(0));
         _open(bob, alice);
         uint256 walker = _find(alice, 0);

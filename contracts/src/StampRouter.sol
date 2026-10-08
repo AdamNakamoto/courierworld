@@ -13,6 +13,7 @@ import {SafeTransfer} from "./lib/SafeTransfer.sol";
 
 interface IStampPool {
     function poolKey(address token) external view returns (PoolKey memory);
+    function sellPriceLimit(address token) external view returns (uint160);
     function launches(address token)
         external
         view
@@ -56,6 +57,7 @@ contract StampRouter is IUnlockCallback {
         address user;
         PoolKey key;
         bool zeroForOne;
+        uint160 priceLimit;
         uint256 amountIn;
         uint256 minOut;
     }
@@ -88,7 +90,7 @@ contract StampRouter is IUnlockCallback {
         return _swap(token, false, tokenAmount, minQuoteOut);
     }
 
-    /// @notice Sell with a gasless EIP-2612 approval signed for this router (`value` >= `tokenAmount`).
+    /// @notice Sell with a gasless EIP-2612 approval signed for this router, for exactly `tokenAmount`.
     function sellWithPermit(
         address token,
         uint256 tokenAmount,
@@ -105,10 +107,15 @@ contract StampRouter is IUnlockCallback {
     function _swap(address token, bool isBuy, uint256 amountIn, uint256 minOut) internal returns (uint256 out) {
         if (amountIn == 0 || amountIn > uint256(type(int256).max)) revert BadAmount();
         (,,,, bool quoteIs0) = pad.launches(token);
+        bool zeroForOne = isBuy == quoteIs0; // buying = paying quote in
         SwapData memory data = SwapData({
             user: msg.sender,
             key: pad.poolKey(token),
-            zeroForOne: isBuy == quoteIs0, // buying = paying quote in
+            zeroForOne: zeroForOne,
+            // A sell stops at the launch price: beyond it the pool holds no IMD.
+            priceLimit: isBuy
+                ? (zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1)
+                : pad.sellPriceLimit(token),
             amountIn: amountIn,
             minOut: minOut
         });
@@ -121,11 +128,7 @@ contract StampRouter is IUnlockCallback {
 
         BalanceDelta delta = poolManager.swap(
             d.key,
-            SwapParams({
-                zeroForOne: d.zeroForOne,
-                amountSpecified: -int256(d.amountIn),
-                sqrtPriceLimitX96: d.zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
-            }),
+            SwapParams({zeroForOne: d.zeroForOne, amountSpecified: -int256(d.amountIn), sqrtPriceLimitX96: d.priceLimit}),
             abi.encode(d.user)
         );
         (Currency cIn, Currency cOut) =

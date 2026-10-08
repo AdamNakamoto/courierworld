@@ -20,11 +20,11 @@ from scratch in three.js. No assets, code or text are taken from Messenger.
 ./dev.sh
 ```
 
-Starts a fresh Anvil chain on port 8600, deploys the game contracts (without the trading
-pool), writes `web/chain.json` and serves the site at http://localhost:5792 (collection
-browser at `/studio.html`). Press **P** in game for the post office. Pick a player from the
-panel's menu; Anvil's dev accounts are unlocked, so no wallet is needed. The panel's
-local-chain tools close the mint, reveal the collection, and skip time.
+Starts a fresh Anvil chain on port 8600, deploys the couriers, gives each dev player six
+and reveals them, then deploys the game (without the trading pool), writes `web/chain.json`
+and serves the site at http://localhost:5792 (collection browser at `/studio.html`). Press
+**P** in game for the post office. Pick a player from the panel's menu; Anvil's dev accounts
+are unlocked, so no wallet is needed. The panel's local-chain tools skip time.
 
 ```bash
 ./dev.sh --fork
@@ -44,8 +44,16 @@ Launch rehearsal with your own browser wallet (MetaMask or another extension): y
 as on mainnet, and the page asks the wallet to add the "Courier practice" network (chain ID 466399,
 RPC `http://127.0.0.1:8600`). That ID belongs to no public chain and is never Robinhood Chain's,
 so nothing signed on the practice chain can be replayed on a real one. In the post office panel,
-**+10 play ETH** funds your wallet; the reveal and time skips act as the deployer. After
+**+10 play ETH** funds your wallet and **+3 couriers** hands you some from the dev players. After
 restarting `dev.sh`, MetaMask may show a nonce error: Settings > Advanced > Clear activity tab data.
+
+```bash
+./dev.sh --fork --wallet --staged
+```
+
+The launch as it will happen: only the couriers exist at first, with the mint open, so you mint
+with your wallet; then press Enter in the terminal to reveal them and launch the game, and
+reload the page.
 
 ## On Robinhood Chain
 
@@ -90,37 +98,42 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `StampHook.sol` | v4 hook and pool owner: 4% fee on the IMD side to the protocol, locked launch liquidity, one pool, one-time `openPool`; ownership renounced at deploy |
 | `StampRouter.sol`, `StampEthRouter.sol` | Buy/sell with IMD (and permit sells), or with ETH through the IMD/ETH pool |
 | `StampToken.sol` | $STAMP ("Courier World"): ERC-20 + permit, 21M cap, launch allocation to the hook, minted by the post office; ownership renounced at deploy |
-| `PostOffice.sol` | The game: offices, couriers on duty, levels, emissions, halvings, referrals |
-| `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner`; ownership renounced after the reveal |
+| `PostOffice.sol` | The game: offices, couriers on duty, levels, emissions, halvings, referrals; no owner, deployed only after the reveal |
+| `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner`; ownership renounced when the game launches |
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 
 ```bash
-cd contracts && forge test                                             # 47 tests
+cd contracts && forge test                                             # 86 tests
 forge test --match-contract StampHookForkTest --fork-url robinhood     # real PoolManager, IMD, IMD/ETH pool
 ```
 
 ## Deploying to Robinhood Chain
 
+Two stages, from the same wallet, with the settings in `contracts/launch.env`:
+
 ```bash
 cd contracts
-FEE_RECIPIENT=0x... SEED_COMMIT=$(cast keccak $(cast abi-encode "f(uint256)" $SECRET)) START_MCAP=<IMD wei> \
-  forge script script/DeployMainnet.s.sol --rpc-url robinhood --broadcast --interactive
-./script/export-web.sh   # writes web/deployments/robinhood.json; commit it for Vercel
+./script/deploy-mainnet.sh rehearse                             # both stages on a fork, no transactions
+./script/deploy-mainnet.sh couriers --broadcast --interactive   # stage 1: the NFT, ready to mint
+./script/deploy-mainnet.sh game --broadcast --interactive       # stage 2, after the reveal
 ```
 
-`START_MCAP` sets the launch price as a fully diluted market cap for all 21M $STAMP, in
-IMD. A dry run against a fork uses about 23.4M gas (~0.001 ETH at today's fees).
+Each broadcast runs `export-web.sh`, which writes `web/deployments/robinhood.json`; commit it
+and Vercel serves it. After stage 1 the site shows the mint; after stage 2, the whole game.
+`START_MCAP_USD` sets the launch price as a fully diluted market cap for all 21M $STAMP, in
+dollars, converted to IMD when stage 2 runs. Both stages together use about 23.4M gas
+(~0.001 ETH at today's fees).
 
 ## Launch checklist
 
-Nothing has an owner after launch: the deploy renounces the token, the pool hook, the post office and
-the renderer, and the NFT is renounced right after its reveal. Prices, rates, the fee recipient and the
-treasury are final from then on, so pick addresses that can never be lost (a Safe works well) and that
-accept ETH.
+Nothing has an owner after launch: stage 2 renounces the token, the pool hook, the renderer and
+the NFT, and the post office never has one. Prices, rates, the fee recipient and the treasury are
+final from then on, so pick addresses that can never be lost (a Safe works well) and that accept ETH.
 
 1. Choose the fee recipient, treasury, launch allocation and starting price.
-2. Deploy with a secret's commit; keep the secret private. The script logs every owner: all `0x0` but the NFT's.
+2. Stage 1. Save the reveal secret it prints: nothing can be revealed, and the game can't launch, without it.
 3. Open the mint (`setSaleOpen(true)`). When it's over, `reveal(secret)` ends the sale and reveals the couriers.
-4. Check a few tokens on a marketplace, then `freezeRenderer()` and `renounceOwnership()` on the NFT.
+4. Check a few tokens on a marketplace.
+5. Stage 2. It logs every owner at the end: all `0x0`.
 
 The contracts are audited before the deploy; `AUDIT.md` is the brief for reviewers.

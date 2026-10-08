@@ -1,43 +1,62 @@
 #!/usr/bin/env bash
-# Deploy Courier to Robinhood Chain with the settings in launch.env.
+# Deploy Courier to Robinhood Chain in two stages, with the settings in launch.env.
 #
-#   ./script/deploy-mainnet.sh                         # dry run against a fork (no transactions)
-#   ./script/deploy-mainnet.sh --broadcast --interactive   # real deploy; prompts for the deployer's private key
-#   ./script/deploy-mainnet.sh --broadcast --account <keystore name>
+#   ./script/deploy-mainnet.sh rehearse                              # both stages on a fork, no transactions
+#   ./script/deploy-mainnet.sh couriers                              # stage 1 dry run against a fork
+#   ./script/deploy-mainnet.sh couriers --broadcast --interactive    # stage 1: the NFT, ready to mint
+#   ./script/deploy-mainnet.sh game                                  # stage 2 dry run (after the reveal)
+#   ./script/deploy-mainnet.sh game --broadcast --interactive        # stage 2: token, pool, post office; renounce all
 #
-# The reveal secret: pass your own as SECRET=..., or one is generated. It is printed once and
-# never written to disk. Store it in a password manager: you need it to reveal the collection
-# after the mint (CourierNFT.reveal(secret)), and nobody can reveal without it.
+# Use --account <keystore name> instead of --interactive to sign with a Foundry keystore. Run both stages from the
+# same wallet: stage 2 links the game to the NFT, which only the NFT's owner can do.
+#
+# The reveal secret (stage 1): pass your own as SECRET=..., or one is generated. It is printed once and never
+# written to disk. Store it in a password manager: the collection can only be revealed with it
+# (CourierNFT.reveal(secret)), and the game can only launch after the reveal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
+
+STAGE="${1:-}"
+shift || true
+case "$STAGE" in
+  couriers | game | rehearse) ;;
+  *) echo "Usage: $0 couriers|game|rehearse [--broadcast --interactive | --account <name>]" >&2; exit 1 ;;
+esac
 
 set -a
 source ./launch.env
 set +a
 
-if [ -z "${SECRET:-}" ]; then
+BROADCAST=0
+for a in "$@"; do [ "$a" = "--broadcast" ] && BROADCAST=1; done
+if [ "$BROADCAST" = 1 ] && [ "$STAGE" = rehearse ]; then echo "rehearse never broadcasts" >&2; exit 1; fi
+
+if [ "$STAGE" != game ] && [ -z "${SECRET:-}" ]; then
   SECRET=$(cast to-dec "0x$(openssl rand -hex 32)")
   GENERATED=1
 fi
-export SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")")
+[ -n "${SECRET:-}" ] && export SECRET SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")")
 
-BROADCAST=0
-for a in "$@"; do [ "$a" = "--broadcast" ] && BROADCAST=1; done
+case "$STAGE" in
+  couriers) SCRIPT=(script/DeployCouriers.s.sol) ;;
+  game) SCRIPT=(script/DeployMainnet.s.sol) ;;
+  rehearse) SCRIPT=(script/DeployFork.s.sol --sig "runAll()") ;;
+esac
 
 if [ "$BROADCAST" = 1 ]; then
-  echo "Deploying to Robinhood Chain with:"
+  echo "Stage \"$STAGE\" on Robinhood Chain with:"
   grep -E '^[A-Z_]+=' launch.env | sed 's/^/  /'
-  echo "  SEED_COMMIT=$SEED_COMMIT"
+  [ "$STAGE" = couriers ] && echo "  SEED_COMMIT=$SEED_COMMIT"
   read -r -p "Type DEPLOY to continue: " ok
   [ "$ok" = "DEPLOY" ] || { echo "Cancelled."; exit 1; }
-  forge script script/DeployMainnet.s.sol --rpc-url robinhood "$@"
+  forge script "${SCRIPT[@]}" --rpc-url robinhood "$@"
   ./script/export-web.sh
 else
-  forge script script/DeployMainnet.s.sol --fork-url robinhood "$@"
+  forge script "${SCRIPT[@]}" --fork-url robinhood "$@"
 fi
 
-if [ "${GENERATED:-0}" = 1 ]; then
+if [ "${GENERATED:-0}" = 1 ] && [ "$STAGE" = couriers ]; then
   echo
   echo "Reveal secret for this run (save it now; it is not stored anywhere):"
   echo "  $SECRET"

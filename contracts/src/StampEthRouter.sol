@@ -96,7 +96,8 @@ contract StampEthRouter is IUnlockCallback {
         );
     }
 
-    /// @notice Same as `sellForEth`, with a gasless EIP-2612 approval signed for this router.
+    /// @notice Same as `sellForEth`, with a gasless EIP-2612 approval signed for this router, for exactly
+    ///         `tokenAmount`.
     function sellForEthWithPermit(
         address token,
         uint256 tokenAmount,
@@ -128,11 +129,11 @@ contract StampEthRouter is IUnlockCallback {
         uint256 out;
         if (r.isBuy) {
             // ETH -> IMD
-            BalanceDelta d1 = _swap(imdEthKey(), true, r.amountIn, "");
+            BalanceDelta d1 = _swap(imdEthKey(), true, r.amountIn, _limit(true), "");
             uint256 ethIn = uint256(int256(-d1.amount0()));
             uint256 imdOut = uint256(int256(d1.amount1()));
             // IMD -> $STAMP (the hook takes its fee here)
-            BalanceDelta d2 = _swap(tokenKey, imdIs0, imdOut, abi.encode(r.user));
+            BalanceDelta d2 = _swap(tokenKey, imdIs0, imdOut, _limit(imdIs0), abi.encode(r.user));
             (int128 imdDelta, int128 tokDelta) = imdIs0 ? (d2.amount0(), d2.amount1()) : (d2.amount1(), d2.amount0());
             out = uint256(int256(tokDelta));
             if (out < r.minOut || out == 0) revert Slippage();
@@ -143,8 +144,8 @@ contract StampEthRouter is IUnlockCallback {
             if (imdLeft > 0) poolManager.take(Currency.wrap(IMD), r.user, imdLeft);
             poolManager.take(Currency.wrap(r.token), r.user, out);
         } else {
-            // $STAMP -> IMD
-            BalanceDelta d1 = _swap(tokenKey, !imdIs0, r.amountIn, abi.encode(r.user));
+            // $STAMP -> IMD, stopping at the launch price: beyond it the pool holds no IMD.
+            BalanceDelta d1 = _swap(tokenKey, !imdIs0, r.amountIn, pad.sellPriceLimit(r.token), abi.encode(r.user));
             (int128 imdDelta, int128 tokDelta) = imdIs0 ? (d1.amount0(), d1.amount1()) : (d1.amount1(), d1.amount0());
             uint256 imdOut = uint256(int256(imdDelta));
             uint256 tokIn = uint256(int256(-tokDelta));
@@ -154,7 +155,7 @@ contract StampEthRouter is IUnlockCallback {
             poolManager.settle();
 
             // IMD -> ETH
-            BalanceDelta d2 = _swap(imdEthKey(), false, imdOut, "");
+            BalanceDelta d2 = _swap(imdEthKey(), false, imdOut, _limit(false), "");
             out = uint256(int256(d2.amount0()));
             if (out < r.minOut || out == 0) revert Slippage();
             uint256 imdLeft = imdOut - uint256(int256(-d2.amount1()));
@@ -164,18 +165,18 @@ contract StampEthRouter is IUnlockCallback {
         return abi.encode(out);
     }
 
+    function _limit(bool zeroForOne) internal pure returns (uint160) {
+        return zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1;
+    }
+
     /// @dev `hookData` carries the user on the $STAMP pool's swap, so the hook logs the right trader.
-    function _swap(PoolKey memory key, bool zeroForOne, uint256 amountIn, bytes memory hookData)
+    function _swap(PoolKey memory key, bool zeroForOne, uint256 amountIn, uint160 priceLimit, bytes memory hookData)
         internal
         returns (BalanceDelta)
     {
         return poolManager.swap(
             key,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(amountIn),
-                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
-            }),
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: -int256(amountIn), sqrtPriceLimitX96: priceLimit}),
             hookData
         );
     }

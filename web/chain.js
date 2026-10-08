@@ -32,11 +32,13 @@ const ERROR_TEXT = {
   BadAmount: "Enter an amount to trade.",
   PermitFailed: "The wallet signature didn't work. Try again.",
   TransferFailed: "A token transfer failed. Check your balance.",
+  PriceLimitAlreadyExceeded: "The pool doesn't hold any IMD to pay for sells right now.",
 };
 
 // Uniswap v4 wraps a hook's revert; the reason inside is what the player needs.
 const V4_ABI = parseAbi([
   "error WrappedError(address target, bytes4 selector, bytes reason, bytes details)",
+  "error PriceLimitAlreadyExceeded(uint160 sqrtPriceCurrentX96, uint160 sqrtPriceLimitX96)",
   "function extsload(bytes32 slot) view returns (bytes32)",
 ]);
 const ERC20_ABI = parseAbi([
@@ -93,16 +95,18 @@ export async function connectChain() {
     chain, transport: http(dep.rpcUrl), pollingInterval: 500, batch: { multicall: !!dep.contracts.multicall3 },
   });
   const test = dep.local ? createTestClient({ chain, mode: "anvil", transport: http(dep.rpcUrl) }) : null;
+  // Stage 1 of the launch has only the couriers; the game (token, post office, pool) comes after the reveal.
+  const game = !!dep.contracts.office;
   const errors = [
-    ...dep.abis.stamp, ...dep.abis.nft, ...dep.abis.office,
+    ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
     ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
   const C = {
-    stamp: { address: dep.contracts.stamp, abi: withErrors(dep.abis.stamp) },
     nft: { address: dep.contracts.nft, abi: withErrors(dep.abis.nft) },
-    office: { address: dep.contracts.office, abi: withErrors(dep.abis.office) },
+    stamp: game ? { address: dep.contracts.stamp, abi: withErrors(dep.abis.stamp) } : null,
+    office: game ? { address: dep.contracts.office, abi: withErrors(dep.abis.office) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -130,7 +134,7 @@ export async function connectChain() {
   }
 
   const tiers = [];
-  {
+  if (game) {
     const n = Number(await read(C.office, "tierCount"));
     for (let i = 0; i < n; i++) {
       const [slots, routes, upgradeCost] = await read(C.office, "tiers", [BigInt(i)]);
@@ -161,25 +165,36 @@ export async function connectChain() {
   let onAccount = null;
 
   async function snapshot() {
-    const [block, minted, price, saleOpen, seed, totalPower, rewardPerBlock, officePrice, cooldown, levelBase] = await Promise.all([
+    const [block, minted, price, saleOpen, seed] = await Promise.all([
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
-      read(C.office, "totalPower"), read(C.office, "rewardPerBlock"), read(C.office, "officePrice"),
-      read(C.office, "upgradeCooldown"), read(C.office, "levelCostBase"),
     ]);
     const s = {
-      now: block.timestamp, minted: Number(minted), price, saleOpen, seed, totalPower, rewardPerBlock,
-      officePrice, cooldown, levelBase, tiers, account, accounts, local: dep.local, explorer: dep.explorer,
-      devAccounts: !browserWallet, browserWallet,
+      now: block.timestamp, minted: Number(minted), price, saleOpen, seed, game, tiers, account, accounts,
+      local: dep.local, explorer: dep.explorer, devAccounts: !browserWallet, browserWallet,
     };
+    if (game) {
+      const [totalPower, rewardPerBlock, officePrice, cooldown, levelBase] = await Promise.all([
+        read(C.office, "totalPower"), read(C.office, "rewardPerBlock"), read(C.office, "officePrice"),
+        read(C.office, "UPGRADE_COOLDOWN"), read(C.office, "LEVEL_COST_BASE"),
+      ]);
+      Object.assign(s, { totalPower, rewardPerBlock, officePrice, cooldown, levelBase });
+    }
     if (!account) return s;
-    const [o, pending, stampBal, eth, allowance, mine, imd] = await Promise.all([
-      read(C.office, "offices", [account]), read(C.office, "pendingRewards", [account]), read(C.stamp, "balanceOf", [account]),
-      pub.getBalance({ address: account }), read(C.stamp, "allowance", [account, C.office.address]),
-      read(C.nft, "tokensOfOwner", [account]).then((ids) => ids.map(Number)),
-      T ? read(T.imd, "balanceOf", [account]) : null,
+    const [eth, mine] = await Promise.all([
+      pub.getBalance({ address: account }), read(C.nft, "tokensOfOwner", [account]).then((ids) => ids.map(Number)),
+    ]);
+    s.eth = eth;
+    if (!game) {
+      s.mine = mine.map((id) => ({ id, level: 1, onDuty: false }));
+      return s;
+    }
+    const [o, [pending], stampBal, allowance, imd] = await Promise.all([
+      // What a claim mints for this player: after the inviter's cut and the supply cap.
+      read(C.office, "offices", [account]), read(C.office, "claimable", [account]), read(C.stamp, "balanceOf", [account]),
+      read(C.stamp, "allowance", [account, C.office.address]), T ? read(T.imd, "balanceOf", [account]) : null,
     ]);
     s.office = { open: o[0], tier: Number(o[1]), onDuty: Number(o[2]), routesUsed: Number(o[3]), lastUpgrade: o[4], referrer: o[5], power: o[6] };
-    Object.assign(s, { pending, stamp: stampBal, eth, allowance, imd });
+    Object.assign(s, { pending, stamp: stampBal, allowance, imd });
     const [levels, duty] = await Promise.all([
       Promise.all(mine.map((id) => read(C.office, "levelOf", [BigInt(id)]))),
       Promise.all(mine.map((id) => read(C.office, "dutyOf", [BigInt(id)]))),
@@ -339,6 +354,18 @@ export async function connectChain() {
     /// Local chain only: reveal with the dev secret, as the owner (the reveal also ends the sale).
     async devReveal() {
       await send(C.nft, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
+    },
+    /// Local chain only: move `n` couriers from the dev players to the logged-in wallet.
+    async devCouriers(n) {
+      for (const from of accounts.slice(2)) {
+        const ids = await read(C.nft, "tokensOfOwner", [from]);
+        for (const id of ids) {
+          if (n === 0) return;
+          if (await read(C.nft, "locked", [id])) continue;
+          await send(C.nft, "transferFrom", [from, account, id], undefined, from, devWallet);
+          n--;
+        }
+      }
     },
     /// Local chain only: top up the logged-in wallet with play ETH.
     async devFund() {

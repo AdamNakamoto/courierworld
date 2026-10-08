@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {StampToken} from "./StampToken.sol";
@@ -13,10 +12,12 @@ import {CourierNFT} from "./CourierNFT.sol";
 ///         Every office comes with a trainee so you can start without an NFT. Rewards
 ///         halve every HALVING_INTERVAL blocks, converging on the 21M cap. $STAMP is
 ///         spent levelling couriers and growing the office; most of it is burned.
+///         Nobody owns this contract: prices, rates and tiers are fixed at deployment.
 /// @dev Blocks are virtual (one every `blockTimeMs` since deployment), so the schedule
 ///      is the same on any chain. Rewards use a cumulative reward-per-power
-///      accumulator, so every action is O(1).
-contract PostOffice is Ownable2Step, ReentrancyGuard {
+///      accumulator, so every action is O(1). Deploy only after the couriers are
+///      revealed, so emissions never start while couriers can't go on duty.
+contract PostOffice is ReentrancyGuard {
     // ---------------------------------------------------------------------
     // Constants
     // ---------------------------------------------------------------------
@@ -28,8 +29,10 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
 
     uint256 public constant TRAINEE_POWER = 60;
     uint8 public constant MAX_LEVEL = 10;
-    uint256 public constant MAX_REFERRAL_BPS = 1_000;
-    uint256 public constant MAX_UPGRADE_COOLDOWN = 7 days;
+    uint256 public constant BURN_BPS = 7_500; // of $STAMP spent; the rest goes to the treasury
+    uint256 public constant REFERRAL_BPS = 250; // of each claim, to the inviter
+    uint256 public constant UPGRADE_COOLDOWN = 24 hours;
+    uint256 public constant LEVEL_COST_BASE = 25e18;
 
     StampToken public immutable stamp;
     CourierNFT public immutable couriers;
@@ -38,6 +41,8 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
     /// @notice First-era reward per block. Total emission is initialReward × 2 × HALVING_INTERVAL, so set it to
     ///         (21M − launch allocation) / 8.4M: 2.5 with no allocation, 2.25 with 2.1M in the pool.
     uint256 public immutable initialReward;
+    uint256 public immutable officePrice;
+    address public immutable treasury;
 
     // ---------------------------------------------------------------------
     // State
@@ -57,7 +62,7 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         uint64 lastUpgrade;
         address referrer;
         uint256 power;
-        uint256 rewardDebt;
+        uint256 rewardDebt; // power × accRewardPerPower, kept unscaled so each payout rounds down once
         uint256 pending;
     }
 
@@ -71,13 +76,6 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
     uint256 public lastRewardBlock;
     uint256 public totalEmitted;
 
-    uint256 public officePrice;
-    address public treasury;
-    uint256 public burnBps = 7_500;
-    uint256 public referralBps = 250;
-    uint256 public upgradeCooldown = 24 hours;
-    uint256 public levelCostBase = 25e18;
-
     // ---------------------------------------------------------------------
     // Events and errors
     // ---------------------------------------------------------------------
@@ -89,13 +87,10 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
     event CourierLeveled(uint256 indexed tokenId, uint8 level, uint256 cost);
     event Claimed(address indexed owner, uint256 amount, address indexed referrer, uint256 referralAmount);
     event StampSpent(address indexed spender, uint256 burned, uint256 toTreasury);
-    event TierAdded(uint256 indexed tier);
-    event SettingsUpdated();
 
     error AlreadyOpen();
     error NotOpen();
     error WrongPayment();
-    error NoTiers();
     error NotCourierOwner();
     error AlreadyOnDuty();
     error NotOnDuty();
@@ -107,7 +102,10 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
     error InvalidTier();
     error InvalidSetting();
     error NothingToClaim();
+    error CouriersNotRevealed();
 
+    /// @param tiers_ Office tiers, smallest first; they never shrink, so couriers on duty always still fit after an
+    ///        upgrade. The first tier's upgradeCost is unused.
     constructor(
         StampToken stamp_,
         CourierNFT couriers_,
@@ -115,10 +113,18 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         uint256 initialReward_,
         uint256 officePrice_,
         address treasury_,
-        address owner_
-    ) Ownable(owner_) {
+        Tier[] memory tiers_
+    ) {
         if (blockTimeMs_ == 0 || initialReward_ == 0 || treasury_ == address(0)) revert InvalidSetting();
         if (initialReward_ * 2 * HALVING_INTERVAL > stamp_.MAX_SUPPLY() - stamp_.totalMinted()) revert InvalidSetting();
+        if (couriers_.seed() == 0) revert CouriersNotRevealed();
+        if (tiers_.length == 0 || tiers_.length > uint256(type(uint8).max) + 1) revert InvalidTier();
+        for (uint256 i; i < tiers_.length; i++) {
+            Tier memory t = tiers_[i];
+            if (t.slots == 0 || t.routes == 0) revert InvalidTier();
+            if (i > 0 && (t.slots < tiers_[i - 1].slots || t.routes < tiers_[i - 1].routes)) revert InvalidTier();
+            tiers.push(t);
+        }
         stamp = stamp_;
         couriers = couriers_;
         blockTimeMs = blockTimeMs_;
@@ -153,9 +159,9 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice $STAMP to go from `level0 + 1` to `level0 + 2`: base × level².
-    function levelCost(uint8 level0) public view returns (uint256) {
+    function levelCost(uint8 level0) public pure returns (uint256) {
         uint256 l = uint256(level0) + 1;
-        return levelCostBase * l * l;
+        return LEVEL_COST_BASE * l * l;
     }
 
     // ---------------------------------------------------------------------
@@ -167,13 +173,12 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         Office storage o = offices[msg.sender];
         if (o.open) revert AlreadyOpen();
         if (msg.value != officePrice) revert WrongPayment();
-        if (tiers.length == 0) revert NoTiers();
 
         o.open = true;
         if (referrer != msg.sender) o.referrer = referrer;
         _addPower(o, TRAINEE_POWER);
         emit OfficeOpened(msg.sender, o.referrer);
-        // Paid straight to the treasury, so nothing is held here once ownership is renounced.
+        // Paid straight to the treasury: this contract never holds ETH.
         Address.sendValue(payable(treasury), msg.value);
     }
 
@@ -234,7 +239,7 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         uint256 next = uint256(o.tier) + 1;
         if (next >= tiers.length) revert MaxTier();
         if (o.lastUpgrade != 0) {
-            uint256 readyAt = o.lastUpgrade + upgradeCooldown;
+            uint256 readyAt = o.lastUpgrade + UPGRADE_COOLDOWN;
             if (block.timestamp < readyAt) revert CooldownActive(readyAt);
         }
         _spend(tiers[next].upgradeCost);
@@ -247,7 +252,6 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
     function claim() external nonReentrant {
         Office storage o = offices[msg.sender];
         _checkpoint(o);
-        o.rewardDebt = o.power * accRewardPerPower / PRECISION;
 
         uint256 amount = o.pending;
         if (amount == 0) revert NothingToClaim();
@@ -258,7 +262,7 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
 
         uint256 refAmount;
         if (o.referrer != address(0)) {
-            refAmount = amount * referralBps / BPS;
+            refAmount = amount * REFERRAL_BPS / BPS;
             if (refAmount > 0) stamp.mint(o.referrer, refAmount);
         }
         stamp.mint(msg.sender, amount - refAmount);
@@ -278,70 +282,28 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         return era >= MAX_ERAS ? 0 : initialReward >> era;
     }
 
-    function pendingRewards(address owner) external view returns (uint256) {
+    /// @notice Everything `owner` has earned and not claimed, before the referral cut and the supply cap.
+    function pendingRewards(address owner) public view returns (uint256) {
         Office storage o = offices[owner];
         uint256 acc = accRewardPerPower;
         uint256 nowBlock = currentBlock();
         if (nowBlock > lastRewardBlock && totalPower > 0) {
             acc += _emissionBetween(lastRewardBlock, nowBlock) * PRECISION / totalPower;
         }
-        return o.pending + o.power * acc / PRECISION - o.rewardDebt;
+        return o.pending + (o.power * acc - o.rewardDebt) / PRECISION;
+    }
+
+    /// @notice What `claim` would mint right now: to the owner, and to their referrer.
+    function claimable(address owner) external view returns (uint256 amount, uint256 referralAmount) {
+        uint256 gross = pendingRewards(owner);
+        uint256 room = stamp.MAX_SUPPLY() - stamp.totalMinted();
+        if (gross > room) gross = room;
+        if (offices[owner].referrer != address(0)) referralAmount = gross * REFERRAL_BPS / BPS;
+        amount = gross - referralAmount;
     }
 
     function tierCount() external view returns (uint256) {
         return tiers.length;
-    }
-
-    // ---------------------------------------------------------------------
-    // Admin
-    // ---------------------------------------------------------------------
-
-    /// @notice Tiers never shrink, so couriers on duty always still fit after an upgrade.
-    function addTier(uint8 slots, uint16 routes, uint256 upgradeCost) external onlyOwner {
-        uint256 n = tiers.length;
-        if (slots == 0 || routes == 0 || n > type(uint8).max) revert InvalidTier();
-        if (n > 0 && (slots < tiers[n - 1].slots || routes < tiers[n - 1].routes)) revert InvalidTier();
-        tiers.push(Tier(slots, routes, upgradeCost));
-        emit TierAdded(n);
-    }
-
-    function setTierUpgradeCost(uint256 tier, uint256 cost) external onlyOwner {
-        tiers[tier].upgradeCost = cost;
-        emit SettingsUpdated();
-    }
-
-    function setOfficePrice(uint256 price) external onlyOwner {
-        officePrice = price;
-        emit SettingsUpdated();
-    }
-
-    function setLevelCostBase(uint256 base) external onlyOwner {
-        levelCostBase = base;
-        emit SettingsUpdated();
-    }
-
-    function setTreasury(address treasury_) external onlyOwner {
-        if (treasury_ == address(0)) revert InvalidSetting();
-        treasury = treasury_;
-        emit SettingsUpdated();
-    }
-
-    function setBurnBps(uint256 bps) external onlyOwner {
-        if (bps > BPS) revert InvalidSetting();
-        burnBps = bps;
-        emit SettingsUpdated();
-    }
-
-    function setReferralBps(uint256 bps) external onlyOwner {
-        if (bps > MAX_REFERRAL_BPS) revert InvalidSetting();
-        referralBps = bps;
-        emit SettingsUpdated();
-    }
-
-    function setUpgradeCooldown(uint256 cooldown) external onlyOwner {
-        if (cooldown > MAX_UPGRADE_COOLDOWN) revert InvalidSetting();
-        upgradeCooldown = cooldown;
-        emit SettingsUpdated();
     }
 
     // ---------------------------------------------------------------------
@@ -352,18 +314,19 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         _checkpoint(o);
         o.power += p;
         totalPower += p;
-        o.rewardDebt = o.power * accRewardPerPower / PRECISION;
+        o.rewardDebt = o.power * accRewardPerPower;
     }
 
     function _removePower(Office storage o, uint256 p) internal {
         _checkpoint(o);
         o.power -= p;
         totalPower -= p;
-        o.rewardDebt = o.power * accRewardPerPower / PRECISION;
+        o.rewardDebt = o.power * accRewardPerPower;
     }
 
-    /// @dev Advance the global accumulator, then bank the office's earnings at its
-    ///      current power. Callers reset rewardDebt after changing power.
+    /// @dev Advance the global accumulator, then bank the office's earnings at its current power.
+    ///      Each stretch at one power is divided by PRECISION once, rounding down, so offices never
+    ///      receive more than their exact share and the total paid never exceeds `totalEmitted`.
     function _checkpoint(Office storage o) internal {
         uint256 nowBlock = currentBlock();
         if (nowBlock > lastRewardBlock) {
@@ -374,9 +337,9 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
             }
             lastRewardBlock = nowBlock;
         }
-        if (o.power > 0) {
-            o.pending += o.power * accRewardPerPower / PRECISION - o.rewardDebt;
-        }
+        uint256 accrued = o.power * accRewardPerPower;
+        if (accrued > o.rewardDebt) o.pending += (accrued - o.rewardDebt) / PRECISION;
+        o.rewardDebt = accrued;
     }
 
     /// @dev Sum of block rewards over [fromBlock, toBlock), crossing halvings as needed.
@@ -391,10 +354,10 @@ contract PostOffice is Ownable2Step, ReentrancyGuard {
         }
     }
 
-    /// @dev Burns burnBps of `amount` and sends the rest to the treasury.
+    /// @dev Burns BURN_BPS of `amount` and sends the rest to the treasury.
     function _spend(uint256 amount) internal {
         if (amount == 0) return;
-        uint256 burned = amount * burnBps / BPS;
+        uint256 burned = amount * BURN_BPS / BPS;
         uint256 rest = amount - burned;
         if (burned > 0) stamp.burnFrom(msg.sender, burned);
         if (rest > 0) stamp.transferFrom(msg.sender, treasury, rest);

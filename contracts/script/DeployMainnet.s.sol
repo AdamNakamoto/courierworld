@@ -33,78 +33,112 @@ interface IAggregatorV3 {
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
 }
 
-/// @notice Deploys everything on Robinhood Chain and opens the taxed $STAMP/IMD pool:
-///   StampHook (mined CREATE2 address) with its IMD and ETH routers, $STAMP (launch allocation minted to the hook,
-///   then token ownership renounced), Courier NFT + on-chain renderer, and the post office. Everything but the
-///   NFT is renounced here; the NFT's owner runs the mint and reveal, then renounces.
-///
-///   FEE_RECIPIENT=0x... SEED_COMMIT=0x... START_MCAP=<IMD wei> \
-///   forge script script/DeployMainnet.s.sol --rpc-url robinhood --broadcast --interactive
-///
-/// Required env:
-///   FEE_RECIPIENT  receives the 4% trading fee (in IMD)
-///   SEED_COMMIT    keccak256(abi.encode(secret)); keep the secret until the mint is over, then reveal(secret)
-///   START_MCAP_USD launch price as a fully diluted market cap for all 21M $STAMP, in whole US dollars; converted
-///                  to IMD at deploy time from the IMD/ETH pool and Chainlink ETH/USD. Or set START_MCAP (IMD wei).
-/// Optional env:
-///   TREASURY (default FEE_RECIPIENT)  mint, post office and $STAMP-spend revenue
-///   LAUNCH_STAMP (default 2,100,000e18)  $STAMP locked single-sided in the pool
-///   MINT_PRICE (0.003 ether), OFFICE_PRICE (0.005 ether), BLOCK_TIME_MS (1100), OPEN_SALE (false), SALT_START (0)
-contract DeployMainnet is Script {
-    struct Deployed {
-        address hook;
-        address stamp;
+/// @notice The two launch stages, shared by the mainnet scripts and the dev ones.
+///   1. Couriers: the NFT and its on-chain art. The mint runs; the owner reveals when it's over.
+///   2. Game, once the couriers are revealed (PostOffice refuses to deploy before): StampHook (mined CREATE2
+///      address) with its routers, $STAMP (launch allocation to the hook), the post office. Everything is linked,
+///      then renounced: token, hook, renderer and NFT. The post office never has an owner.
+abstract contract CourierDeployer is Script {
+    struct Couriers {
         address nft;
-        address office;
         address renderer;
     }
 
-    function run() external {
-        address feeRecipient = vm.envAddress("FEE_RECIPIENT");
-        address treasury = vm.envOr("TREASURY", feeRecipient);
-        bytes32 commit = vm.envBytes32("SEED_COMMIT");
-        uint256 startMcap = vm.envOr("START_MCAP", uint256(0));
-        if (startMcap == 0) startMcap = _usdToImd(vm.envUint("START_MCAP_USD"));
-        console.log("Launch FDV (IMD wei)", startMcap);
-        uint256 launch = vm.envOr("LAUNCH_STAMP", uint256(2_100_000e18));
+    struct Game {
+        address hook;
+        address stamp;
+        address office;
+    }
 
-        vm.startBroadcast();
-        address deployer = msg.sender;
-        Deployed memory d = _deploy(deployer, feeRecipient, treasury, commit, startMcap, launch);
-        vm.stopBroadcast();
+    /// @dev Office tiers, smallest first.
+    function _tiers() internal pure returns (PostOffice.Tier[] memory t) {
+        t = new PostOffice.Tier[](5);
+        //                    slots routes upgradeCost
+        t[0] = PostOffice.Tier(2, 3, 0); // Kiosk
+        t[1] = PostOffice.Tier(4, 7, 100e18); // Branch
+        t[2] = PostOffice.Tier(6, 14, 400e18); // Depot
+        t[3] = PostOffice.Tier(9, 24, 1_500e18); // Hub
+        t[4] = PostOffice.Tier(12, 40, 5_000e18); // HQ
+    }
 
-        console.log("StampHook   ", d.hook);
-        console.log("Router      ", StampHook(d.hook).router());
-        console.log("EthRouter   ", StampHook(d.hook).ethRouter());
-        console.log("StampToken  ", d.stamp);
-        console.log("CourierNFT  ", d.nft);
-        console.log("PostOffice  ", d.office);
-        console.log("Renderer    ", d.renderer);
-        console.log("STAMP price at launch (IMD wei per STAMP)", StampHook(d.hook).price(d.stamp));
-        console.log("FDV at launch (IMD wei, 21M STAMP)        ", StampHook(d.hook).marketCap(d.stamp));
-        // Every owner should be 0 except the NFT's, which renounces after the reveal.
-        console.log("Owner: StampToken ", StampToken(d.stamp).owner());
-        console.log("Owner: StampHook  ", StampHook(d.hook).owner());
-        console.log("Owner: PostOffice ", PostOffice(d.office).owner());
-        console.log("Owner: Renderer   ", CourierRenderer(d.renderer).owner());
-        console.log("Owner: CourierNFT ", CourierNFT(d.nft).owner());
+    /// @dev Stage 1: the NFT, with its on-chain art already attached.
+    function _deployCouriers(address deployer, address treasury, uint256 mintPrice, bytes32 commit)
+        internal
+        returns (Couriers memory c)
+    {
+        CourierNFT nft = new CourierNFT(deployer, treasury, mintPrice, commit);
+        CourierRenderer renderer = new CourierRenderer(ICourierSeed(address(nft)), new CourierSVG(), deployer);
+        nft.setRenderer(ICourierRenderer(address(renderer)));
+        c = Couriers(address(nft), address(renderer));
+    }
 
-        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
-        string memory json = "courier";
-        vm.serializeUint(json, "chainId", block.chainid);
-        vm.serializeAddress(json, "hook", d.hook);
-        vm.serializeAddress(json, "router", StampHook(d.hook).router());
-        vm.serializeAddress(json, "ethRouter", StampHook(d.hook).ethRouter());
-        vm.serializeAddress(json, "stamp", d.stamp);
-        vm.serializeAddress(json, "nft", d.nft);
-        vm.serializeAddress(json, "office", d.office);
-        vm.serializeAddress(json, "renderer", d.renderer);
-        vm.serializeAddress(json, "imd", RobinhoodConfig.IMD);
-        vm.serializeAddress(json, "feeRecipient", feeRecipient);
-        vm.serializeAddress(json, "treasury", treasury);
-        vm.serializeUint(json, "launchStamp", launch);
-        string memory out = vm.serializeUint(json, "startMarketCapImd", startMcap);
-        vm.writeJson(out, "./deployments/robinhood.json");
+    /// @dev Stage 2. `deployer` must own the NFT and the renderer, and the couriers must be revealed.
+    function _deployGame(
+        address deployer,
+        address feeRecipient,
+        address treasury,
+        uint256 startMcap,
+        uint256 launch,
+        uint256 officePrice,
+        uint256 blockTimeMs,
+        Couriers memory c
+    ) internal returns (Game memory g) {
+        // The hook, at an address carrying its permission flags.
+        bytes memory initCode = abi.encodePacked(
+            type(StampHook).creationCode,
+            abi.encode(
+                RobinhoodConfig.POOL_MANAGER,
+                RobinhoodConfig.IMD,
+                deployer,
+                feeRecipient,
+                DeployLib.startTickForMarketCap(startMcap, 21_000_000e18),
+                launch,
+                StampHook.ImdEthPool(RobinhoodConfig.IMD_ETH_FEE, RobinhoodConfig.IMD_ETH_SPACING, address(0))
+            )
+        );
+        (bytes32 salt, address expected) =
+            DeployLib.mineSalt(CREATE2_FACTORY, RobinhoodConfig.HOOK_FLAGS, initCode, vm.envOr("SALT_START", uint256(0)));
+        require(expected.code.length == 0, "already deployed at mined address");
+        (bool ok,) = CREATE2_FACTORY.call(abi.encodePacked(salt, initCode));
+        require(ok && expected.code.length > 0, "hook deploy failed");
+        g.hook = expected;
+
+        // $STAMP: launch allocation to the hook; the rest is emitted by the post office, totalling 21M.
+        StampToken stamp = new StampToken(deployer, g.hook, launch);
+        g.stamp = address(stamp);
+        uint256 reward = (stamp.MAX_SUPPLY() - launch) / (2 * 4_200_000);
+        PostOffice office =
+            new PostOffice(stamp, CourierNFT(c.nft), blockTimeMs, reward, officePrice, treasury, _tiers());
+        g.office = address(office);
+
+        // Link everything, then give it all up.
+        stamp.setMinter(address(office));
+        stamp.renounceOwnership();
+        CourierNFT(c.nft).setGame(address(office));
+        CourierRenderer(c.renderer).setOffice(ICourierDuty(address(office)));
+        CourierRenderer(c.renderer).renounceOwnership();
+        StampHook(g.hook).openPool(address(stamp)); // locks the launch allocation forever
+        StampHook(g.hook).renounceOwnership(); // the fee recipient is final
+        CourierNFT(c.nft).freezeRenderer(); // the art is final
+        CourierNFT(c.nft).renounceOwnership();
+    }
+
+    /// @dev Dev chains only: the deployer mints `each` couriers for every player, hands them over, and reveals.
+    function _mintAndReveal(address deployer, Couriers memory c, address[] memory players, uint256 each, uint256 secret)
+        internal
+    {
+        CourierNFT nft = CourierNFT(c.nft);
+        if (!nft.saleOpen()) nft.setSaleOpen(true);
+        uint256 total = players.length * each;
+        uint256 first = nft.totalMinted() + 1;
+        for (uint256 minted; minted < total; minted += 10) {
+            uint256 k = total - minted < 10 ? total - minted : 10;
+            nft.mint{value: nft.price() * k}(k);
+        }
+        for (uint256 i; i < total; i++) {
+            nft.transferFrom(deployer, players[i / each], first + i);
+        }
+        nft.reveal(secret);
     }
 
     /// @dev $usd in IMD wei, from the IMD/ETH pool price and Chainlink ETH/USD (refuses a feed older than a day).
@@ -124,65 +158,89 @@ contract DeployMainnet is Script {
         return imd;
     }
 
-    function _deploy(address deployer, address feeRecipient, address treasury, bytes32 commit, uint256 startMcap, uint256 launch)
-        internal
-        returns (Deployed memory d)
-    {
-        // 1. The hook, at an address carrying its permission flags.
-        bytes memory initCode = abi.encodePacked(
-            type(StampHook).creationCode,
-            abi.encode(
-                RobinhoodConfig.POOL_MANAGER,
-                RobinhoodConfig.IMD,
-                deployer,
-                feeRecipient,
-                DeployLib.startTickForMarketCap(startMcap, 21_000_000e18),
-                launch,
-                StampHook.ImdEthPool(RobinhoodConfig.IMD_ETH_FEE, RobinhoodConfig.IMD_ETH_SPACING, address(0))
-            )
+    function _startMcap() internal view returns (uint256 startMcap) {
+        startMcap = vm.envOr("START_MCAP", uint256(0));
+        if (startMcap == 0) startMcap = _usdToImd(vm.envOr("START_MCAP_USD", uint256(3_000)));
+        console.log("Launch FDV (IMD wei)", startMcap);
+    }
+
+    function _log(Couriers memory c, Game memory g) internal view {
+        console.log("CourierNFT", c.nft);
+        console.log("Renderer", c.renderer);
+        if (g.hook == address(0)) return;
+        console.log("StampHook", g.hook);
+        console.log("Router", StampHook(g.hook).router());
+        console.log("EthRouter", StampHook(g.hook).ethRouter());
+        console.log("StampToken", g.stamp);
+        console.log("PostOffice", g.office);
+        console.log("STAMP price at launch (IMD wei per STAMP)", StampHook(g.hook).price(g.stamp));
+        console.log("FDV at launch (IMD wei, 21M STAMP)        ", StampHook(g.hook).marketCap(g.stamp));
+        // Nothing should have an owner left (the post office never has one).
+        console.log("Owner: StampToken ", StampToken(g.stamp).owner());
+        console.log("Owner: StampHook  ", StampHook(g.hook).owner());
+        console.log("Owner: Renderer   ", CourierRenderer(c.renderer).owner());
+        console.log("Owner: CourierNFT ", CourierNFT(c.nft).owner());
+    }
+}
+
+/// @notice Stage 2 on Robinhood Chain, once the couriers (DeployCouriers.s.sol) are minted and revealed.
+///
+///   ./script/deploy-mainnet.sh game --broadcast --interactive
+///
+/// Env: FEE_RECIPIENT (the 4% trading fee, in IMD), TREASURY (default FEE_RECIPIENT), START_MCAP_USD (launch price
+/// as a fully diluted market cap for all 21M $STAMP in whole dollars, converted to IMD from the IMD/ETH pool and
+/// Chainlink ETH/USD; or START_MCAP in IMD wei), LAUNCH_STAMP (2,100,000e18), OFFICE_PRICE (0.005 ether),
+/// BLOCK_TIME_MS (1100), SALT_START (0). The couriers come from deployments/robinhood-couriers.json, or NFT and
+/// RENDERER. Run it from the wallet that deployed the couriers.
+contract DeployMainnet is CourierDeployer {
+    function run() external {
+        address feeRecipient = vm.envAddress("FEE_RECIPIENT");
+        address treasury = vm.envOr("TREASURY", feeRecipient);
+        uint256 launch = vm.envOr("LAUNCH_STAMP", uint256(2_100_000e18));
+        Couriers memory c = _couriers();
+        require(CourierNFT(c.nft).seed() != 0, "reveal the couriers first");
+        uint256 startMcap = _startMcap();
+
+        vm.startBroadcast();
+        require(CourierNFT(c.nft).owner() == msg.sender, "run this from the wallet that owns the couriers");
+        Game memory g = _deployGame(
+            msg.sender,
+            feeRecipient,
+            treasury,
+            startMcap,
+            launch,
+            vm.envOr("OFFICE_PRICE", uint256(0.005 ether)),
+            vm.envOr("BLOCK_TIME_MS", uint256(1_100)),
+            c
         );
-        (bytes32 salt, address expected) =
-            DeployLib.mineSalt(CREATE2_FACTORY, RobinhoodConfig.HOOK_FLAGS, initCode, vm.envOr("SALT_START", uint256(0)));
-        require(expected.code.length == 0, "already deployed at mined address");
-        (bool ok,) = CREATE2_FACTORY.call(abi.encodePacked(salt, initCode));
-        require(ok && expected.code.length > 0, "hook deploy failed");
-        d.hook = expected;
+        vm.stopBroadcast();
+        _log(c, g);
 
-        // 2. $STAMP: launch allocation to the hook; the rest is emitted by the post office, totalling 21M.
-        StampToken stamp = new StampToken(deployer, d.hook, launch);
-        d.stamp = address(stamp);
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
+        string memory json = "courier";
+        vm.serializeUint(json, "chainId", block.chainid);
+        vm.serializeAddress(json, "hook", g.hook);
+        vm.serializeAddress(json, "router", StampHook(g.hook).router());
+        vm.serializeAddress(json, "ethRouter", StampHook(g.hook).ethRouter());
+        vm.serializeAddress(json, "stamp", g.stamp);
+        vm.serializeAddress(json, "nft", c.nft);
+        vm.serializeAddress(json, "office", g.office);
+        vm.serializeAddress(json, "renderer", c.renderer);
+        vm.serializeAddress(json, "imd", RobinhoodConfig.IMD);
+        vm.serializeAddress(json, "feeRecipient", feeRecipient);
+        vm.serializeAddress(json, "treasury", treasury);
+        vm.serializeUint(json, "launchStamp", launch);
+        string memory out = vm.serializeUint(json, "startMarketCapImd", startMcap);
+        vm.writeJson(out, "./deployments/robinhood.json");
+    }
 
-        // 3. Couriers, the post office and the on-chain art.
-        CourierNFT nft = new CourierNFT(deployer, treasury, vm.envOr("MINT_PRICE", uint256(0.003 ether)), commit);
-        d.nft = address(nft);
-        uint256 reward = (stamp.MAX_SUPPLY() - launch) / (2 * 4_200_000);
-        PostOffice office = new PostOffice(
-            stamp, nft, vm.envOr("BLOCK_TIME_MS", uint256(1_100)), reward,
-            vm.envOr("OFFICE_PRICE", uint256(0.005 ether)), treasury, deployer
-        );
-        d.office = address(office);
-        CourierRenderer renderer = new CourierRenderer(ICourierSeed(address(nft)), new CourierSVG(), deployer);
-        d.renderer = address(renderer);
-
-        stamp.setMinter(address(office));
-        stamp.renounceOwnership(); // the token has no owner powers left
-        nft.setGame(address(office));
-        nft.setRenderer(ICourierRenderer(address(renderer)));
-        renderer.setOffice(ICourierDuty(address(office)));
-        renderer.renounceOwnership();
-
-        //             slots routes upgradeCost
-        office.addTier(2, 3, 0); // Kiosk
-        office.addTier(4, 7, 100e18); // Branch
-        office.addTier(6, 14, 400e18); // Depot
-        office.addTier(9, 24, 1_500e18); // Hub
-        office.addTier(12, 40, 5_000e18); // HQ
-        office.renounceOwnership(); // prices, rates and tiers are final
-
-        // 4. Open the pool (locks the launch allocation forever), then give up the hook: the fee recipient is final.
-        StampHook(d.hook).openPool(d.stamp);
-        StampHook(d.hook).renounceOwnership();
-        // The NFT keeps its owner only for the mint and reveal; renounce it after reveal + freezeRenderer.
-        if (vm.envOr("OPEN_SALE", false)) nft.setSaleOpen(true);
+    function _couriers() internal view returns (Couriers memory c) {
+        c.nft = vm.envOr("NFT", address(0));
+        c.renderer = vm.envOr("RENDERER", address(0));
+        if (c.nft == address(0)) {
+            string memory json = vm.readFile("./deployments/robinhood-couriers.json");
+            c.nft = vm.parseJsonAddress(json, ".nft");
+            c.renderer = vm.parseJsonAddress(json, ".renderer");
+        }
     }
 }

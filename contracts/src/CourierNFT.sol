@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {ERC2981} from "@openzeppelin/contracts/token/common/ERC2981.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
@@ -16,7 +16,7 @@ interface ICourierRenderer {
 ///         contract only reads the ride (it sets delivery power in the game), the
 ///         rest is art. The seed is committed before the mint and revealed after it,
 ///         so nobody can pick rare couriers while minting.
-contract CourierNFT is ERC721, ERC2981, Ownable {
+contract CourierNFT is ERC721, ERC2981, Ownable2Step {
     using Strings for uint256;
 
     uint256 public constant MAX_SUPPLY = 3333;
@@ -56,6 +56,7 @@ contract CourierNFT is ERC721, ERC2981, Ownable {
     error ZeroAddress();
     error CourierOnDuty(uint256 tokenId);
     error RendererIsFrozen();
+    error NotFinished();
 
     constructor(address owner_, address treasury_, uint256 price_, bytes32 seedCommit_)
         ERC721("Courier", "COURIER")
@@ -165,6 +166,13 @@ contract CourierNFT is ERC721, ERC2981, Ownable {
         if (rendererFrozen) revert RendererIsFrozen();
         renderer = renderer_;
         emit RendererSet(address(renderer_));
+    }
+
+    /// @notice Give up ownership for good. Only once the couriers are revealed and linked to the game, so
+    ///         renouncing early can never leave them unrevealed or unable to go on duty.
+    function renounceOwnership() public override onlyOwner {
+        if (seed == 0 || game == address(0)) revert NotFinished();
+        super.renounceOwnership();
     }
 
     /// @notice Lock the on-chain renderer forever: the art can never be changed again.

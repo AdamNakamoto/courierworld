@@ -77,6 +77,10 @@ contract StampHook is IHooks, IUnlockCallback {
     /// @dev Kept out of the liquidity calculation so rounding can never ask for more than the allocation; burned.
     uint256 internal constant LIQUIDITY_BUFFER = 1e9;
     uint256 internal constant Q96 = 2 ** 96;
+    /// @dev Bounds that keep the launch position's liquidity within what one tick range can hold (any launch up to
+    ///      the full 21M supply), so a constructor that accepts its arguments always leads to a working openPool.
+    int24 internal constant MAX_START_TICK = 400_000;
+    uint256 internal constant MAX_LAUNCH_SUPPLY = 21_000_000e18;
     /// @dev keccak256("Stamp.beforeSwapFee") - transient slot passing the fee from beforeSwap to afterSwap.
     bytes32 internal constant FEE_SLOT = 0x0e7a214e2bfdcb5a3f6eeb3feb3428d747006b85ea848e6432dc8645d4c1524d;
 
@@ -136,9 +140,8 @@ contract StampHook is IHooks, IUnlockCallback {
         ImdEthPool memory imdEthPool
     ) {
         if (imd == address(0) || owner_ == address(0) || feeRecipient_ == address(0)) revert ZeroAddress();
-        int24 limit = TickMath.maxUsableTick(TICK_SPACING) - TICK_SPACING;
-        if (startTick_ % TICK_SPACING != 0 || startTick_ > limit || startTick_ < -limit) revert BadTick();
-        if (launchSupply_ <= LIQUIDITY_BUFFER) revert BadToken();
+        if (startTick_ % TICK_SPACING != 0 || startTick_ > MAX_START_TICK || startTick_ < -MAX_START_TICK) revert BadTick();
+        if (launchSupply_ <= LIQUIDITY_BUFFER || launchSupply_ > MAX_LAUNCH_SUPPLY) revert BadToken();
         Hooks.validateHookPermissions(
             IHooks(address(this)),
             Hooks.Permissions({
@@ -240,7 +243,10 @@ contract StampHook is IHooks, IUnlockCallback {
         }
         uint256 amount = exactIn ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
         // exact-in buy: 4% of what the buyer pays. exact-out sell: 4% of the gross the pool pays out.
-        uint256 fee = exactIn ? (amount * FEE_BPS) / BPS : (amount * FEE_BPS) / (BPS - FEE_BPS);
+        // Rounded up, so no swap pays less than 4%, however small.
+        uint256 fee = exactIn
+            ? FullMath.mulDivRoundingUp(amount, FEE_BPS, BPS)
+            : FullMath.mulDivRoundingUp(amount, FEE_BPS, BPS - FEE_BPS);
         _chargeFee(fee);
         assembly ("memory-safe") {
             tstore(FEE_SLOT, fee)
@@ -277,7 +283,9 @@ contract StampHook is IHooks, IUnlockCallback {
         } else {
             // IMD is the unspecified side. exact-in sell: 4% of the pool's output.
             // exact-out buy: 4% of what the buyer pays in total.
-            fee = exactIn ? (poolQuote * FEE_BPS) / BPS : (poolQuote * FEE_BPS) / (BPS - FEE_BPS);
+            fee = exactIn
+                ? FullMath.mulDivRoundingUp(poolQuote, FEE_BPS, BPS)
+                : FullMath.mulDivRoundingUp(poolQuote, FEE_BPS, BPS - FEE_BPS);
             _chargeFee(fee);
             hookDelta = fee.toInt128();
         }
@@ -381,10 +389,27 @@ contract StampHook is IHooks, IUnlockCallback {
         });
     }
 
-    /// @notice $STAMP's price in IMD wei per whole $STAMP, at the current pool price.
+    /// @notice The pool's starting price, which is also the top of the launch liquidity: every $STAMP in the pool
+    ///         sits at or above this value, so nothing trades beyond it on the sell side.
+    function launchSqrtPrice(address t) public view returns (uint160) {
+        return TickMath.getSqrtPriceAtTick(launches[t].quoteIsCurrency0 ? startTick : -startTick);
+    }
+
+    /// @notice Price limit for sells: the routers stop a sell at the launch price instead of walking it through
+    ///         empty ticks to the end of the price range.
+    function sellPriceLimit(address t) external view returns (uint160) {
+        return launchSqrtPrice(t);
+    }
+
+    /// @notice $STAMP's price in IMD wei per whole $STAMP, at the current pool price. A sell that runs past the
+    ///         launch price (possible through other routers) leaves the pool price in the empty range beyond it;
+    ///         the next trade starts from the launch price again, so that is the price reported.
     function price(address t) public view returns (uint256) {
         (uint160 sqrtP,,,) = poolManager.getSlot0(poolKey(t).toId());
-        return launches[t].quoteIsCurrency0
+        bool quoteIs0 = launches[t].quoteIsCurrency0;
+        uint160 top = launchSqrtPrice(t);
+        if (quoteIs0 ? sqrtP > top : sqrtP < top) sqrtP = top;
+        return quoteIs0
             ? FullMath.mulDiv(FullMath.mulDiv(1e18, Q96, sqrtP), Q96, sqrtP)
             : FullMath.mulDiv(FullMath.mulDiv(1e18, sqrtP, Q96), sqrtP, Q96);
     }

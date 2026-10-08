@@ -94,8 +94,10 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     }
     if (s.account) {
       html += `<span class="bal"><b>${fmt(s.eth, 3)}</b> ETH</span>`;
-      if (s.imd !== null) html += `<span class="bal"><b>${fmt(s.imd)}</b> IMD</span>`;
-      html += `<span class="bal"><b>${fmt(s.stamp)}</b> $STAMP</span>`;
+      if (s.game) {
+        if (s.imd != null) html += `<span class="bal"><b>${fmt(s.imd)}</b> IMD</span>`;
+        html += `<span class="bal"><b>${fmt(s.stamp)}</b> $STAMP</span>`;
+      }
     }
     html += `</div>`;
 
@@ -126,6 +128,14 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       </section>`;
     }
 
+    // ---- before the game: stage 1 of the launch is the mint alone
+    if (!s.game) {
+      html += `<section><h3>Post offices open soon</h3>
+        <p class="note">${revealed
+          ? "The mint is over and the couriers are revealed. The post offices open next: put your couriers on duty there to earn $STAMP."
+          : "The couriers are being minted now. When the mint ends they're revealed, and then the post offices open: put your couriers on duty to earn $STAMP."}</p></section>`;
+    }
+
     // ---- the trade section sits here, in its own element (see trade.js)
     const top = html;
     html = "";
@@ -133,7 +143,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     // ---- couriers
     if (s.mine) {
       html += `<section><h3>Your couriers <span class="muted">${s.mine.length}</span></h3>`;
-      if (!s.mine.length) html += `<p class="note">None yet. Mint one below; your trainee is holding the fort.</p>`;
+      if (!s.mine.length) html += `<p class="note">${s.game ? "None yet. Your trainee is holding the fort." : "None yet. Mint one below."}</p>`;
       else if (!revealed) html += `<p class="note">Sealed until the mint closes and the collection is revealed.</p>`;
       html += `<div class="couriers">`;
       for (const m of s.mine) {
@@ -144,7 +154,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
         const c = courier(m.id, s.seed);
         const img = stampFor(c, s.seed);
         const power = powerAt(c.ride.power, m.level);
-        const cost = s.levelBase * BigInt(m.level) * BigInt(m.level);
+        const cost = s.game ? s.levelBase * BigInt(m.level) * BigInt(m.level) : 0n;
         html += `<div class="ccard ${m.onDuty ? "duty" : ""}">
           ${img ? `<img src="${img}" alt="">` : `<div class="ph"></div>`}
           <div class="cinfo"><b>#${m.id}</b> <span style="color:${RARITY_INK[c.ride.rarity]}">${c.ride.name}</span>
@@ -152,8 +162,8 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
             ${m.onDuty ? `<span class="tag">On duty</span>` : ""}</div>
           <div class="cact">
             ${s.office?.open ? `<button class="pbtn" data-act="${m.onDuty ? "unassign" : "assign"}" data-id="${m.id}" ${busy ? "disabled" : ""}>${m.onDuty ? "Off duty" : "On duty"}</button>` : ""}
-            <button class="pbtn" data-act="level" data-id="${m.id}" data-level="${m.level}" ${m.level >= 10 || s.stamp < cost || busy ? "disabled" : ""}
-              title="Level ${m.level + 1}: +12% power">${m.level >= 10 ? "Max level" : `Train · ${fmt(cost, 0)}`}</button>
+            ${s.game ? `<button class="pbtn" data-act="level" data-id="${m.id}" data-level="${m.level}" ${m.level >= 10 || s.stamp < cost || busy ? "disabled" : ""}
+              title="Level ${m.level + 1}: +12% power">${m.level >= 10 ? "Max level" : `Train · ${fmt(cost, 0)}`}</button>` : ""}
             <button class="pbtn" data-act="play" data-id="${m.id}">Play as</button>
           </div></div>`;
       }
@@ -168,7 +178,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
         <button class="pbtn primary" data-act="mint" ${busy ? "disabled" : ""}>Mint ${qty} · ${fmt(s.price * BigInt(qty), 3)} ETH</button></div>
         <p class="note">Rides are revealed after the mint: 45% on foot, 25% skateboard, 17% bicycle, 9% moped, 4% paper plane.</p>`;
     } else {
-      html += `<p class="note">${revealed ? "The mint is over and couriers are revealed. Find more on the secondary market." : "The mint is closed."}</p>`;
+      html += `<p class="note">${revealed ? "The mint is over and the couriers are revealed. Find more on the secondary market." : "The mint is closed."}</p>`;
     }
     html += `</section>`;
 
@@ -176,6 +186,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     if (s.local) {
       html += `<section class="dev"><h3>Local chain</h3><div class="mintrow">
         ${s.browserWallet && s.account ? `<button class="pbtn" data-act="fund" ${busy ? "disabled" : ""}>+10 play ETH</button>` : ""}
+        ${s.browserWallet && s.account && revealed && !s.saleOpen ? `<button class="pbtn" data-act="gift" ${busy ? "disabled" : ""}>+3 couriers</button>` : ""}
         ${revealed ? "" : `<button class="pbtn" data-act="reveal" ${busy ? "disabled" : ""}>Close mint &amp; reveal</button>`}
         <button class="pbtn" data-act="warp" data-s="3600" ${busy ? "disabled" : ""}>+1 hour</button>
         <button class="pbtn" data-act="warp" data-s="86400" ${busy ? "disabled" : ""}>+1 day</button></div></section>`;
@@ -222,6 +233,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       case "mint": return run(`Minting ${qty} courier${qty > 1 ? "s" : ""}`, () => chain.mint(snap, qty));
       case "reveal": return run("Revealing the collection", () => chain.devReveal());
       case "fund": return run("Adding 10 play ETH", () => chain.devFund());
+      case "gift": return run("Handing you 3 couriers", () => chain.devCouriers(3));
       case "warp": return run(`Skipping ${duration(Number(b.dataset.s))}`, () => chain.devWarp(Number(b.dataset.s)));
     }
   });

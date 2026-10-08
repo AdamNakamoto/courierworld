@@ -25,12 +25,7 @@ contract RendererTest is Test {
         vm.startPrank(owner);
         stamp = new StampToken(owner, address(0), 0);
         nft = new CourierNFT(owner, treasury, 0.003 ether, keccak256(abi.encode(SECRET)));
-        office = new PostOffice(stamp, nft, 1000, 2.5e18, 0.005 ether, treasury, owner);
-        stamp.setMinter(address(office));
-        nft.setGame(address(office));
-        office.addTier(2, 3, 0);
         renderer = new CourierRenderer(ICourierSeed(address(nft)), new CourierSVG(), owner);
-        renderer.setOffice(ICourierDuty(address(office)));
         nft.setRenderer(ICourierRenderer(address(renderer)));
         nft.setSaleOpen(true);
         vm.stopPrank();
@@ -40,9 +35,19 @@ contract RendererTest is Test {
     }
 
     function _reveal() internal {
-        vm.startPrank(owner);
-        nft.setSaleOpen(false);
+        vm.prank(owner);
         nft.reveal(SECRET);
+    }
+
+    /// The game comes after the reveal, as on mainnet.
+    function _game() internal {
+        PostOffice.Tier[] memory t = new PostOffice.Tier[](1);
+        t[0] = PostOffice.Tier(2, 3, 0);
+        office = new PostOffice(stamp, nft, 1000, 2.5e18, 0.005 ether, treasury, t);
+        vm.startPrank(owner);
+        stamp.setMinter(address(office));
+        nft.setGame(address(office));
+        renderer.setOffice(ICourierDuty(address(office)));
         vm.stopPrank();
     }
 
@@ -92,6 +97,7 @@ contract RendererTest is Test {
 
     function test_ArtShowsLevelAndDuty() public {
         _reveal();
+        _game();
         vm.prank(alice);
         office.openOffice{value: 0.005 ether}(address(0));
         // Pick a courier that fits the Kiosk's 3 routes (anything but a paper plane).
