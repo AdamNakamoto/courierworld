@@ -158,6 +158,13 @@ contract StampHookTest is Test {
         assertEq(hook.token(), address(stamp));
     }
 
+    function test_TokenNameAndSymbol() public view {
+        assertEq(stamp.name(), "Courier World");
+        assertEq(stamp.symbol(), "STAMP");
+        (, string memory domainName,,,,,) = stamp.eip712Domain();
+        assertEq(domainName, "Courier World"); // permit signatures are made for this name
+    }
+
     function test_OpenPoolOnlyOnceAndOnlyOwner() public {
         vm.expectRevert(StampHook.NotOwner.selector);
         hook.openPool(address(stamp));

@@ -26,8 +26,8 @@ contract StampToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
 
     /// @param liquidity_ receives `liquidityAmount` at deploy: the pool hook on mainnet, or nobody (0) locally.
     constructor(address owner_, address liquidity_, uint256 liquidityAmount)
-        ERC20("Stamp", "STAMP")
-        ERC20Permit("Stamp")
+        ERC20("Courier World", "STAMP")
+        ERC20Permit("Courier World")
         Ownable(owner_)
     {
         if (liquidityAmount > MAX_SUPPLY) revert CapExceeded();
