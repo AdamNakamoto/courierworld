@@ -1,0 +1,52 @@
+:root { --ink: #283033; --paper: #fbf8ef; --desk: #e9e1cf; --teal: #8fd2c9; --blue: #5ea9dd; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--teal); color: var(--ink); font: 19px/1.35 "Patrick Hand", system-ui, sans-serif; }
+h1, h2, .btn, .chip b { font-family: Bungee, Impact, sans-serif; font-weight: 400; }
+
+.top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; padding: 24px 24px 8px; max-width: 1280px; margin: 0 auto; }
+h1 { margin: 0; font-size: clamp(28px, 5vw, 46px); line-height: 1; }
+h1 span { background: var(--paper); border: 3px solid var(--ink); padding: 0 10px; display: inline-block; transform: rotate(-2deg); box-shadow: 4px 5px 0 rgba(40,48,51,.85); }
+.sub { margin: 10px 0 0; }
+.tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.seed { display: flex; gap: 8px; align-items: center; }
+.seed input { font: 16px ui-monospace, Menlo, monospace; width: 210px; padding: 7px 9px; border: 2.5px solid var(--ink); background: var(--paper); color: var(--ink); }
+
+.btn { font-size: 15px; letter-spacing: .04em; color: var(--ink); background: #f2c94c; border: 2.5px solid var(--ink); border-radius: 3px; padding: 9px 16px; cursor: pointer; box-shadow: 3px 4px 0 rgba(40,48,51,.85); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn:active:not(:disabled) { transform: translateY(2px); box-shadow: 1px 2px 0 rgba(40,48,51,.85); }
+
+.rides { display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 24px; max-width: 1280px; margin: 0 auto; }
+.chip { --ink: #283033; text-align: left; background: var(--paper); border: 2.5px solid #283033; border-radius: 3px; padding: 6px 12px; cursor: pointer; display: grid; color: #283033; font: inherit; box-shadow: 3px 4px 0 rgba(40,48,51,.85); }
+.chip b { font-size: 14px; color: var(--ink); }
+.chip span { font-size: 15px; }
+.chip.on { background: #fff; outline: 3px solid var(--ink); outline-offset: 2px; }
+
+.progress { max-width: 1232px; margin: 4px auto 0; height: 26px; border: 2.5px solid var(--ink); background: var(--paper); position: relative; }
+.progress div { height: 100%; background: #f2c94c; width: 0; }
+.progress span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 16px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 18px; padding: 16px 24px; max-width: 1280px; margin: 0 auto; }
+.card { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; transition: transform .12s; }
+.card:hover { transform: translateY(-3px) rotate(-.6deg); }
+.card img { width: 100%; aspect-ratio: 1; display: block; background: var(--desk); border-radius: 2px; }
+.card img:not([src]) { background: repeating-linear-gradient(45deg, var(--desk) 0 12px, #e2d9c4 12px 24px); }
+.meta { display: flex; justify-content: space-between; padding: 4px 2px 0; font-size: 17px; }
+.meta i { font-style: normal; }
+.pager { display: flex; gap: 14px; justify-content: center; align-items: center; padding: 8px 0 40px; font-size: 20px; }
+
+.modal { position: fixed; inset: 0; background: rgba(40,48,51,.55); display: grid; place-items: center; padding: 16px; z-index: 10; }
+.sheet { position: relative; background: var(--paper); border: 3px solid var(--ink); box-shadow: 6px 7px 0 rgba(40,48,51,.85); display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; padding: 20px; width: min(1000px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.big img { width: 100%; aspect-ratio: 1; display: block; background: var(--desk); }
+.info h2 { margin: 4px 0 2px; font-size: 30px; }
+.ride { margin: 0 0 12px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 3px 0; border-bottom: 1.5px dashed #d8d2c2; }
+th { color: #5f6b6e; font-weight: 400; width: 42%; }
+pre { font-size: 12px; background: #fff; border: 2px solid var(--ink); padding: 10px; overflow: auto; max-height: 260px; }
+.close { position: absolute; right: 12px; top: 12px; padding: 4px 10px; }
+@media (max-width: 760px) { .sheet { grid-template-columns: 1fr; } }
+
+.toggle { display: flex; border: 2.5px solid var(--ink); border-radius: 3px; box-shadow: 3px 4px 0 rgba(40,48,51,.85); background: var(--paper); }
+.toggle button { font: 400 13px Bungee, Impact, sans-serif; border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--ink); }
+.toggle button.on { background: var(--ink); color: var(--paper); }

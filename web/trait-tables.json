@@ -1,0 +1,23 @@
+{
+  "_note": "Single source of truth for courier traits. traits.js loads this; contracts/tools/gen_traits.py turns it into CourierTraits.sol. Weights per trait sum to 100. Order matters: it decides which bits of the token hash each trait reads.",
+  "rides": [
+    { "key": "foot", "name": "On Foot", "rarity": "Common", "weight": 4500, "power": 100, "routes": 1 },
+    { "key": "skate", "name": "Skateboard", "rarity": "Uncommon", "weight": 2500, "power": 160, "routes": 1 },
+    { "key": "bike", "name": "Bicycle", "rarity": "Rare", "weight": 1700, "power": 260, "routes": 2 },
+    { "key": "moped", "name": "Moped", "rarity": "Epic", "weight": 900, "power": 450, "routes": 3 },
+    { "key": "plane", "name": "Paper Plane", "rarity": "Legendary", "weight": 400, "power": 800, "routes": 4 }
+  ],
+  "traits": [
+    { "type": "Skin", "options": [["Porcelain", "#f6dcc8", 18], ["Peach", "#f3d2bb", 24], ["Honey", "#e8bfa0", 20], ["Caramel", "#d9a47f", 16], ["Cocoa", "#b07a55", 12], ["Umber", "#8a5a3c", 10]] },
+    { "type": "Hair Colour", "options": [["Ink", "#2a2326", 22], ["Chestnut", "#5a3b2c", 20], ["Auburn", "#8a3f2a", 12], ["Honey Blonde", "#c99a55", 10], ["Silver", "#c9c4bd", 8], ["Lilac", "#a48ac2", 7], ["Mint", "#7cc2a8", 6], ["Rose", "#e08aa0", 7], ["Midnight Blue", "#34476b", 8]] },
+    { "type": "Hairstyle", "options": [["Ponytail", "pony", 24], ["Bun", "bun", 18], ["Bob", "bob", 22], ["Twin Tails", "twin", 16], ["Long", "long", 20]] },
+    { "type": "Headwear", "options": [["None", "none", 30], ["Courier Cap", "cap", 24], ["Bucket Hat", "bucket", 14], ["Beanie", "beanie", 13], ["Headphones", "headphones", 12], ["Flight Goggles", "goggles", 7]] },
+    { "type": "Shirt", "options": [["Cream", "#f4efe0", 20], ["Sky", "#9cc9e6", 14], ["Mustard", "#f2c94c", 14], ["Coral", "#e9826f", 12], ["Mint", "#a8dcc4", 12], ["Lavender", "#c4b3e0", 10], ["Navy", "#34476b", 10], ["Forest", "#5e8c61", 8]] },
+    { "type": "Accent", "options": [["Teal", "#2f8088", 22], ["Post Red", "#d9534a", 20], ["Sunflower", "#f2c94c", 14], ["Cobalt", "#3f6fbf", 14], ["Leaf", "#5e9f57", 12], ["Plum", "#8d5a99", 10], ["Tangerine", "#f08a2c", 8]] },
+    { "type": "Bottoms", "options": [["Shorts", "shorts", 40], ["Skirt", "skirt", 30], ["Trousers", "pants", 30]] },
+    { "type": "Bottoms Colour", "options": [["Navy", "#34476b", 26], ["Charcoal", "#3b4145", 20], ["Khaki", "#b59a6a", 16], ["Brick", "#a9514a", 12], ["Olive", "#6b7a45", 12], ["Denim", "#5a7ea6", 14]] },
+    { "type": "Bag", "options": [["Satchel", "satchel", 38], ["Backpack", "backpack", 24], ["Tote", "tote", 16], ["Mail Sack", "sack", 16], ["Golden Satchel", "golden", 6]] },
+    { "type": "Shoes", "options": [["Black", "#2b2b2e", 30], ["Brown", "#6c5446", 24], ["White", "#f4f1ea", 20], ["Red", "#d9534a", 13], ["Blue", "#3f6fbf", 13]] },
+    { "type": "Background", "options": [["Teal", "#8fd2c9", 22], ["Peach", "#f6d2b8", 16], ["Lavender", "#d6cdee", 14], ["Butter", "#f6e7a8", 16], ["Sky", "#bfe0f2", 16], ["Rose", "#f2c6cf", 10], ["Sage", "#c9dcb8", 6]] }
+  ]
+}

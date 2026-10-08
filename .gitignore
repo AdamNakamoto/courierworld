@@ -1,0 +1,7 @@
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+web/chain.json
+.DS_Store
+.vercel
+.claude/

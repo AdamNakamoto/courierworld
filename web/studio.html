@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Courier Collection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Patrick+Hand&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="studio.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Courier <span>Collection</span></h1>
+      <p class="sub"><b id="supply">3,333</b> couriers. Each one's ride sets their delivery power in the game.</p>
+    </div>
+    <div class="tools">
+      <label class="seed">Reveal seed <input id="seed" spellcheck="false"></label>
+      <div id="artToggle" class="toggle" hidden><button class="on" data-art="3d">3D render</button><button data-art="chain">On-chain SVG</button></div>
+      <button id="export" class="btn">Export .zip</button>
+    </div>
+  </header>
+
+  <section id="rides" class="rides" aria-label="Rides"></section>
+  <div id="progress" class="progress" hidden><div></div><span></span></div>
+
+  <main id="grid" class="grid"></main>
+  <nav class="pager"><button id="prev" class="btn">◀</button><span id="page"></span><button id="next" class="btn">▶</button></nav>
+
+  <div id="modal" class="modal" hidden>
+    <div class="sheet">
+      <button id="close" class="btn close" aria-label="Close">✕</button>
+      <div class="big"><img id="bigImg" alt=""></div>
+      <div class="info">
+        <h2 id="bigName"></h2>
+        <p id="bigRide" class="ride"></p>
+        <table id="traits"></table>
+        <details><summary>Metadata JSON</summary><pre id="json"></pre></details>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="studio.js"></script>
+</body>
+</html>

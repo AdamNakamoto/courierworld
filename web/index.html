@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Courier</title>
+  <meta name="description" content="Deliver letters around a tiny planet town.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Patrick+Hand&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="title">
+    <h1 class="logo" aria-label="Courier">
+      <span class="row"><i>C</i><i>O</i><i>U</i></span>
+      <span class="row"><i>R</i><i>I</i><i>E</i><i>R</i></span>
+    </h1>
+    <button id="begin" class="begin">Begin</button>
+    <p class="credit">A tiny planet. A bag of letters. Inspired by Messenger.</p>
+  </div>
+
+  <div id="hud" hidden>
+    <div class="card bag"><span class="env" aria-hidden="true"></span><b id="bagN">0</b> in bag <span class="sep"></span> delivered <b id="doneN">0</b></div>
+    <div id="compass" class="card"><span id="arrow">▲</span><span id="target"></span></div>
+    <div id="help" class="card help">WASD / arrows to walk · Shift to run · drag to look</div>
+    <button id="officeBtn" class="office-btn" hidden>Post office <kbd>P</kbd></button>
+    <div id="joy" hidden><div id="knob"></div></div>
+  </div>
+
+  <aside id="office" class="office card" hidden>
+    <div class="ohead"><h2>Post office</h2><button id="officeClose" class="pbtn" aria-label="Close">✕</button></div>
+    <div id="officeBody"></div>
+  </aside>
+  <div id="toasts" aria-live="polite"></div>
+
+  <div id="wallets" class="wallets" hidden>
+    <div class="wsheet card" role="dialog" aria-labelledby="walletsTitle">
+      <div class="ohead"><h2 id="walletsTitle">Log in</h2><button class="pbtn" data-close aria-label="Close">✕</button></div>
+      <p class="note">Pick a wallet to play. Courier runs on Robinhood Chain; your wallet will be asked to switch to it.</p>
+      <div id="walletList" class="wlist"></div>
+    </div>
+  </div>
+
+  <div id="dialog" hidden>
+    <div class="name" id="dname"></div>
+    <p id="dtext"></p>
+    <button id="dnext" aria-label="Next">▶</button>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
