@@ -4,6 +4,7 @@ import { formatEther, isAddress } from "https://esm.sh/viem@2";
 import { courier, SUPPLY } from "./traits.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
+import { createTrade } from "./trade.js";
 
 const TIER_NAMES = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 const RARITY_INK = { Common: "#5f6b6e", Uncommon: "#5e9f57", Rare: "#3f6fbf", Epic: "#8d5a99", Legendary: "#c9962a" };
@@ -29,7 +30,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
   let queue = Promise.resolve(); // stamp renders, one at a time
-  let lastHtml = "";
+  let lastHtml = "", lastMore = "";
 
   function stampFor(c, seed) {
     const key = `${seed}:${c.id}`;
@@ -91,7 +92,11 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       html += `<a class="addr" href="${s.explorer ? `${s.explorer}/address/${s.account}` : "#"}" target="_blank" rel="noopener">${short(s.account)}</a>
         <button class="pbtn" data-act="connect">Switch wallet</button>`;
     }
-    if (s.account) html += `<span class="bal"><b>${fmt(s.eth, 3)}</b> ETH</span><span class="bal"><b>${fmt(s.stamp)}</b> $STAMP</span>`;
+    if (s.account) {
+      html += `<span class="bal"><b>${fmt(s.eth, 3)}</b> ETH</span>`;
+      if (s.imd !== null) html += `<span class="bal"><b>${fmt(s.imd)}</b> IMD</span>`;
+      html += `<span class="bal"><b>${fmt(s.stamp)}</b> $STAMP</span>`;
+    }
     html += `</div>`;
 
     // ---- office
@@ -120,6 +125,10 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
         ${o.referrer !== ZERO ? `<p class="note">2.5% of what you collect goes to ${short(o.referrer)}, who invited you.</p>` : ""}
       </section>`;
     }
+
+    // ---- the trade section sits here, in its own element (see trade.js)
+    const top = html;
+    html = "";
 
     // ---- couriers
     if (s.mine) {
@@ -176,13 +185,22 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
         <input class="link" readonly value="${esc(`${location.origin}${location.pathname}?ref=${s.account}`)}"></section>`;
     }
 
-    if (force || html !== lastHtml) {
-      lastHtml = html;
-      $("officeBody").innerHTML = html;
+    if (force || top !== lastHtml) {
+      lastHtml = top;
+      $("officeBody").innerHTML = top;
       const inp = $("invite");
       if (inp && document.activeElement !== inp) inp.value = invite;
     }
+    if (force || html !== lastMore) {
+      lastMore = html;
+      $("officeMore").innerHTML = html;
+    }
+    trade?.update(s);
   }
+
+  const trade = chain.trade
+    ? createTrade(chain, $("trade"), { run, isBusy: () => !!busy, onLogin: () => run("Logging in", () => chain.login()) })
+    : null;
 
   panel.addEventListener("click", (e) => {
     const b = e.target.closest("[data-act]");
@@ -208,7 +226,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
   panel.addEventListener("change", (e) => {
     if (e.target.dataset.act === "account") {
       chain.setAccount(e.target.value);
-      lastHtml = "";
+      lastHtml = lastMore = "";
       refresh();
     }
   });
@@ -222,7 +240,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     refresh,
     show(on) {
       panel.hidden = !on;
-      lastHtml = "";
+      lastHtml = lastMore = "";
       draw(true);
     },
     get snap() { return snap; },

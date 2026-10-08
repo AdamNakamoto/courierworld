@@ -26,6 +26,16 @@ browser at `/studio.html`). Press **P** in game for the post office. Pick a play
 panel's menu; Anvil's dev accounts are unlocked, so no wallet is needed. The panel's
 local-chain tools close the mint, reveal the collection, and skip time.
 
+```bash
+./dev.sh --fork
+```
+
+Same, on a fork of Robinhood Chain: the full mainnet deployment (pool, hook and routers)
+runs against the real PoolManager, IMD and IMD/ETH pool, so the panel's **Trade $STAMP**
+section works with play money. It buys and sells $STAMP with ETH or IMD, quotes through
+Uniswap's v4 quoter (fees and price impact included), and protects each trade with a
+slippage minimum. Sells use a permit signature in place of a separate approval.
+
 ## On Robinhood Chain
 
 Without `web/chain.json` the site loads `web/deployments/robinhood.json`. Players log in
