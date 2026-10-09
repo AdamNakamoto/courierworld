@@ -9,6 +9,8 @@ import { createTrade } from "./trade.js";
 const TIER_NAMES = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 const RARITY_INK = { Common: "#5f6b6e", Uncommon: "#5e9f57", Rare: "#3f6fbf", Epic: "#8d5a99", Legendary: "#c9962a" };
 const ZERO = "0x0000000000000000000000000000000000000000";
+const AUDIT_URL = "https://explorer.imd.fun/jobs/19b34b9b-94ef-4543-8d85-b05028860fcf";
+const SOURCE_URL = "https://github.com/AdamNakamoto/courierworld";
 const BLOCKS_PER_DAY = 86_400_000n / 1_100n;
 
 const fmt = (wei, d = 2) => Number(formatEther(wei)).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -180,6 +182,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     } else {
       html += `<p class="note">${revealed ? "The mint is over and the couriers are revealed. Find more on the secondary market." : "The mint is closed."}</p>`;
     }
+    html += `<p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${s.nft}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${AUDIT_URL}" target="_blank" rel="noopener">audit report</a> · <a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p>`;
     html += `</section>`;
 
     // ---- dev tools on the local chain

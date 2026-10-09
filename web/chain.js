@@ -169,7 +169,7 @@ export async function connectChain() {
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
     ]);
     const s = {
-      now: block.timestamp, minted: Number(minted), price, saleOpen, seed, game, tiers, account, accounts,
+      now: block.timestamp, minted: Number(minted), price, saleOpen, seed, game, tiers, account, accounts, nft: C.nft.address,
       local: dep.local, explorer: dep.explorer, devAccounts: !browserWallet, browserWallet,
     };
     if (game) {
