@@ -7,8 +7,10 @@
 #   ./script/deploy-mainnet.sh game                                  # stage 2 dry run (after the reveal)
 #   ./script/deploy-mainnet.sh game --broadcast --interactive        # stage 2: token, pool, post office; renounce all
 #
-# Use --account <keystore name> instead of --interactive to sign with a Foundry keystore. Run both stages from the
-# same wallet: stage 2 links the game to the NFT, which only the NFT's owner can do.
+# Signing: --browser opens a local page (http://127.0.0.1:9545) where you connect MetaMask or another browser wallet
+# and approve each transaction in it, so no private key is typed anywhere. Or --account <keystore name> for a
+# Foundry keystore, or --interactive to paste a key. Run both stages from the same wallet: stage 2 links the game to
+# the NFT, which only the NFT's owner can do.
 #
 # The reveal secret (stage 1): pass your own as SECRET=..., or one is generated. It is printed once and never
 # written to disk. Store it in a password manager: the collection can only be revealed with it
@@ -21,7 +23,7 @@ STAGE="${1:-}"
 shift || true
 case "$STAGE" in
   couriers | game | rehearse) ;;
-  *) echo "Usage: $0 couriers|game|rehearse [--broadcast --interactive | --account <name>]" >&2; exit 1 ;;
+  *) echo "Usage: $0 couriers|game|rehearse [--broadcast --browser | --account <name> | --interactive]" >&2; exit 1 ;;
 esac
 
 set -a

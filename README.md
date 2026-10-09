@@ -114,9 +114,13 @@ Two stages, from the same wallet, with the settings in `contracts/launch.env`:
 ```bash
 cd contracts
 ./script/deploy-mainnet.sh rehearse                             # both stages on a fork, no transactions
-./script/deploy-mainnet.sh couriers --broadcast --interactive   # stage 1: the NFT, ready to mint
-./script/deploy-mainnet.sh game --broadcast --interactive       # stage 2, after the reveal
+./script/deploy-mainnet.sh couriers --broadcast --browser       # stage 1: the NFT, ready to mint
+./script/deploy-mainnet.sh game --broadcast --browser           # stage 2, after the reveal
 ```
+
+`--browser` opens http://127.0.0.1:9545: pick your wallet (MetaMask, Robinhood Wallet...) in the
+list, connect, then press **Sign & Send** and approve each transaction in the wallet. Stage 1 is
+4 transactions, stage 2 about 13.
 
 Each broadcast runs `export-web.sh`, which writes `web/deployments/robinhood.json`; commit it
 and Vercel serves it. After stage 1 the site shows the mint; after stage 2, the whole game.
