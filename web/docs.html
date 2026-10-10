@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Courier guide</title>
+  <meta name="description" content="How Courier World works: delivering letters, couriers and rides, post offices, levels, $STAMP and trading.">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Patrick+Hand&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --sky: #76c2bd; --sky2: #9fd6cf; --ink: #283033; --paper: #fbf8ef; --yellow: #f2c94c; --red: #d9534a; --muted: #5f6b6e;
+      --shadow: rgba(40, 48, 51, 0.85);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+    body {
+      margin: 0; color: var(--ink); background: linear-gradient(180deg, var(--sky) 0, var(--sky2) 420px, var(--sky2) 100%) fixed;
+      font: 20px/1.45 "Patrick Hand", "Comic Sans MS", system-ui, sans-serif;
+    }
+    a { color: var(--ink); }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 28px 16px 64px; }
+    .card { background: var(--paper); border: 2.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 5px 0 var(--shadow); }
+    header { text-align: center; padding: 18px 0 8px; }
+    .logo { margin: 0; font: 400 clamp(44px, 10vw, 84px)/0.95 Bungee, Impact, sans-serif; letter-spacing: .03em; color: var(--paper);
+      -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; text-shadow: 5px 6px 0 var(--shadow); transform: rotate(-1.5deg); }
+    .tag { display: inline-block; margin: 18px 0 0; padding: 4px 14px; font-size: 22px; transform: rotate(.8deg); }
+    .links { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 22px 0 6px; }
+    .btn { padding: 6px 14px; font: 400 15px/1.2 Bungee, Impact, sans-serif; letter-spacing: .04em; text-transform: uppercase; color: var(--ink);
+      text-decoration: none; background: var(--paper); border: 2.5px solid var(--ink); border-radius: 3px; box-shadow: 3px 3px 0 var(--shadow); }
+    .btn:hover { background: var(--yellow); }
+    .btn.play { background: var(--yellow); }
+    nav.toc { margin: 26px 0 8px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: center; font-size: 18px; }
+    nav.toc a { text-decoration: none; border-bottom: 2px dashed transparent; }
+    nav.toc a:hover { border-bottom-color: var(--ink); }
+    section { margin: 26px 0; padding: 18px 22px 20px; }
+    section:nth-of-type(odd) { transform: rotate(-.25deg); }
+    section:nth-of-type(even) { transform: rotate(.2deg); }
+    h2 { margin: 0 0 8px; font: 400 26px/1.1 Bungee, Impact, sans-serif; letter-spacing: .02em; }
+    h2 small { display: block; margin-top: 4px; font: 18px/1.2 "Patrick Hand", sans-serif; color: var(--muted); letter-spacing: 0; }
+    h3 { margin: 16px 0 4px; font: 400 17px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; }
+    p, ul { margin: 6px 0; }
+    ul { padding-left: 22px; }
+    li { margin: 3px 0; }
+    kbd { font: 15px/1 Bungee, Impact, sans-serif; padding: 2px 6px; border: 2px solid var(--ink); border-radius: 3px; background: #fff; }
+    .scroll { overflow-x: auto; margin: 10px 0 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 18px; background: #fff; border: 2px solid var(--ink); }
+    th, td { padding: 6px 10px; text-align: left; border-bottom: 1.5px solid #d8d2c2; vertical-align: top; }
+    th { font: 400 14px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; background: #f2ecdc; }
+    tr:last-child td { border-bottom: 0; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    .mono { font: 14px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .note { margin-top: 10px; padding: 8px 12px; background: #fff6d6; border: 2px dashed var(--ink); border-radius: 3px; font-size: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
+    .tile { padding: 10px 12px; background: #fff; border: 2px solid var(--ink); border-radius: 3px; }
+    .tile b { font: 400 15px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; }
+    footer { margin-top: 34px; text-align: center; font-size: 18px; }
+    footer p { display: inline-block; padding: 4px 14px; }
+    @media (max-width: 560px) {
+      body { font-size: 19px; }
+      section { padding: 14px 14px 16px; transform: none !important; }
+      h2 { font-size: 22px; }
+      table { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 class="logo">Courier</h1>
+    <p class="tag card">The courier's handbook</p>
+    <div class="links">
+      <a class="btn play" href="./">Play</a>
+      <a class="btn" href="https://opensea.io/collection/courier-624459161" target="_blank" rel="noopener">OpenSea ↗</a>
+      <a class="btn" href="https://explorer.imd.fun/jobs/19b34b9b-94ef-4543-8d85-b05028860fcf" target="_blank" rel="noopener">Audit report ↗</a>
+      <a class="btn" href="https://github.com/AdamNakamoto/courierworld" target="_blank" rel="noopener">Source code ↗</a>
+    </div>
+  </header>
+
+  <nav class="toc card" aria-label="Contents">
+    <a href="#play">Playing</a><a href="#couriers">Couriers</a><a href="#offices">Post offices</a><a href="#levels">Levels</a>
+    <a href="#stamp">$STAMP</a><a href="#trading">Trading</a><a href="#safety">Safety</a><a href="#contracts">Contracts</a>
+  </nav>
+
+  <section class="card" id="welcome">
+    <h2>Welcome to the planet<small>A tiny town, a bag of letters, and a game that lives on Robinhood Chain.</small></h2>
+    <p>Courier World is a little planet you can walk all the way round. You're its courier: pick up letters at the post office,
+       find the right doors, and chat with the people who live there. Behind the town is an on-chain economy: 3,333 Courier NFTs
+       work out of player-run post offices and earn <b>$STAMP</b>, which trades in a Uniswap pool.</p>
+    <p>Walking about is free and needs nothing but a browser. A wallet on Robinhood Chain lets you play as your own couriers,
+       run a post office and earn.</p>
+  </section>
+
+  <section class="card" id="play">
+    <h2>Playing<small>Deliver letters, explore, find the golden stamps.</small></h2>
+    <div class="scroll"><table>
+      <tr><th>To</th><th>Keyboard</th><th>Phone</th></tr>
+      <tr><td>Walk / run</td><td><kbd>W A S D</kbd> or arrows, hold <kbd>Shift</kbd> to run</td><td>The stick (push it all the way to run)</td></tr>
+      <tr><td>Jump</td><td><kbd>Space</kbd></td><td>Jump button</td></tr>
+      <tr><td>Talk or wave</td><td><kbd>E</kbd></td><td>Hi button</td></tr>
+      <tr><td>Look around</td><td>Drag; scroll to zoom</td><td>Drag the world</td></tr>
+      <tr><td>Post office panel</td><td><kbd>P</kbd></td><td>Post office button</td></tr>
+      <tr><td>Music / sounds</td><td><kbd>M</kbd> / <kbd>N</kbd></td><td>♪ and speaker buttons</td></tr>
+    </table></div>
+    <h3>Deliveries</h3>
+    <p>You start with three letters. The arrow at the top points to the nearest address, and an envelope floats over its door.
+       Walk up to the door to deliver. When the bag is empty, head back to the post office for more.</p>
+    <h3>Places</h3>
+    <div class="grid">
+      <div class="tile"><b>Main Street</b><br>The post office, houses and shops, and a footbridge over the road.</div>
+      <div class="tile"><b>Seaside</b><br>A sandy bay with a lighthouse, a pier and bridges. Wade in, or jump off and swim.</div>
+      <div class="tile"><b>Falls Hill</b><br>Waterfalls, a pond, a river to the sea, and stairs up to a hilltop shrine.</div>
+      <div class="tile"><b>Whispering Woods</b><br>Tall trees, mushrooms, fireflies at night and a ranger's cabin.</div>
+      <div class="tile"><b>Old Works</b><br>Red tanks, pipes, a smoking chimney and a catwalk you can climb.</div>
+    </div>
+    <h3>Golden stamps</h3>
+    <p>Fifteen golden stamps are hidden round the planet. Some float at arm's height, some only a jump reaches, and a few sit up
+       high: on the hill, the pier, the catwalk and the footbridge. Your count shows in the top bar.</p>
+    <p>Days pass every 12 minutes, showers roll over now and then, and the town's people wave, chat and go about their day.</p>
+  </section>
+
+  <section class="card" id="couriers">
+    <h2>Couriers<small>3,333 NFTs with fully on-chain art.</small></h2>
+    <p>Every courier has a look and a <b>ride</b>, fixed at the reveal by a secret committed before the mint, so nobody could snipe
+       the rare ones. The art is drawn on-chain as a postage stamp: its value shows the courier's delivery power, a badge shows
+       its level, and an ON DUTY postmark appears while it works. Log in with a wallet that holds couriers and you play as one.</p>
+    <div class="scroll"><table>
+      <tr><th>Ride</th><th class="num">Chance</th><th class="num">Delivery power</th><th class="num">Routes used</th></tr>
+      <tr><td>On Foot</td><td class="num">45%</td><td class="num">100</td><td class="num">1</td></tr>
+      <tr><td>Skateboard</td><td class="num">25%</td><td class="num">160</td><td class="num">1</td></tr>
+      <tr><td>Bicycle</td><td class="num">17%</td><td class="num">260</td><td class="num">2</td></tr>
+      <tr><td>Moped</td><td class="num">9%</td><td class="num">450</td><td class="num">3</td></tr>
+      <tr><td>Paper Plane</td><td class="num">4%</td><td class="num">800</td><td class="num">4</td></tr>
+    </table></div>
+    <p>The mint is over. Couriers trade on <a href="https://opensea.io/collection/courier-624459161" target="_blank" rel="noopener">OpenSea</a>,
+       with a 5% royalty on sales. A courier on duty can't be transferred until you take it off duty.</p>
+  </section>
+
+  <section class="card" id="offices">
+    <h2>Post offices<small>Put couriers to work and collect $STAMP.</small></h2>
+    <p>Open a post office for <b>0.005 ETH</b>. It comes with a trainee courier (60 power) who starts work straight away, so you
+       can earn before you own an NFT. Put your own couriers on duty to add their power. Each office has a number of desks
+       (couriers on duty at once) and routes; faster rides use more routes.</p>
+    <div class="scroll"><table>
+      <tr><th>Tier</th><th class="num">Desks</th><th class="num">Routes</th><th class="num">Upgrade cost</th></tr>
+      <tr><td>Kiosk</td><td class="num">2</td><td class="num">3</td><td class="num">included</td></tr>
+      <tr><td>Branch</td><td class="num">4</td><td class="num">7</td><td class="num">100 $STAMP</td></tr>
+      <tr><td>Depot</td><td class="num">6</td><td class="num">14</td><td class="num">400 $STAMP</td></tr>
+      <tr><td>Hub</td><td class="num">9</td><td class="num">24</td><td class="num">1,500 $STAMP</td></tr>
+      <tr><td>HQ</td><td class="num">12</td><td class="num">40</td><td class="num">5,000 $STAMP</td></tr>
+    </table></div>
+    <p>Upgrades go one tier at a time, with a 24-hour wait between them. Collect your $STAMP whenever you like from the
+       post office panel.</p>
+    <p><b>Invite friends:</b> when someone opens an office with your invite, you get 2.5% of what their office collects
+       (taken from their share).</p>
+  </section>
+
+  <section class="card" id="levels">
+    <h2>Levels<small>Train a courier for more power.</small></h2>
+    <p>Couriers go from level 1 to 10. Each level adds <b>+12%</b> to its base power, so a level 10 courier has 2.08× the power
+       it started with. Training costs 25 × level² $STAMP, and levels stay with the NFT if it changes hands.</p>
+    <div class="scroll"><table>
+      <tr><th>Level</th><th class="num">1→2</th><th class="num">2→3</th><th class="num">3→4</th><th class="num">4→5</th><th class="num">5→6</th><th class="num">6→7</th><th class="num">7→8</th><th class="num">8→9</th><th class="num">9→10</th></tr>
+      <tr><td>$STAMP</td><td class="num">25</td><td class="num">100</td><td class="num">225</td><td class="num">400</td><td class="num">625</td><td class="num">900</td><td class="num">1,225</td><td class="num">1,600</td><td class="num">2,025</td></tr>
+    </table></div>
+    <p>From level 1 to 10 costs 7,125 $STAMP in all.</p>
+  </section>
+
+  <section class="card" id="stamp">
+    <h2>$STAMP<small>The town's token: 21 million, ever.</small></h2>
+    <div class="grid">
+      <div class="tile"><b>Supply</b><br>21,000,000 cap. 2.1M opened the trading pool; the other 18.9M are earned by post offices.</div>
+      <div class="tile"><b>Emissions</b><br>2.25 $STAMP every block (one every 1.1 s, about 176,700 a day), shared by delivery power.</div>
+      <div class="tile"><b>Halvings</b><br>The reward halves every 4.2M blocks, about every 53.5 days, landing exactly on 21M.</div>
+      <div class="tile"><b>Spending</b><br>Of $STAMP spent in the game (upgrades, training), 75% is burned and 25% goes to the treasury.</div>
+    </div>
+    <p>Your share of each block's reward is your offices' delivery power over everyone's.</p>
+  </section>
+
+  <section class="card" id="trading">
+    <h2>Trading<small>Buy and sell $STAMP right in the game.</small></h2>
+    <ul>
+      <li>$STAMP trades against IMD in one Uniswap v4 pool. Trade with IMD, or with ETH (routed through the IMD/ETH pool), from the
+          post office panel.</li>
+      <li>Every swap pays a <b>4% fee</b> on its IMD side. Plain transfers, and everything the game does, are never taxed.</li>
+      <li>The launch liquidity is $STAMP only and locked forever, so sells fill once buys have brought IMD into the pool.</li>
+      <li>Each trade shows a quote with fees and price impact included, and is protected by a slippage limit.</li>
+    </ul>
+    <p class="note">Nothing here is financial advice. Tokens can lose value; only trade what you're happy to lose.</p>
+  </section>
+
+  <section class="card" id="safety">
+    <h2>Safety<small>Nobody holds the keys.</small></h2>
+    <ul>
+      <li>Ownership of the NFT, its renderer, $STAMP and the pool's hook was renounced at launch. The post office never had an
+          owner. Nobody can change the rules, mint extra tokens or move anyone's couriers.</li>
+      <li>The courier art is frozen for good.</li>
+      <li>Every contract's source code is verified on the explorer and published on
+          <a href="https://github.com/AdamNakamoto/courierworld" target="_blank" rel="noopener">GitHub</a>.</li>
+      <li>The contracts were reviewed by IMD Swarm: <a href="https://explorer.imd.fun/jobs/19b34b9b-94ef-4543-8d85-b05028860fcf" target="_blank" rel="noopener">read the audit report</a>.</li>
+    </ul>
+  </section>
+
+  <section class="card" id="contracts">
+    <h2>Contracts<small>Robinhood Chain (chain ID 4663).</small></h2>
+    <div class="scroll"><table>
+      <tr><th>Contract</th><th>Address</th></tr>
+      <tr><td>$STAMP (Courier World)</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0xBaB43AF01C32a952ff14B395D026cf1874932Bc5" target="_blank" rel="noopener">0xBaB43AF01C32a952ff14B395D026cf1874932Bc5</a></td></tr>
+      <tr><td>Couriers (NFT)</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0xCb75f4AcE92b63c69c140936cd68c43500532D45" target="_blank" rel="noopener">0xCb75f4AcE92b63c69c140936cd68c43500532D45</a></td></tr>
+      <tr><td>Post office</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0x26D80804D0FA2F4598369E0062bFC9536d115D82" target="_blank" rel="noopener">0x26D80804D0FA2F4598369E0062bFC9536d115D82</a></td></tr>
+      <tr><td>Pool hook</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0xb07382187852485D485a171dd87b100BF4f1a8Cc" target="_blank" rel="noopener">0xb07382187852485D485a171dd87b100BF4f1a8Cc</a></td></tr>
+      <tr><td>Router (IMD)</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0x9F8d17713F70cDa36d0Ad613C86465521e07076b" target="_blank" rel="noopener">0x9F8d17713F70cDa36d0Ad613C86465521e07076b</a></td></tr>
+      <tr><td>Router (ETH)</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0xd9D24Ed3ad05f9ccb467C79bb8A3906217D63A46" target="_blank" rel="noopener">0xd9D24Ed3ad05f9ccb467C79bb8A3906217D63A46</a></td></tr>
+      <tr><td>Renderer (art)</td><td><a class="mono" href="https://robinhoodchain.blockscout.com/address/0xDebFA6C985c7Cf3646a4e535ee766BD08CFaD404" target="_blank" rel="noopener">0xDebFA6C985c7Cf3646a4e535ee766BD08CFaD404</a></td></tr>
+    </table></div>
+  </section>
+
+  <footer>
+    <p class="card">A tiny planet. A bag of letters. <a href="./">Start delivering</a>.</p>
+  </footer>
+</div>
+</body>
+</html>
