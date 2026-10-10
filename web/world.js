@@ -296,7 +296,7 @@ const POST_FRAG = /* glsl */ `
   uniform mat4 invProj;
   uniform mat3 camRot, worldInv;
   uniform vec3 horizon, zenith, cloudShade, cloudLight, ink;
-  uniform float stars;
+  uniform float stars, overcast;
   varying vec2 vUv;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -332,7 +332,7 @@ const POST_FRAG = /* glsl */ `
     vec3 q = dL * vec3(1.7, 3.6, 1.7) + vec3(time * 0.008, 0.0, time * 0.004);
     float n = fbm3(q) + 0.06 * fbm3(q * 4.0);
     // More cloud higher up, clear near the horizon, like a painted backdrop.
-    float cover = 0.53 - 0.06 * smoothstep(0.0, 0.6, dW.y);
+    float cover = 0.53 - 0.06 * smoothstep(0.0, 0.6, dW.y) - 0.16 * overcast;
     c = mix(c, cloudShade, step(cover, n));
     c = mix(c, cloudLight, step(cover + 0.05, n + 0.04 * fbm3(q * 9.0)));
     float h = hash(floor(uv * res / (5.0 * thickness)) + floor(time * 0.25));
@@ -362,7 +362,8 @@ const POST_FRAG = /* glsl */ `
 
     float raw = texture2D(tDepth, vUv).x;
     vec3 base;
-    if (raw >= 0.99999) base = sky(vUv);
+    // Over the sky the colour pass is black except for additive rain streaks, which show through.
+    if (raw >= 0.99999) base = sky(vUv) + texture2D(tColor, vUv).rgb;
     else base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(30.0, 95.0, dist) * 0.45);
     gl_FragColor = vec4(mix(base, ink, edge * 0.9), 1.0);
     #include <colorspace_fragment>
@@ -713,6 +714,7 @@ export function createWorld(canvas) {
       cloudLight: { value: new THREE.Color(0xd5efe6) },
       ink: { value: new THREE.Color(0x283033) },
       stars: { value: 0 },
+      overcast: { value: 0 },
     },
     depthTest: false,
     depthWrite: false,
@@ -770,11 +772,69 @@ export function createWorld(canvas) {
     litWindows.material.emissiveIntensity = mixN(a, b, k, "glow");
     u.stars.value = mixN(a, b, k, "stars");
     night = mixN(a, b, k, "glow");
+    // Rain: an overcast sky, greyer and a little darker, and no stars.
+    if (rain > 0.001) {
+      for (const key of ["horizon", "zenith", "cloudShade", "cloudLight"]) {
+        const c = u[key].value, grey = (c.r + c.g + c.b) / 3 * 0.86;
+        c.lerp(ca.setRGB(grey, grey * 1.02, grey * 1.06), 0.65 * rain);
+      }
+      hemi.intensity *= 1 - 0.22 * rain;
+      sun.intensity *= 1 - 0.55 * rain;
+      u.stars.value *= 1 - rain;
+    }
+    u.overcast.value = rain;
+  }
+
+  // ---------------------------------------------------------------- rain
+
+  // Streaks in a box around the courier (who always stands at the top of the planet in scene space).
+  const RAIN_N = 1400, RAIN_BOX = 16, RAIN_TOP = 14, DROP = 0.55;
+  const drops = new Float32Array(RAIN_N * 3); // x, y, z of each drop's foot
+  const dropSpeed = new Float32Array(RAIN_N), dropFloor = new Float32Array(RAIN_N);
+  const rainPos = new Float32Array(RAIN_N * 6);
+  const respawn = (i, top) => {
+    drops[i * 3] = (Math.random() * 2 - 1) * RAIN_BOX;
+    drops[i * 3 + 1] = R + (top ? RAIN_TOP : Math.random() * RAIN_TOP);
+    drops[i * 3 + 2] = (Math.random() * 2 - 1) * RAIN_BOX;
+    dropSpeed[i] = 13 + Math.random() * 5;
+    // Where the planet's surface is under this drop: it curves away from the courier.
+    const x = drops[i * 3], z = drops[i * 3 + 2];
+    dropFloor[i] = Math.sqrt(Math.max(0, R * R - x * x - z * z)) - 0.1;
+  };
+  for (let i = 0; i < RAIN_N; i++) respawn(i, false);
+  const rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute("position", new THREE.BufferAttribute(rainPos, 3));
+  const rainLines = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({
+    color: 0x7f939c, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  rainLines.frustumCulled = false;
+  rainLines.visible = false;
+  scene.add(rainLines);
+  noNormals.push(rainLines);
+  let rain = 0, lastT = 0;
+  function stepRain(t) {
+    const dt = Math.min(0.05, Math.max(0, t - lastT));
+    lastT = t;
+    rainLines.visible = rain > 0.01;
+    if (!rainLines.visible) return;
+    rainLines.material.opacity = Math.min(1, rain * 1.1);
+    // Lighter rain falls in fewer streaks.
+    const n = Math.floor(RAIN_N * (0.35 + 0.65 * rain));
+    rainGeo.setDrawRange(0, n * 2);
+    for (let i = 0; i < n; i++) {
+      drops[i * 3 + 1] -= dropSpeed[i] * dt;
+      if (drops[i * 3 + 1] < dropFloor[i]) respawn(i, true);
+      const x = drops[i * 3], y = drops[i * 3 + 1], z = drops[i * 3 + 2], j = i * 6;
+      rainPos[j] = x; rainPos[j + 1] = y; rainPos[j + 2] = z;
+      rainPos[j + 3] = x + 0.06; rainPos[j + 4] = y + DROP; rainPos[j + 5] = z + 0.03;
+    }
+    rainGeo.attributes.position.needsUpdate = true;
   }
   setTimeOfDay(0.42);
 
   const rot4 = new THREE.Matrix4();
   function render(t) {
+    stepRain(t);
     camera.updateMatrixWorld();
     world.updateMatrixWorld();
     post.uniforms.time.value = t;
@@ -798,6 +858,8 @@ export function createWorld(canvas) {
 
   return {
     scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
+    /// How hard it's raining, 0..1 (applied with the next setTimeOfDay).
+    setRain(r) { rain = r; },
     /// How dark it is, 0 (day) to 1 (night).
     get night() { return night; },
   };

@@ -262,8 +262,8 @@ export function createCharacter(p) {
   function setPose(next) {
     pose = next;
   }
-  function update(dt, speed, t) {
-    // speed: 0 idle … 1 full walk (or how hard she's pedalling)
+  function update(dt, speed, t, air = 0) {
+    // speed: 0 idle … 1 full walk (or how hard she's pedalling); air: 0 on the ground … 1 mid-jump
     phase += dt * (3 + 8.5 * speed);
     const s = Math.sin(phase);
     if (pose === "walk") {
@@ -273,6 +273,16 @@ export function createCharacter(p) {
       arms[1].rotation.set(s * 0.6 * speed, 0, 0.1);
       body.position.y = Math.abs(Math.cos(phase)) * 0.045 * speed + Math.sin(t * 2.1) * 0.004 * (1 - speed);
       body.rotation.x = 0.07 * speed;
+      if (air > 0) {
+        // Mid-jump: one knee up, arms flung out.
+        legs[0].rotation.x += (-0.6 - legs[0].rotation.x) * air;
+        legs[1].rotation.x += (0.3 - legs[1].rotation.x) * air;
+        arms[0].rotation.x *= 1 - air;
+        arms[1].rotation.x *= 1 - air;
+        arms[0].rotation.z += (-1.15 - arms[0].rotation.z) * air;
+        arms[1].rotation.z += (1.15 - arms[1].rotation.z) * air;
+        body.position.y *= 1 - air;
+      }
     } else if (pose === "sit") {
       // Seated, hands forward on the bars, legs pedalling.
       legs[0].rotation.set(-1.15 + s * 0.35 * speed, 0, 0);

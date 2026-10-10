@@ -41,7 +41,7 @@ const POSTMASTER = [
 const INTRO = [
   { name: "You", text: "Overslept again... the post office opened ages ago." },
   { name: "You", text: "Three letters in the bag. Better get walking." },
-  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, drag to look around. Follow the arrow at the top." },
+  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, drag to look around. Follow the arrow at the top." },
 ];
 
 // ---------------------------------------------------------------- characters
@@ -61,10 +61,10 @@ function rider(params, rideKey = "foot") {
     group, ch, ride,
     kind: ride ? rideKey : null,
     speed: ride ? ride.mount.speed : 1,
-    update(dt, moving, t) {
+    update(dt, moving, t, air = 0) {
       ride?.update(dt, moving, t);
       if (ride) ch.root.position.y = ride.riderY(t);
-      ch.update(dt, ride ? (ride.mount.pedal ? moving : 0) : moving, t);
+      ch.update(dt, ride ? (ride.mount.pedal ? moving : 0) : moving, t, air);
     },
   };
 }
@@ -273,6 +273,11 @@ addEventListener("keydown", (e) => {
     advance();
     return;
   }
+  if (e.key === " " && mode === "play") {
+    e.preventDefault();
+    if (!e.repeat) jump();
+    return;
+  }
   keys.add(e.key.toLowerCase());
   if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault();
 });
@@ -318,8 +323,13 @@ const joy = { x: 0, y: 0, id: null };
   pad.addEventListener("pointercancel", end);
   if (matchMedia("(pointer: coarse)").matches) {
     pad.hidden = false;
-    $("help").textContent = "Drag the stick to walk · drag the world to look";
+    $("jumpBtn").hidden = false;
+    $("help").textContent = "Drag the stick to walk · tap Jump to hop · drag the world to look";
   }
+  $("jumpBtn").addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    jump();
+  });
 }
 
 // ---------------------------------------------------------------- movement
@@ -407,6 +417,34 @@ const clock = new THREE.Clock();
 const camPos = TITLE_CAM.pos.clone(), camLook = TITLE_CAM.look.clone();
 const spin = new THREE.Vector3(0.2, 1, 0.12).normalize();
 let moveSpeed = 0, footY = 0.03;
+// Jumping: a quick hop with a stretch on the way up and a squash on landing.
+const JUMP_V = 5.6, GRAVITY = 18;
+let jumpY = 0, jumpV = 0, jumpBuffer = 0, landSquash = 0;
+function jump() {
+  // Remember the press for a moment, so pressing just before landing still jumps again.
+  if (mode === "play" && !dialog) jumpBuffer = 0.15;
+}
+// Weather: now and then a light shower rolls over for a minute or two (?rain=1 starts in one).
+const weather = { rain: 0, target: 0, next: 0 };
+{
+  const q = new URLSearchParams(location.search).get("rain");
+  if (q !== null) weather.rain = weather.target = Math.min(1, Number.parseFloat(q) || 0);
+  weather.next = weather.target ? 90 : 60 + Math.random() * 150;
+}
+function stepWeather(dt) {
+  weather.next -= dt;
+  if (weather.next <= 0) {
+    if (weather.target > 0) {
+      weather.target = 0;
+      weather.next = 150 + Math.random() * 210;
+    } else if (Math.random() < 0.45) {
+      weather.target = 0.5 + Math.random() * 0.4;
+      weather.next = 60 + Math.random() * 90;
+    } else weather.next = 90 + Math.random() * 120;
+  }
+  // Showers take about ten seconds to come and go.
+  weather.rain += Math.max(-dt / 10, Math.min(dt / 10, weather.target - weather.rain));
+}
 // A full day and night every 12 minutes of play, starting late morning (?tod=0.9 starts at night).
 const DAY_SECONDS = 720;
 let timeOfDay = Number.parseFloat(new URLSearchParams(location.search).get("tod")) || 0.42;
@@ -463,7 +501,27 @@ function frame() {
     const rd = W.nearestRoad(p);
     const groundY = rd < ROAD_HW ? 0.04 : rd < ROAD_HW + WALK ? 0.16 : 0.0;
     footY += (groundY - footY) * (1 - Math.exp(-dt * 14));
-    player.group.position.y = R + footY;
+    jumpBuffer = Math.max(0, jumpBuffer - dt);
+    if (jumpBuffer > 0 && jumpY === 0 && !dialog) {
+      jumpBuffer = 0;
+      jumpV = JUMP_V;
+      jumpY = 1e-4;
+      sounds.jump();
+    }
+    if (jumpY > 0) {
+      jumpV -= GRAVITY * dt;
+      jumpY += jumpV * dt;
+      if (jumpY <= 0) {
+        jumpY = 0;
+        landSquash = Math.min(1, -jumpV / JUMP_V);
+        sounds.land(landSquash);
+        jumpV = 0;
+      }
+    }
+    landSquash *= Math.exp(-dt * 11);
+    const stretch = 1 + (jumpY > 0 ? 0.1 * Math.min(1, Math.abs(jumpV) / JUMP_V) : 0) - 0.24 * landSquash;
+    player.group.scale.set(1 / Math.sqrt(stretch), stretch, 1 / Math.sqrt(stretch));
+    player.group.position.y = R + footY + jumpY;
     const yawWant = facingCamera ? 0 : Math.PI - heading;
     player.group.rotation.y += wrap(yawWant - player.group.rotation.y) * (1 - Math.exp(-dt * 12));
 
@@ -488,11 +546,15 @@ function frame() {
     camLook.lerp(f.look, k);
   }
 
-  player.update(dt, moveSpeed, t);
+  player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4));
   for (const r of residents) r.update(dt, 0, t);
-  if (mode !== "title") timeOfDay += dt / DAY_SECONDS;
+  if (mode !== "title") {
+    timeOfDay += dt / DAY_SECONDS;
+    stepWeather(dt);
+  }
+  W.setRain(weather.rain);
   W.setTimeOfDay(timeOfDay);
-  sounds.update(dt, { speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night });
+  sounds.update(dt, { speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, air: jumpY > 0 });
   for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
   if (dialog) {
     const line = dialog.lines[dialog.i];

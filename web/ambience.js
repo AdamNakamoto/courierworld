@@ -1,6 +1,7 @@
 // Ambient sound for the planet, generated live with the Web Audio API (no audio files): footsteps
 // that follow your pace, the hum or rumble of your ride, birds by day and crickets at night, a
-// soft breeze, and a chime for every delivered letter. Like the music, it needs a click to start.
+// soft breeze, rain when it showers, a hop and a thud when you jump, and a chime for every
+// delivered letter. Like the music, it needs a click to start.
 
 const VOLUME = 0.7;
 const STORE = "courier:sounds";
@@ -17,8 +18,8 @@ function saveEnabled(on) {
 
 export function createAmbience() {
   let enabled = loadEnabled();
-  let ctx = null, master, verbSend, noise, breeze;
-  let stepPhase = 0, birdIn = 2, cricketIn = 1, rideKind, rideLoop = null;
+  let ctx = null, master, verbSend, noise, breeze, rainBed;
+  let stepPhase = 0, birdIn = 2, cricketIn = 1, dripIn = 0, rideKind, rideLoop = null;
 
   function build() {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -63,6 +64,25 @@ export function createAmbience() {
     src.connect(lp).connect(breeze).connect(master);
     src.start();
     swell.start();
+
+    // Rain: a soft, wide hiss of countless drops; silent until it showers.
+    rainBed = ctx.createGain();
+    rainBed.gain.value = 0;
+    rainBed.connect(master);
+    [[-0.5, 0.2], [0.5, 1.1]].forEach(([pan, offset]) => {
+      const r = ctx.createBufferSource();
+      r.buffer = noise;
+      r.loop = true;
+      r.playbackRate.value = 0.9 + offset * 0.1;
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 900;
+      const lp2 = ctx.createBiquadFilter();
+      lp2.type = "lowpass";
+      lp2.frequency.value = 5200;
+      r.connect(hp).connect(lp2).connect(panner(pan)).connect(rainBed);
+      r.start(0, offset);
+    });
   }
 
   const panner = (pan) => {
@@ -142,6 +162,13 @@ export function createAmbience() {
       tone(t, "sine", f, 0.022, 0.025, g);
       t += 0.045;
     }
+  }
+
+  /// One raindrop landing nearby: a tiny high tick.
+  function drip() {
+    const out = panner(rand(-0.9, 0.9));
+    out.connect(master);
+    burst(ctx.currentTime + 0.01, rand(0.015, 0.04), "bandpass", rand(2500, 6000), 4, rand(0.01, 0.035), out, rand(0.8, 1.3));
   }
 
   /// The ride's own sound, looping; its level follows your speed.
@@ -240,11 +267,12 @@ export function createAmbience() {
       return enabled;
     },
     /// Each frame. speed: 0 still, 0.62 walking, 1 running. ride: null on foot, else the ride's key.
-    /// night: 0 day to 1 night.
-    update(dt, { speed, ride, night }) {
+    /// night: 0 day to 1 night. rain: 0 dry to 1 a proper shower. air: true mid-jump.
+    update(dt, { speed, ride, night, rain = 0, air = false }) {
       if (!live()) return;
-      // Footsteps, faster when running.
-      if (!ride && speed > 0.08) {
+      // Footsteps, faster when running (and none in mid-air).
+      if (air) stepPhase = 0.6;
+      else if (!ride && speed > 0.08) {
         stepPhase += dt * (1.2 + 1.9 * speed);
         if (stepPhase >= 1) {
           stepPhase -= 1;
@@ -261,18 +289,44 @@ export function createAmbience() {
         rideLoop.gain.gain.setTargetAtTime(speed > 0.05 ? 0.25 + 0.75 * speed : 0, ctx.currentTime, 0.15);
         rideLoop.pitch?.(speed);
       }
-      // Birds by day, crickets by night.
+      // Birds by day, crickets by night; both mostly keep quiet in the rain.
       birdIn -= dt;
       if (birdIn <= 0) {
-        if (chance(1 - night)) bird();
+        if (chance((1 - night) * (1 - 0.85 * rain))) bird();
         birdIn = rand(2.5, 7);
       }
       cricketIn -= dt;
       if (cricketIn <= 0) {
-        if (chance(night)) cricket();
+        if (chance(night * (1 - 0.7 * rain))) cricket();
         cricketIn = rand(0.35, 1.1);
       }
-      breeze.gain.value = 0.05 - 0.015 * night;
+      breeze.gain.value = 0.05 - 0.015 * night + 0.02 * rain;
+      // The rain's hiss, with the odd nearby drop on top.
+      rainBed.gain.setTargetAtTime(0.11 * rain, ctx.currentTime, 0.5);
+      dripIn -= dt;
+      if (dripIn <= 0) {
+        if (rain > 0.05) drip();
+        dripIn = rand(0.02, 0.12) / Math.max(0.2, rain);
+      }
+    },
+    /// Springing off the ground: a soft rising whoop.
+    jump() {
+      if (!live()) return;
+      const t = ctx.currentTime + 0.005;
+      const out = panner(0);
+      out.connect(master);
+      tone(t, "sine", 330, 0.12, 0.16, out, 640);
+      burst(t, 0.14, "bandpass", 1300, 0.9, 0.08, out, 1.2);
+    },
+    /// Touching down; level 0..1 is how hard.
+    land(level = 1) {
+      if (!live()) return;
+      const t = ctx.currentTime + 0.005;
+      const out = panner(0);
+      out.connect(master);
+      const v = 0.4 + 0.6 * level;
+      tone(t, "sine", 120, 0.2 * v, 0.12, out, 55);
+      burst(t, 0.1, "lowpass", 900, 0.7, 0.14 * v, out, 0.8);
     },
     /// A bright two-note bell for a delivered letter.
     chime() {
