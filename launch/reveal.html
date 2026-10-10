@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Courier reveal</title>
+  <style>
+    :root { --ink: #283033; --paper: #fbf7ee; --muted: #6b7275; --line: #d8d2c2; --accent: #f0c84b; --warn: #b23b33; --ok: #3f8f5a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, sans-serif; }
+    main { max-width: 640px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 24px; margin: 0 0 4px; }
+    h2 { font-size: 17px; margin: 0 0 6px; }
+    p { margin: 8px 0; }
+    .muted { color: var(--muted); }
+    .box { border: 2px solid var(--ink); border-radius: 4px; background: #fff; padding: 12px 14px; margin: 16px 0; }
+    .mono { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    textarea { width: 100%; min-height: 64px; font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px;
+      border: 2px solid var(--ink); border-radius: 4px; background: #fff; color: var(--ink); resize: vertical; }
+    button { font: 600 15px system-ui, sans-serif; color: var(--ink); background: var(--accent); border: 2px solid var(--ink);
+      border-radius: 4px; padding: 9px 14px; cursor: pointer; margin: 4px 8px 4px 0; }
+    button.plain { background: #fff; }
+    button:disabled { opacity: .45; cursor: default; }
+    .warn { color: var(--warn); font-weight: 600; }
+    .ok { color: var(--ok); font-weight: 600; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+    dt { color: var(--muted); }
+    dd { margin: 0; }
+    a { color: var(--ink); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Courier reveal</h1>
+  <p class="muted">Runs only in this browser tab. Your secret goes nowhere except into the reveal transaction you sign.</p>
+
+  <div class="box">
+    <h2>The collection</h2>
+    <dl>
+      <dt>Contract</dt><dd class="mono" id="nftAddr">…</dd>
+      <dt>Minted</dt><dd id="minted">…</dd>
+      <dt>Revealed</dt><dd id="state">…</dd>
+      <dt>Owner</dt><dd class="mono" id="owner">…</dd>
+    </dl>
+  </div>
+
+  <section id="done" class="box" hidden>
+    <h2 class="ok">Revealed</h2>
+    <p>Every courier's ride is fixed for good. Seed: <span class="mono" id="seed"></span></p>
+    <p id="doneTx"></p>
+    <p>Next: the game and $STAMP launch (stage 2).</p>
+  </section>
+
+  <section id="steps">
+    <div class="box">
+      <h2>1. Your secret</h2>
+      <p>Paste the reveal secret you created and saved at the start (from courier-reveal-secret.txt or your password manager).</p>
+      <textarea id="secret" spellcheck="false" autocomplete="off" placeholder="A long number"></textarea>
+      <p id="match" class="muted">It's checked against the fingerprint stored in the contract before anything can be sent.</p>
+    </div>
+
+    <div class="box">
+      <h2>2. Your wallet</h2>
+      <p>Connect the wallet that owns the contract.</p>
+      <button id="connect">Connect wallet</button>
+      <p id="who" class="muted"></p>
+    </div>
+
+    <div class="box">
+      <h2>3. Reveal</h2>
+      <p>This ends the mint for good and fixes every courier's ride, mixing your secret with the newest block so nobody (you included)
+         could have known the rides in advance. Once it's on-chain the secret is public, which is how it should be.</p>
+      <button id="reveal" disabled>Reveal the couriers</button>
+      <p id="status" class="muted"></p>
+    </div>
+  </section>
+</main>
+<script type="module">
+  import { createPublicClient, createWalletClient, custom, http, defineChain, keccak256, encodeAbiParameters, isHex, hexToBigInt }
+    from "https://esm.sh/viem@2";
+
+  const NFT = "0xCb75f4AcE92b63c69c140936cd68c43500532D45";
+  const EXPLORER = "https://robinhoodchain.blockscout.com";
+  const chain = defineChain({
+    id: 4663, name: "Robinhood Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: ["https://robinhood-rpc.publicnode.com"] } },
+    blockExplorers: { default: { name: "Blockscout", url: EXPLORER } },
+  });
+  const abi = [
+    { type: "function", name: "seedCommit", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+    { type: "function", name: "seed", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+    { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+    { type: "function", name: "totalMinted", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+    { type: "function", name: "MAX_SUPPLY", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+    { type: "function", name: "reveal", stateMutability: "nonpayable", inputs: [{ name: "secret", type: "uint256" }], outputs: [] },
+    { type: "error", name: "AlreadyRevealed", inputs: [] },
+    { type: "error", name: "BadSecret", inputs: [] },
+    { type: "error", name: "OwnableUnauthorizedAccount", inputs: [{ type: "address" }] },
+  ];
+  const $ = (id) => document.getElementById(id);
+  const pub = createPublicClient({ chain, transport: http() });
+  const read = (fn) => pub.readContract({ address: NFT, abi, functionName: fn });
+  let commit = null, owner = null, account = null, secret = null, wallet = null;
+
+  $("nftAddr").innerHTML = `<a href="${EXPLORER}/address/${NFT}" target="_blank" rel="noopener">${NFT}</a>`;
+
+  async function refresh() {
+    const [c, seed, o, minted, max] = await Promise.all([read("seedCommit"), read("seed"), read("owner"), read("totalMinted"), read("MAX_SUPPLY")]);
+    commit = c;
+    owner = o;
+    $("minted").textContent = `${minted.toLocaleString()} of ${max.toLocaleString()}`;
+    $("owner").textContent = o;
+    $("state").textContent = seed === 0n ? "Not yet" : "Yes";
+    if (seed !== 0n) {
+      $("steps").hidden = true;
+      $("done").hidden = false;
+      $("seed").textContent = seed.toString();
+    }
+    update();
+  }
+
+  /// The secret as a uint256, from a decimal or 0x-hex string, or null.
+  function parse(text) {
+    const t = text.trim();
+    if (!t) return null;
+    try {
+      if (isHex(t)) return hexToBigInt(t);
+      if (/^\d+$/.test(t)) return BigInt(t);
+    } catch {}
+    return null;
+  }
+
+  function update() {
+    const s = parse($("secret").value);
+    secret = null;
+    if ($("secret").value.trim() === "") {
+      $("match").className = "muted";
+      $("match").textContent = "It's checked against the fingerprint stored in the contract before anything can be sent.";
+    } else if (s === null || s >= 2n ** 256n) {
+      $("match").className = "warn";
+      $("match").textContent = "That isn't a number. Paste the secret exactly as saved.";
+    } else if (commit && keccak256(encodeAbiParameters([{ type: "uint256" }], [s])) === commit) {
+      secret = s;
+      $("match").className = "ok";
+      $("match").textContent = "Matches the fingerprint in the contract.";
+    } else {
+      $("match").className = "warn";
+      $("match").textContent = "Doesn't match the fingerprint in the contract. Check you have the right secret, with nothing missing.";
+    }
+    const isOwner = account && owner && account.toLowerCase() === owner.toLowerCase();
+    if (account) {
+      $("who").className = isOwner ? "ok" : "warn";
+      $("who").textContent = isOwner ? `Connected: ${account} (the owner)` : `Connected: ${account}. That isn't the owner; switch to ${owner} in your wallet.`;
+    }
+    $("reveal").disabled = !(secret !== null && isOwner);
+  }
+  $("secret").addEventListener("input", update);
+
+  $("connect").onclick = async () => {
+    if (!window.ethereum) {
+      $("who").className = "warn";
+      $("who").textContent = "No browser wallet found. Open this page in the browser where your wallet is installed.";
+      return;
+    }
+    try {
+      [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x1237" }] });
+      } catch (e) {
+        if (e.code === 4902) {
+          await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
+            chainId: "0x1237", chainName: chain.name, nativeCurrency: chain.nativeCurrency,
+            rpcUrls: chain.rpcUrls.default.http, blockExplorerUrls: [EXPLORER],
+          }] });
+        } else throw e;
+      }
+      wallet = createWalletClient({ chain, transport: custom(window.ethereum), account });
+      window.ethereum.on?.("accountsChanged", (a) => { account = a[0] ?? null; wallet = account ? createWalletClient({ chain, transport: custom(window.ethereum), account }) : null; update(); });
+      update();
+    } catch (e) {
+      $("who").className = "warn";
+      $("who").textContent = e.shortMessage || e.message || String(e);
+    }
+  };
+
+  $("reveal").onclick = async () => {
+    $("reveal").disabled = true;
+    $("status").className = "muted";
+    try {
+      // Dry run first, so a mistake shows up here and not as a failed transaction.
+      $("status").textContent = "Checking…";
+      const { request } = await pub.simulateContract({ address: NFT, abi, functionName: "reveal", args: [secret], account });
+      $("status").textContent = "Approve the transaction in your wallet…";
+      const hash = await wallet.writeContract(request);
+      $("status").innerHTML = `Sent. Waiting for it to land… <a href="${EXPLORER}/tx/${hash}" target="_blank" rel="noopener">view</a>`;
+      const receipt = await pub.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("The transaction failed.");
+      $("doneTx").innerHTML = `<a href="${EXPLORER}/tx/${hash}" target="_blank" rel="noopener">The reveal transaction</a>`;
+      $("secret").value = "";
+      await refresh();
+    } catch (e) {
+      $("status").className = "warn";
+      $("status").textContent = e.shortMessage || e.message || String(e);
+      update();
+    }
+  };
+
+  refresh().catch((e) => {
+    $("state").textContent = "Couldn't read the contract: " + (e.shortMessage || e.message);
+  });
+</script>
+</body>
+</html>
