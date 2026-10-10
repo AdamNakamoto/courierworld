@@ -2,7 +2,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { texFromCanvas } from "./world.js";
 
-export function createDust(parent, noNormals, count = 48) {
+export function createDust(parent, noNormals, count = 48, tint = 0xeee6d2) {
   const tex = (() => {
     const c = document.createElement("canvas");
     c.width = c.height = 64;
@@ -17,7 +17,7 @@ export function createDust(parent, noNormals, count = 48) {
     g.fill();
     return texFromCanvas(c);
   })();
-  const color = new THREE.Color(0xeee6d2);
+  const color = new THREE.Color(tint);
   const pool = [];
   for (let i = 0; i < count; i++) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color, transparent: true, depthWrite: false, opacity: 0 }));

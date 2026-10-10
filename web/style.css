@@ -67,6 +67,7 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .bag { position: absolute; top: 14px; left: 14px; padding: 6px 14px; transform: rotate(-1deg); display: flex; align-items: center; gap: 6px; }
 .bag b { font-size: 24px; }
 .bag .sep { width: 2px; height: 20px; background: var(--ink); margin: 0 6px; opacity: .4; }
+.bag .gold { color: #d9a21f; font-size: 18px; line-height: 1; -webkit-text-stroke: 1px var(--ink); }
 .env {
   width: 26px; height: 19px; border: 2.5px solid var(--ink); background: var(--paper); position: relative; display: inline-block; margin-right: 2px;
 }
@@ -91,6 +92,7 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   user-select: none; -webkit-user-select: none;
 }
 .jump-btn:active { transform: translate(2px, 3px); box-shadow: 1px 1px 0 rgba(40, 48, 51, 0.85); }
+.talk-btn { bottom: 176px; left: 34px; width: 64px; height: 64px; background: var(--paper); }
 
 /* ---------------------------------------------------------------- dialog */
 

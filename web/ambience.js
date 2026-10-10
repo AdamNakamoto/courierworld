@@ -301,6 +301,55 @@ export function createAmbience() {
         dripIn = rand(0.02, 0.12) / Math.max(0.2, rain);
       }
     },
+    /// A golden stamp: a bright little run up the scale.
+    collect() {
+      if (!live()) return;
+      const t = ctx.currentTime + 0.01;
+      const g = ctx.createGain();
+      g.gain.value = 1;
+      g.connect(master);
+      g.connect(verbSend);
+      [1046.5, 1318.5, 1568, 2093].forEach((f, i) => {
+        tone(t + i * 0.07, "triangle", f, 0.14, 0.5, g);
+        tone(t + i * 0.07, "sine", f * 2, 0.03, 0.3, g);
+      });
+    },
+    /// A flock taking off: a quick flurry of wingbeats.
+    flutter() {
+      if (!live()) return;
+      const out = panner(rand(-0.4, 0.4));
+      out.connect(master);
+      out.connect(verbSend);
+      let t = ctx.currentTime + 0.01;
+      for (let i = 0; i < 14; i++) {
+        burst(t, 0.05, "bandpass", rand(700, 1400), 1.1, rand(0.05, 0.1) * (1 - i / 18), out, rand(0.8, 1.2));
+        t += rand(0.025, 0.06);
+      }
+    },
+    /// A cat's mew: a short, nasal rise and fall.
+    meow() {
+      if (!live()) return;
+      const t = ctx.currentTime + 0.01;
+      const o = ctx.createOscillator();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(520, t);
+      o.frequency.linearRampToValueAtTime(820, t + 0.12);
+      o.frequency.exponentialRampToValueAtTime(480, t + 0.45);
+      const f = ctx.createBiquadFilter();
+      f.type = "bandpass";
+      f.Q.value = 3;
+      f.frequency.setValueAtTime(1200, t);
+      f.frequency.linearRampToValueAtTime(1800, t + 0.15);
+      f.frequency.linearRampToValueAtTime(1000, t + 0.45);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.09, t + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(f).connect(g).connect(master);
+      g.connect(verbSend);
+      o.start(t);
+      o.stop(t + 0.55);
+    },
     /// Springing off the ground: a soft rising whoop.
     jump() {
       if (!live()) return;

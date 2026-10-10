@@ -2,6 +2,7 @@
 // outlines from a post pass over depth and normals, and a teal sky with flat clouds.
 // Everything static is baked into one vertex-coloured mesh so the town stays cheap.
 import * as THREE from "https://esm.sh/three@0.160.0";
+import { mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
 
 export const R = 24;
 export const UP = new THREE.Vector3(0, 1, 0);
@@ -18,7 +19,7 @@ const C = {
   glass: 0x8db8c6, frame: 0xf6f3ea, door: 0x6c5446, metal: 0xd9d8d2,
   vend: [0x7cc2b5, 0xe46f5f, 0x5d8fd1, 0xf2c94c],
   awning: [[0xe46f5f, 0xfbf6ea], [0x5d8fd1, 0xfbf6ea], [0x6b9f6f, 0xfbf6ea], [0xf2c94c, 0x4e5a67]],
-  sign: [0x5d8fd1, 0xe46f5f], pot: 0xb5734f, bin: 0x4f86c6,
+  sign: [0x5d8fd1, 0xe46f5f], pot: 0xb5734f, bin: 0x4f86c6, lamp: 0xfff1c9,
 };
 
 // ---------------------------------------------------------------- helpers
@@ -48,12 +49,22 @@ const GRADIENT = (() => {
 // Cutaway: anything between the camera and the courier is cut through along the line of sight, so
 // trees and walls never hide them. Shared by every material (and the normal pass) so the ink outlines
 // agree; the ground and anything near it are never cut.
-const CUT = { cutCam: { value: new THREE.Vector3() }, cutTarget: { value: new THREE.Vector3() }, cutR: { value: 0 } };
+// Leaves sway in the wind the same way (by a per-vertex "sway" weight only foliage has).
+const CUT = {
+  cutCam: { value: new THREE.Vector3() }, cutTarget: { value: new THREE.Vector3() }, cutR: { value: 0 }, windTime: { value: 0 },
+};
 function cutaway(material) {
   material.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, CUT);
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vCutWorld;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vCutWorld;\nattribute float sway;\nuniform float windTime;")
+      .replace("#include <begin_vertex>", `#include <begin_vertex>
+        if (sway > 0.0) {
+          float ph = dot(transformed, vec3(0.37, 0.21, 0.29));
+          vec3 n = normalize(transformed);
+          vec3 ta = normalize(cross(n, vec3(0.0, 1.0, 0.3))), tb = cross(n, ta);
+          transformed += (ta * sin(windTime * 1.5 + ph) + tb * 0.6 * sin(windTime * 1.1 + ph * 1.7)) * 0.07 * sway;
+        }`)
       .replace("#include <project_vertex>", `#include <project_vertex>
         vec4 cutW = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
@@ -97,14 +108,16 @@ export function texFromCanvas(c) {
 
 /// Accumulates many meshes into one vertex-coloured geometry.
 class Batch {
-  constructor() { this.pos = []; this.nrm = []; this.col = []; this.idx = []; this.n = 0; }
-  add(geo, matrix, color) {
+  constructor() { this.pos = []; this.nrm = []; this.col = []; this.sway = []; this.idx = []; this.n = 0; }
+  /// leafy: the mesh sways in the wind, the more the higher it is off the ground.
+  add(geo, matrix, color, leafy = false) {
     const p = geo.attributes.position, nAttr = geo.attributes.normal;
     const nm = new THREE.Matrix3().getNormalMatrix(matrix);
     const v = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
       v.fromBufferAttribute(p, i).applyMatrix4(matrix);
       this.pos.push(v.x, v.y, v.z);
+      this.sway.push(leafy ? 0.2 + 0.8 * Math.min(1, Math.max(0, (v.length() - R - 1.5) / 2)) : 0);
       v.fromBufferAttribute(nAttr, i).applyMatrix3(nm).normalize();
       this.nrm.push(v.x, v.y, v.z);
       this.col.push(color.r, color.g, color.b);
@@ -124,6 +137,7 @@ class Batch {
     }
     for (const p of pts) {
       this.pos.push(p.x, p.y, p.z);
+      this.sway.push(0);
       this.nrm.push(n.x, n.y, n.z);
       this.col.push(color.r, color.g, color.b);
     }
@@ -135,6 +149,7 @@ class Batch {
     g.setAttribute("position", new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute("normal", new THREE.Float32BufferAttribute(this.nrm, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(this.col, 3));
+    if (this.sway.some((w) => w > 0)) g.setAttribute("sway", new THREE.Float32BufferAttribute(this.sway, 1));
     g.setIndex(this.idx);
     const m = new THREE.Mesh(g, material);
     m.castShadow = true;
@@ -455,15 +470,17 @@ export function createWorld(canvas) {
     g.updateMatrixWorld(true);
     g.traverse((o) => {
       if (!o.isMesh) return;
-      const lit = o.material === tm(C.glass) && litRng() < 0.65;
-      (lit ? litBatch : batch).add(o.geometry, o.matrixWorld, o.material.color);
+      const lit = o.material === tm(C.lamp) || (o.material === tm(C.glass) && litRng() < 0.65);
+      (lit ? litBatch : batch).add(o.geometry, o.matrixWorld, o.material.color, C.leaf.some((c) => o.material === tm(c)));
     });
     g.traverse((o) => o.geometry?.dispose());
   }
-  function addRect(dir, spin, hw, hd) {
+  /// A solid footprint; buildings also say how tall they are and how deep the walls really are
+  /// (hd includes the doorstep), so the camera can keep clear of them.
+  function addRect(dir, spin, hw, hd, wall = null) {
     const q = frameAt(dir, spin);
     obstacles.push({
-      d: dir, kind: "rect", hw, hd,
+      d: dir, kind: "rect", hw, hd, wall,
       right: new THREE.Vector3(1, 0, 0).applyQuaternion(q), front: new THREE.Vector3(0, 0, 1).applyQuaternion(q),
       cos: Math.cos((Math.hypot(hw, hd) + 1) / R),
     });
@@ -502,6 +519,7 @@ export function createWorld(canvas) {
 
   // ---- streets: asphalt, raised sidewalks with curbs, lane dashes, crosswalks
   const wireSegs = [];
+  const lamps = []; // where each street lamp hangs (unit vectors)
   {
     const asphalt = new THREE.Color(C.asphalt), paint = new THREE.Color(C.paint), walkC = new THREE.Color(C.walk), curbC = new THREE.Color(C.curb);
     const SEG = 480;
@@ -554,6 +572,16 @@ export function createWorld(canvas) {
             const spin = spinToward(d, p1); // crossarm (local x) spans across the street
             bake(pole(), d, spin);
             addCircle(d, 0.2);
+            // A street lamp reaching out over the road; at night it lights a pool on the ground.
+            const arm = offsetOnSphere(p0, s0, ROAD_HW + WALK - 0.7), head = offsetOnSphere(p0, s0, ROAD_HW + WALK - 1.15);
+            const ga = new THREE.Group();
+            box(ga, 0.07, 0.07, 0.95, C.concrete, 0, 0, 0);
+            bake(ga, arm, spinToward(arm, p0), 4.75);
+            const gh = new THREE.Group();
+            box(gh, 0.26, 0.1, 0.4, 0x4e5a67, 0, 0, 0);
+            box(gh, 0.2, 0.04, 0.32, C.lamp, 0, -0.06, 0);
+            bake(gh, head, spinToward(head, p0), 4.72);
+            lamps.push(head);
             taken.push({ d, r: 0.4 });
             const top = d.clone().multiplyScalar(R + 6.25);
             const across = new THREE.Vector3(1, 0, 0).applyQuaternion(frameAt(d, spin));
@@ -601,7 +629,7 @@ export function createWorld(canvas) {
     const spin = spinToward(d, best.p);
     const { g, doorX } = postOffice(spec);
     bake(g, d, spin);
-    addRect(d, spin, spec.w / 2, spec.d / 2);
+    addRect(d, spin, spec.w / 2, spec.d / 2, { h: 4.2, hd: spec.d / 2 });
     taken.push({ d, r: 3.6 });
     // A sign the ink pass can outline, kept as its own textured mesh.
     const c = document.createElement("canvas"); c.width = 256; c.height = 64;
@@ -647,7 +675,7 @@ export function createWorld(canvas) {
             const spin = spinToward(dir, p);
             const b = k.f(spec);
             bake(b.g, dir, spin);
-            addRect(dir, spin, spec.w / 2 + 0.05, spec.d / 2 + 0.6);
+            addRect(dir, spin, spec.w / 2 + 0.05, spec.d / 2 + 0.6, { h: b.h, hd: spec.d / 2 + 0.1 });
             if (extra) {
               const q = frameAt(dir, spin);
               addCircle(dir.clone().multiplyScalar(R).add(new THREE.Vector3(spec.w / 2 + 0.6, 0, spec.d / 2 - 0.9).applyQuaternion(q)).normalize(), 0.65);
@@ -689,6 +717,27 @@ export function createWorld(canvas) {
     }
     placed++;
   }
+
+  // Pools of warm light under the street lamps, faded in at night.
+  const pools = (() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 128;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.45, "rgba(255,255,255,0.55)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    const disc = new THREE.PlaneGeometry(3.4, 3.4).rotateX(-Math.PI / 2);
+    const parts = lamps.map((d) => disc.clone().applyQuaternion(frameAt(d, 0)).translate(...d.clone().multiplyScalar(R + 0.19).toArray()));
+    const m = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshBasicMaterial({
+      map: texFromCanvas(c), color: 0xffc46b, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    world.add(m);
+    noNormals.push(m);
+    return m;
+  })();
 
   const town = batch.build(toon(0xffffff, { vertexColors: true }));
   world.add(town);
@@ -751,12 +800,15 @@ export function createWorld(canvas) {
   postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), post));
   const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+  let quality = 1; // drawn at this fraction of the screen's pixel ratio; lowered when frames run slow
   function resize() {
-    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const w = canvas.clientWidth, h = canvas.clientHeight, px = dpr * quality;
+    gl.setPixelRatio(px);
     gl.setSize(w, h, false);
-    colorRT.setSize(Math.round(w * dpr), Math.round(h * dpr));
-    normalRT.setSize(Math.round(w * dpr), Math.round(h * dpr));
-    post.uniforms.res.value.set(Math.round(w * dpr), Math.round(h * dpr));
+    colorRT.setSize(Math.round(w * px), Math.round(h * px));
+    normalRT.setSize(Math.round(w * px), Math.round(h * px));
+    post.uniforms.res.value.set(Math.round(w * px), Math.round(h * px));
+    post.uniforms.thickness.value = px * 1.15;
     camera.aspect = w / h;
     // Keep a fair width of view on tall phone screens; wide screens use a narrower, flatter lens.
     camera.fov = Math.min(70, Math.max(40, (2 * Math.atan(Math.tan(0.49) / camera.aspect) * 180) / Math.PI));
@@ -800,6 +852,8 @@ export function createWorld(canvas) {
     blend(a, b, k, "sun", sun.color);
     sun.intensity = mixN(a, b, k, "sunI");
     litWindows.material.emissiveIntensity = mixN(a, b, k, "glow");
+    pools.material.opacity = 0.42 * mixN(a, b, k, "glow");
+    pools.visible = pools.material.opacity > 0.01;
     u.stars.value = mixN(a, b, k, "stars");
     night = mixN(a, b, k, "glow");
     // Rain: an overcast sky, greyer and a little darker, and no stars.
@@ -868,6 +922,7 @@ export function createWorld(canvas) {
     camera.updateMatrixWorld();
     world.updateMatrixWorld();
     post.uniforms.time.value = t;
+    CUT.windTime.value = t;
     post.uniforms.invProj.value.copy(camera.projectionMatrixInverse);
     post.uniforms.camRot.value.setFromMatrix4(rot4.extractRotation(camera.matrixWorld));
     post.uniforms.worldInv.value.setFromMatrix4(rot4.extractRotation(world.matrixWorld)).transpose();
@@ -888,6 +943,20 @@ export function createWorld(canvas) {
 
   return {
     scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
+    /// Whether a spot on the planet (with this much room around it) is inside something solid.
+    blocked(d, r) {
+      return obstacles.some((o) => {
+        if (d.dot(o.d) < o.cos) return false;
+        if (o.kind === "circle") return arc(d, o.d) < o.r + r;
+        const v = d.clone().sub(o.d).multiplyScalar(R);
+        return Math.abs(v.dot(o.right)) < o.hw + r && Math.abs(v.dot(o.front)) < o.hd + r;
+      });
+    },
+    /// Draw at this fraction (0.5..1) of the screen's full resolution.
+    setQuality(q) {
+      quality = q;
+      resize();
+    },
     /// Cut a see-through path from the camera to this point (world space), or pass null to stop.
     setCutaway(target) {
       CUT.cutR.value = target ? 0.85 : 0;

@@ -1,6 +1,6 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createWorld, R, UP, ROAD_HW, WALK, arc, texFromCanvas } from "./world.js";
-import { createCharacter, COURIER, villager } from "./character.js";
+import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
@@ -8,6 +8,8 @@ import { createMusic } from "./music.js";
 import { createAmbience } from "./ambience.js";
 import { createOffice } from "./office.js";
 import { createDust } from "./fx.js";
+import { createLife } from "./life.js";
+import { createStamps, STAMPS } from "./stamps.js";
 
 const $ = (id) => document.getElementById(id);
 const W = createWorld($("c"));
@@ -42,7 +44,7 @@ const POSTMASTER = [
 const INTRO = [
   { name: "You", text: "Overslept again... the post office opened ages ago." },
   { name: "You", text: "Three letters in the bag. Better get walking." },
-  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, drag to look around. Follow the arrow at the top." },
+  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around. Follow the arrow at the top." },
 ];
 
 // ---------------------------------------------------------------- characters
@@ -74,7 +76,7 @@ function dispose(group) {
   group.traverse((o) => {
     if (o.isMesh) {
       o.geometry.dispose();
-      o.material.dispose();
+      if (!o.material.userData.shared) o.material.dispose();
     }
   });
 }
@@ -134,19 +136,17 @@ function kick(opts) {
   dust.puff(at, at.clone().normalize(), opts);
 }
 
-// A few residents waiting by their doors.
-const residents = [];
-{
-  const step = Math.max(1, Math.floor(W.addresses.length / 12));
-  for (let i = 3; i < W.addresses.length && residents.length < 12; i += step) {
-    const a = W.addresses[i];
-    const npc = createCharacter(villager(i * 7919 + 13));
-    npc.root.position.copy(a.dir).multiplyScalar(R + 0.16);
-    npc.root.quaternion.copy(W.frameAt(a.dir, a.spin));
-    npc.root.translateX(0.75);
-    world.add(npc.root);
-    residents.push(npc);
-  }
+// Residents by their doors and out walking, birds, cats, butterflies and fireflies.
+const life = createLife(W, { onFlutter: () => sounds.flutter(), onMeow: () => sounds.meow() });
+// Golden stamps to find, and the sparkle when you do.
+const stamps = createStamps(W);
+const sparkle = createDust(world, W.noNormals, 24, 0xffd75e);
+function collected(s) {
+  sounds.collect();
+  sparkle.puff(s.mesh.position, s.d, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
+  hud();
+  toast(stamps.found === STAMPS ? "Every golden stamp on the planet!" : `Golden stamp! ${stamps.found} of ${STAMPS}`);
+  if (stamps.found === STAMPS) say([{ name: "You", text: "That's all fifteen golden stamps. The whole planet, done!" }]);
 }
 
 // ---------------------------------------------------------------- envelope markers
@@ -242,6 +242,7 @@ function deliver(i) {
 function hud() {
   $("bagN").textContent = bag.length;
   $("doneN").textContent = delivered;
+  $("stampN").textContent = `${stamps.found}/${STAMPS}`;
 }
 
 // ---------------------------------------------------------------- input
@@ -281,6 +282,10 @@ addEventListener("keydown", (e) => {
   if (dialog && (e.key === " " || e.key === "Enter")) {
     e.preventDefault();
     advance();
+    return;
+  }
+  if (e.key.toLowerCase() === "e" && mode === "play" && !dialog) {
+    if (!e.repeat) interact();
     return;
   }
   if (e.key === " " && mode === "play") {
@@ -334,11 +339,16 @@ const joy = { x: 0, y: 0, id: null };
   if (matchMedia("(pointer: coarse)").matches) {
     pad.hidden = false;
     $("jumpBtn").hidden = false;
-    $("help").textContent = "Drag the stick to walk · tap Jump to hop · drag the world to look";
+    $("talkBtn").hidden = false;
+    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk or wave · drag the world to look";
   }
   $("jumpBtn").addEventListener("pointerdown", (e) => {
     e.preventDefault();
     jump();
+  });
+  $("talkBtn").addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (mode === "play" && !dialog) interact();
   });
 }
 
@@ -387,8 +397,33 @@ function pushOut(p) {
         p.normalize();
       }
     }
+    for (const b of life.bodies) {
+      const gap = arc(p, b.d) - (b.r + BODY_R);
+      if (gap >= 0 || b.d.dot(p) < 0.99) continue;
+      v.subVectors(p, b.d);
+      v.addScaledVector(p, -v.dot(p));
+      if (v.lengthSq() < 1e-12) continue;
+      p.addScaledVector(v.normalize(), -gap / R).normalize();
+    }
   }
   return p;
+}
+/// Talk to whoever is close by, or wave if nobody is.
+let waveT = 0;
+function interact() {
+  const me = localPos();
+  const who = life.nearest(me, 2.4);
+  if (!who) {
+    waveT = 1.6;
+    life.waveBack(me);
+    return;
+  }
+  // Turn to face them.
+  const v = who.up.clone().applyQuaternion(playerQ);
+  facing = Math.atan2(v.x, -v.z);
+  facingCamera = false;
+  life.talking(who, true);
+  say([{ name: who.name, text: life.chat(who, { night: W.night, rain: weather.rain }) }], () => life.talking(who, false));
 }
 /// Move by the velocity for dt, sliding along anything in the way. Returns the distance covered.
 function step(dt) {
@@ -438,10 +473,43 @@ const spawnQ = (() => {
   return q2.multiply(q1);
 })();
 const TITLE_CAM = { pos: new THREE.Vector3(0, 6, 74), look: new THREE.Vector3(0, 0, 0) };
+// The camera you asked for (pitch, dist) and the one in use, which lifts over buildings that would
+// get in the way, or comes in closer, and eases back once the view is clear.
+let camPitch = 0.56, camDist = 8, camDodge = 0;
 const followCam = () => ({
-  pos: new THREE.Vector3(0, R + 1.0 + Math.sin(pitch) * dist, Math.cos(pitch) * dist),
+  pos: new THREE.Vector3(0, R + 1.0 + Math.sin(camPitch) * camDist, Math.cos(camPitch) * camDist),
   look: new THREE.Vector3(0, R + 1.05, -1.8),
 });
+/// Whether the view from this camera to the courier is clear of buildings.
+function camClear(walls, inv, p, d) {
+  const from = new THREE.Vector3(0, R + 1.0, 0), to = new THREE.Vector3(0, R + 1.0 + Math.sin(p) * d, Math.cos(p) * d);
+  const q = new THREE.Vector3(), v = new THREE.Vector3();
+  for (let s = 0.1; s <= 1.0001; s += 0.075) {
+    q.lerpVectors(from, to, s).applyQuaternion(inv);
+    const len = q.length(), h = len - R;
+    q.divideScalar(len);
+    for (const o of walls) {
+      if (h > o.wall.h + 0.35 || q.dot(o.d) < o.cos) continue;
+      v.subVectors(q, o.d).multiplyScalar(R);
+      if (Math.abs(v.dot(o.right)) < o.hw + 0.3 && Math.abs(v.dot(o.front)) < o.wall.hd + 0.3) return false;
+    }
+  }
+  return true;
+}
+function steerCamera(dt) {
+  const me = localPos();
+  const walls = W.obstacles.filter((o) => o.wall && me.dot(o.d) > Math.cos((dist + 6) / R));
+  const inv = playerQ.clone().invert();
+  const tries = [[pitch, dist], [pitch + 0.3, dist], [pitch + 0.55, dist * 0.92], [Math.min(1.3, pitch + 0.8), dist * 0.82],
+    [Math.min(1.3, pitch + 0.8), dist * 0.62], [Math.min(1.3, pitch + 0.8), dist * 0.45]];
+  const pickd = tries.find(([p, d]) => camClear(walls, inv, p, d)) ?? tries[tries.length - 1];
+  const [p, d] = pickd;
+  // Get out of the way quickly and settle back slowly; otherwise just follow your own camera moves.
+  camDodge = pickd === tries[0] ? Math.max(0, camDodge - dt) : 2.5;
+  const back = camDodge > 0 ? 1.5 : 10;
+  camPitch += (p - camPitch) * (1 - Math.exp(-dt * (p > camPitch ? 5 : back)));
+  camDist += (d - camDist) * (1 - Math.exp(-dt * (d < camDist ? 5 : back)));
+}
 
 let mode = "title"; // title | intro | play
 let intro = null;
@@ -506,8 +574,30 @@ let timeOfDay = Number.parseFloat(new URLSearchParams(location.search).get("tod"
 let facingCamera = true; // she greets the camera until you first move
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 
+// Keep it smooth: if frames run slow for a couple of seconds, draw at a lower resolution, and step
+// back up once there's room again.
+let quality = 1, slowFor = 0, fastFor = 0, avgFrame = 1 / 60;
+function adapt(raw) {
+  if (raw > 0.25) return; // a hitch or a hidden tab, not a trend
+  avgFrame += (raw - avgFrame) * 0.05;
+  if (avgFrame > 1 / 48) [slowFor, fastFor] = [slowFor + raw, 0];
+  else if (avgFrame < 1 / 57) [slowFor, fastFor] = [0, fastFor + raw];
+  else slowFor = fastFor = 0;
+  if (slowFor > 2 && quality > 0.5) {
+    quality = Math.max(0.5, quality - 0.15);
+    W.setQuality(quality);
+    slowFor = 0;
+    avgFrame = 1 / 60;
+  } else if (fastFor > 8 && quality < 1) {
+    quality = Math.min(1, quality + 0.1);
+    W.setQuality(quality);
+    fastFor = 0;
+  }
+}
+
 function frame() {
   const raw = clock.getDelta(), dt = Math.min(raw, 0.05), t = clock.elapsedTime;
+  adapt(raw);
   let dist = 0, turnRate = 0, landed = false;
 
   if (mode === "title") {
@@ -619,6 +709,7 @@ function frame() {
     }
     compass(p);
 
+    steerCamera(dt);
     const f = followCam();
     const k = 1 - Math.exp(-dt * 8);
     camPos.lerp(f.pos, k);
@@ -629,7 +720,12 @@ function frame() {
   // A puff with each running step.
   if (stepped && moveSpeed > 0.8 && mode === "play") kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
   dust.update(dt, 1 - 0.55 * W.night);
-  for (const r of residents) r.update(dt, 0, t);
+  sparkle.update(dt);
+  const got = stamps.update(dt, t, { me: localPos(), chest: footY + jumpY + 0.85, active: mode === "play" && !dialog });
+  if (got) collected(got);
+  life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
+  waveT = Math.max(0, waveT - dt);
+  player.ch.setWave(waveT > 0 ? Math.min(1, waveT * 3, (1.6 - waveT) * 6) : 0);
   if (mode !== "title") {
     timeOfDay += dt / DAY_SECONDS;
     stepWeather(dt);

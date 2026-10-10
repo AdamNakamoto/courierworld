@@ -1,7 +1,41 @@
 // Characters built from simple shapes and cel-shaded, so the ink pass outlines
 // them like the rest of the world. Faces +z; feet at the origin; about 1.6 tall.
 import * as THREE from "https://esm.sh/three@0.160.0";
+import { mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
 import { toon, mulberry32 } from "./world.js";
+
+// One vertex-coloured material shared by every character's merged parts.
+const SHARED = toon(0xffffff, { vertexColors: true });
+SHARED.userData.shared = true;
+
+/// Fewer draw calls: the meshes hanging off each joint of a rig become one vertex-coloured mesh, so
+/// the joints still move but each draws once. Meshes in `keep` (animated on their own) stay apart.
+export function compact(root, keep = new Set()) {
+  const joints = [];
+  root.traverse((o) => {
+    if (!o.isMesh) joints.push(o);
+  });
+  for (const j of joints) {
+    const parts = j.children.filter((c) => c.isMesh && !keep.has(c) && !c.children.length && c.material.emissive?.getHex() === 0);
+    if (parts.length < 2) continue;
+    let geos = parts.map((m) => {
+      m.updateMatrix();
+      const g = m.geometry.clone().applyMatrix4(m.matrix);
+      const c = m.material.color, n = g.attributes.position.count, a = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) a.set([c.r, c.g, c.b], i * 3);
+      g.setAttribute("color", new THREE.BufferAttribute(a, 3));
+      return g;
+    });
+    if (!geos.every((g) => g.index)) geos = geos.map((g) => (g.index ? g.toNonIndexed() : g));
+    const merged = new THREE.Mesh(mergeGeometries(geos), SHARED);
+    merged.castShadow = merged.receiveShadow = true;
+    for (const m of parts) {
+      j.remove(m);
+      m.geometry.dispose();
+    }
+    j.add(merged);
+  }
+}
 
 /// The default courier, used before you pick one of your own.
 export const COURIER = {
@@ -271,9 +305,13 @@ export function createCharacter(p) {
 
   // ---- poses and animation
   let pose = "walk"; // walk | sit (bike, moped) | stand (skateboard, plane)
-  let phase = 0, blink = 2 + Math.random() * 3;
+  let phase = 0, blink = 2 + Math.random() * 3, wave = 0;
   function setPose(next) {
     pose = next;
+  }
+  /// 0..1: how far the right hand is up, waving.
+  function setWave(k) {
+    wave = k;
   }
   /// speed: 0 idle, 0.62 walking, 1 running (or how hard she's pedalling). air: 0 on the ground … 1 mid-jump.
   /// dist: ground covered this frame; when given, the stride follows it so the feet don't skate.
@@ -336,6 +374,12 @@ export function createCharacter(p) {
       body.position.y = -0.05 + Math.sin(t * 3) * 0.008;
       body.rotation.x = 0.08;
     }
+    if (wave > 0 && pose === "walk") {
+      const osc = Math.sin(t * 11);
+      arms[0].rotation.x *= 1 - wave;
+      arms[0].rotation.z += (-2.55 + osc * 0.28 - arms[0].rotation.z) * wave;
+      elbows[0].rotation.x += (-0.5 + osc * 0.3 - elbows[0].rotation.x) * wave;
+    }
     head.rotation.x = -0.05 * k + Math.sin(t * 1.1) * 0.025 * (1 - k);
     for (const tl of tails) tl.rotation.x = tl.userData.rest + Math.sin(phase * 2) * 0.14 * speed + Math.sin(t * 1.7) * 0.03;
     if (bag) bag.rotation.x = Math.sin(phase) * 0.1 * speed;
@@ -346,5 +390,6 @@ export function createCharacter(p) {
     return pose === "walk" && k > 0.15 && air === 0 && Math.floor((phase - Math.PI / 2) / Math.PI) !== stepBefore;
   }
 
-  return { root, body, head, update, setPose };
+  compact(root, new Set(eyes));
+  return { root, body, head, update, setPose, setWave };
 }
