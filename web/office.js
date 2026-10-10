@@ -176,8 +176,8 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(s.minted / SUPPLY) * 100}%"></div></div><span>${s.minted.toLocaleString()}/${SUPPLY.toLocaleString()}</span></div>`;
     if (s.saleOpen && s.minted < SUPPLY) {
       html += `<div class="mintrow"><button class="pbtn" data-act="qty" data-d="-1">−</button><b>${qty}</b><button class="pbtn" data-act="qty" data-d="1">+</button>
-        <button class="pbtn primary" data-act="mint" ${busy ? "disabled" : ""}>Mint ${qty} · ${fmt(s.price * BigInt(qty), 3)} ETH</button></div>
-        <p class="note">Rides are revealed after the mint: 45% on foot, 25% skateboard, 17% bicycle, 9% moped, 4% paper plane.</p>`;
+        <button class="pbtn primary" data-act="mint" ${busy ? "disabled" : ""}>Mint ${qty} · ${s.price === 0n ? "Free" : `${fmt(s.price * BigInt(qty), 3)} ETH`}</button></div>
+        <p class="note">${s.price === 0n ? "Free to mint (you only pay gas), up to 10 at a time. Sales carry a 5% royalty. " : ""}Rides are revealed after the mint: 45% on foot, 25% skateboard, 17% bicycle, 9% moped, 4% paper plane.</p>`;
     } else {
       html += `<p class="note">${revealed ? "The mint is over and the couriers are revealed. Find more on the secondary market." : "The mint is closed."}</p>`;
     }

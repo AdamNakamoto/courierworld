@@ -68,7 +68,7 @@ and the town's NPCs.
 | | |
 |---|---|
 | Post office | Bought with ETH (0.005). Comes with a trainee courier (60 power). Tiers: Kiosk 2 desks / 3 routes → Branch 4/7 → Depot 6/14 → Hub 9/24 → HQ 12/40, paid in $STAMP with a 24h cooldown |
-| Courier NFTs | 3,333, minted for ETH (0.003, up to 10 per transaction), 5% royalty |
+| Courier NFTs | 3,333, free to mint (up to 10 per transaction; launched at 0.003 ETH), 5% royalty |
 | Rides | On Foot 45% (100 power, 1 route) · Skateboard 25% (160, 1) · Bicycle 17% (260, 2) · Moped 9% (450, 3) · Paper Plane 4% (800, 4) |
 | Levels | 1 → 10, +12% power each, costing 25 × level² $STAMP. Levels stay with the NFT |
 | $STAMP supply | 21M cap. A launch allocation (default 2.1M) is locked in the pool; the rest is emitted to post offices by delivery power, halving every 4.2M blocks (~53.5 days). Emission per block is set so allocation + emissions = 21M exactly (2.25/block with 2.1M in the pool) |
