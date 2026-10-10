@@ -5,6 +5,7 @@ import { createRide } from "./rides.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
+import { createAmbience } from "./ambience.js";
 import { createOffice } from "./office.js";
 
 const $ = (id) => document.getElementById(id);
@@ -58,6 +59,7 @@ function rider(params, rideKey = "foot") {
   group.add(ch.root);
   return {
     group, ch, ride,
+    kind: ride ? rideKey : null,
     speed: ride ? ride.mount.speed : 1,
     update(dt, moving, t) {
       ride?.update(dt, moving, t);
@@ -220,6 +222,7 @@ function deliver(i) {
   bag = bag.filter((b) => b !== i);
   hideMarker(i);
   delivered++;
+  sounds.chime();
   try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
   hud();
   const lines = [{ name: a.name, text: THANKS[random(THANKS.length)] }];
@@ -234,15 +237,22 @@ function hud() {
 // ---------------------------------------------------------------- input
 
 const music = createMusic();
-function musicButton() {
-  $("musicBtn").classList.toggle("off", !music.enabled);
-  $("musicBtn").setAttribute("aria-pressed", String(music.enabled));
-  $("musicBtn").title = music.enabled ? "Music on (M)" : "Music off (M)";
+const sounds = createAmbience();
+function audioButtons() {
+  for (const [id, a, name, key] of [["musicBtn", music, "Music", "M"], ["soundsBtn", sounds, "Sounds", "N"]]) {
+    $(id).classList.toggle("off", !a.enabled);
+    $(id).setAttribute("aria-pressed", String(a.enabled));
+    $(id).title = `${name} ${a.enabled ? "on" : "off"} (${key})`;
+  }
 }
-musicButton();
+audioButtons();
 $("musicBtn").addEventListener("click", () => {
   music.toggle();
-  musicButton();
+  audioButtons();
+});
+$("soundsBtn").addEventListener("click", () => {
+  sounds.toggle();
+  audioButtons();
 });
 
 const keys = new Set();
@@ -253,9 +263,9 @@ addEventListener("keydown", (e) => {
     office.show($("office").hidden);
     return;
   }
-  if (e.key.toLowerCase() === "m" && mode !== "title") {
-    music.toggle();
-    musicButton();
+  if ((e.key.toLowerCase() === "m" || e.key.toLowerCase() === "n") && mode !== "title") {
+    (e.key.toLowerCase() === "m" ? music : sounds).toggle();
+    audioButtons();
     return;
   }
   if (dialog && (e.key === " " || e.key === "Enter")) {
@@ -372,7 +382,9 @@ let mode = "title"; // title | intro | play
 let intro = null;
 $("begin").addEventListener("click", async () => {
   if (mode !== "title") return;
-  music.start(); // first, while the click still counts as permission to play sound
+  // First, while the click still counts as permission to play sound.
+  music.start();
+  sounds.start();
   // On a real chain you log in with your wallet before playing.
   const chain = await chainReady;
   if (chain && chain.browserWallet && !chain.account) {
@@ -395,6 +407,9 @@ const clock = new THREE.Clock();
 const camPos = TITLE_CAM.pos.clone(), camLook = TITLE_CAM.look.clone();
 const spin = new THREE.Vector3(0.2, 1, 0.12).normalize();
 let moveSpeed = 0, footY = 0.03;
+// A full day and night every 12 minutes of play, starting late morning (?tod=0.9 starts at night).
+const DAY_SECONDS = 720;
+let timeOfDay = Number.parseFloat(new URLSearchParams(location.search).get("tod")) || 0.42;
 let facingCamera = true; // she greets the camera until you first move
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 
@@ -475,6 +490,9 @@ function frame() {
 
   player.update(dt, moveSpeed, t);
   for (const r of residents) r.update(dt, 0, t);
+  if (mode !== "title") timeOfDay += dt / DAY_SECONDS;
+  W.setTimeOfDay(timeOfDay);
+  sounds.update(dt, { speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night });
   for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
   if (dialog) {
     const line = dialog.lines[dialog.i];

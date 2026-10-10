@@ -296,6 +296,7 @@ const POST_FRAG = /* glsl */ `
   uniform mat4 invProj;
   uniform mat3 camRot, worldInv;
   uniform vec3 horizon, zenith, cloudShade, cloudLight, ink;
+  uniform float stars;
   varying vec2 vUv;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -326,6 +327,8 @@ const POST_FRAG = /* glsl */ `
     vec3 dW = normalize(camRot * (v.xyz / v.w));
     vec3 dL = worldInv * dW;
     vec3 c = mix(horizon, zenith, smoothstep(-0.15, 0.7, dW.y));
+    // Stars, fixed to the planet's sky, fading in at night behind the clouds.
+    c = mix(c, vec3(1.0, 0.96, 0.86), step(0.9978, hash3(floor(dL * 240.0))) * stars);
     vec3 q = dL * vec3(1.7, 3.6, 1.7) + vec3(time * 0.008, 0.0, time * 0.004);
     float n = fbm3(q) + 0.06 * fbm3(q * 4.0);
     // More cloud higher up, clear near the horizon, like a painted backdrop.
@@ -377,7 +380,8 @@ export function createWorld(canvas) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
-  scene.add(new THREE.HemisphereLight(0xe4f6f2, 0x8aa982, 1.25));
+  const hemi = new THREE.HemisphereLight(0xe4f6f2, 0x8aa982, 1.25);
+  scene.add(hemi);
   // The sun is fixed relative to the camera (the planet turns under it), so its
   // shadow map only has to cover the neighbourhood around the player.
   const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
@@ -394,6 +398,10 @@ export function createWorld(canvas) {
   scene.add(world);
   const noNormals = []; // hidden from the normal pass: sprites, lines, soft shadows
   const batch = new Batch();
+  // About two windows in three light up at night; they're baked into their own mesh so they can glow.
+  // A separate random stream, so the town's layout stays exactly the same.
+  const litBatch = new Batch();
+  const litRng = mulberry32(4041);
   const obstacles = []; // { d, cos, kind: "circle", r } | { d, cos, kind: "rect", right, front, hw, hd }
   const addresses = []; // doors: { dir, markerDir, spin, kind }
   const taken = []; // { d, r } footprint circles, for placement
@@ -417,7 +425,9 @@ export function createWorld(canvas) {
     g.quaternion.copy(frameAt(dir, spin));
     g.updateMatrixWorld(true);
     g.traverse((o) => {
-      if (o.isMesh) batch.add(o.geometry, o.matrixWorld, o.material.color);
+      if (!o.isMesh) return;
+      const lit = o.material === tm(C.glass) && litRng() < 0.65;
+      (lit ? litBatch : batch).add(o.geometry, o.matrixWorld, o.material.color);
     });
     g.traverse((o) => o.geometry?.dispose());
   }
@@ -653,6 +663,8 @@ export function createWorld(canvas) {
 
   const town = batch.build(toon(0xffffff, { vertexColors: true }));
   world.add(town);
+  const litWindows = litBatch.build(toon(0xffffff, { vertexColors: true, emissive: 0xffc46b, emissiveIntensity: 0 }));
+  world.add(litWindows);
 
   // ---- grass tufts: tiny instanced blades that the ink pass turns into hatching
   {
@@ -700,6 +712,7 @@ export function createWorld(canvas) {
       cloudShade: { value: new THREE.Color(0x93d2c8) },
       cloudLight: { value: new THREE.Color(0xd5efe6) },
       ink: { value: new THREE.Color(0x283033) },
+      stars: { value: 0 },
     },
     depthTest: false,
     depthWrite: false,
@@ -719,6 +732,46 @@ export function createWorld(canvas) {
   }
   new ResizeObserver(resize).observe(canvas);
   resize();
+
+  // ---------------------------------------------------------------- time of day
+
+  // Sky, light and window glow at each point of the day (0 midnight, 0.5 noon), blended in between.
+  const LOOKS = {
+    night: { horizon: 0x33466b, zenith: 0x161f3a, cloudShade: 0x2a3654, cloudLight: 0x415275,
+      hemiSky: 0x6075a6, hemiGround: 0x26333c, hemiI: 0.62, sun: 0x9fb0ff, sunI: 0.55, glow: 1, stars: 1 },
+    dawn: { horizon: 0xf5c9a6, zenith: 0x88a9c8, cloudShade: 0xe4ad96, cloudLight: 0xffe4cc,
+      hemiSky: 0xffdcc0, hemiGround: 0x7c8c70, hemiI: 0.95, sun: 0xffb27a, sunI: 1.5, glow: 0.35, stars: 0.15 },
+    day: { horizon: 0xa9ded2, zenith: 0x6fbcbc, cloudShade: 0x93d2c8, cloudLight: 0xd5efe6,
+      hemiSky: 0xe4f6f2, hemiGround: 0x8aa982, hemiI: 1.25, sun: 0xfff0d6, sunI: 2.4, glow: 0, stars: 0 },
+    dusk: { horizon: 0xf2a27e, zenith: 0x6b6595, cloudShade: 0xc98c8c, cloudLight: 0xf7c8a8,
+      hemiSky: 0xf3c2a6, hemiGround: 0x6e7864, hemiI: 0.85, sun: 0xff9860, sunI: 1.4, glow: 0.6, stars: 0.2 },
+  };
+  const DAY_KEYS = [
+    [0, "night"], [0.16, "night"], [0.24, "dawn"], [0.32, "day"], [0.68, "day"], [0.76, "dusk"], [0.84, "night"], [1, "night"],
+  ];
+  const ca = new THREE.Color(), cb = new THREE.Color();
+  const blend = (a, b, k, key, out) => out.copy(ca.setHex(a[key])).lerp(cb.setHex(b[key]), k);
+  const mixN = (a, b, k, key) => a[key] + (b[key] - a[key]) * k;
+  let night = 0;
+  /// Set the time of day, 0..1 (0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk).
+  function setTimeOfDay(f) {
+    f = ((f % 1) + 1) % 1;
+    let i = 0;
+    while (f > DAY_KEYS[i + 1][0]) i++;
+    const [fa, na] = DAY_KEYS[i], [fb, nb] = DAY_KEYS[i + 1];
+    const x = (f - fa) / (fb - fa), k = x * x * (3 - 2 * x);
+    const a = LOOKS[na], b = LOOKS[nb], u = post.uniforms;
+    for (const key of ["horizon", "zenith", "cloudShade", "cloudLight"]) blend(a, b, k, key, u[key].value);
+    blend(a, b, k, "hemiSky", hemi.color);
+    blend(a, b, k, "hemiGround", hemi.groundColor);
+    hemi.intensity = mixN(a, b, k, "hemiI");
+    blend(a, b, k, "sun", sun.color);
+    sun.intensity = mixN(a, b, k, "sunI");
+    litWindows.material.emissiveIntensity = mixN(a, b, k, "glow");
+    u.stars.value = mixN(a, b, k, "stars");
+    night = mixN(a, b, k, "glow");
+  }
+  setTimeOfDay(0.42);
 
   const rot4 = new THREE.Matrix4();
   function render(t) {
@@ -743,5 +796,9 @@ export function createWorld(canvas) {
     gl.render(postScene, postCam);
   }
 
-  return { scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad };
+  return {
+    scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
+    /// How dark it is, 0 (day) to 1 (night).
+    get night() { return night; },
+  };
 }
