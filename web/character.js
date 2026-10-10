@@ -47,19 +47,26 @@ export function createCharacter(p) {
   };
   const pants = p.bottomsStyle === "pants", skirt = p.bottomsStyle === "skirt";
 
-  // ---- legs (pivot at the hip)
-  const legs = [];
+  // ---- legs (pivot at the hip, bending at the knee)
+  const legs = [], knees = [];
   for (const s of [-1, 1]) {
     const hip = new THREE.Group();
     hip.position.set(s * 0.085, 0.76, 0);
     body.add(hip);
     if (!skirt) add(hip, new THREE.CylinderGeometry(0.083, 0.076, 0.22, 10), p.bottoms, 0, -0.09, 0);
-    add(hip, new THREE.CylinderGeometry(pants ? 0.066 : 0.05, pants ? 0.058 : 0.042, 0.44, 8), pants ? p.bottoms : p.skin, 0, -0.38, 0);
-    if (!pants) add(hip, new THREE.CylinderGeometry(0.047, 0.046, 0.11, 8), p.socks, 0, -0.6, 0);
-    const shoe = add(hip, new THREE.CapsuleGeometry(0.055, 0.1, 4, 8), p.shoes, 0, -0.705, 0.035);
+    const leg = pants ? p.bottoms : p.skin, top = pants ? 0.066 : 0.05, mid = pants ? 0.062 : 0.046, low = pants ? 0.058 : 0.042;
+    add(hip, new THREE.CylinderGeometry(top, mid, 0.2, 8), leg, 0, -0.26, 0);
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.36, 0);
+    hip.add(knee);
+    add(knee, new THREE.SphereGeometry(mid, 8, 6), leg, 0, 0, 0);
+    add(knee, new THREE.CylinderGeometry(mid, low, 0.24, 8), leg, 0, -0.12, 0);
+    if (!pants) add(knee, new THREE.CylinderGeometry(0.047, 0.046, 0.11, 8), p.socks, 0, -0.24, 0);
+    const shoe = add(knee, new THREE.CapsuleGeometry(0.055, 0.1, 4, 8), p.shoes, 0, -0.345, 0.035);
     shoe.rotation.x = Math.PI / 2;
     shoe.scale.set(1, 1, 0.72);
     legs.push(hip);
+    knees.push(knee);
   }
 
   // ---- hips, torso, shoulders
@@ -119,17 +126,23 @@ export function createCharacter(p) {
     strap(0.15, 0.55, 0x8a6a4a);
   }
 
-  // ---- arms (pivot at the shoulder)
-  const arms = [];
+  // ---- arms (pivot at the shoulder, bending at the elbow)
+  const arms = [], elbows = [];
   for (const s of [-1, 1]) {
     const sh = new THREE.Group();
     sh.position.set(s * 0.19, 1.14, 0);
     sh.rotation.z = s * 0.1;
     body.add(sh);
     add(sh, new THREE.CylinderGeometry(0.06, 0.056, 0.17, 10), p.shirt, 0, -0.06, 0);
-    add(sh, new THREE.CylinderGeometry(0.04, 0.035, 0.32, 8), p.skin, 0, -0.28, 0);
-    add(sh, new THREE.SphereGeometry(0.046, 8, 6), p.skin, 0, -0.46, 0);
+    add(sh, new THREE.CylinderGeometry(0.04, 0.038, 0.1, 8), p.skin, 0, -0.17, 0);
+    const elbow = new THREE.Group();
+    elbow.position.set(0, -0.22, 0);
+    sh.add(elbow);
+    add(elbow, new THREE.SphereGeometry(0.038, 8, 6), p.skin, 0, 0, 0);
+    add(elbow, new THREE.CylinderGeometry(0.038, 0.035, 0.22, 8), p.skin, 0, -0.1, 0);
+    add(elbow, new THREE.SphereGeometry(0.046, 8, 6), p.skin, 0, -0.24, 0);
     arms.push(sh);
+    elbows.push(elbow);
   }
 
   // ---- head
@@ -262,51 +275,75 @@ export function createCharacter(p) {
   function setPose(next) {
     pose = next;
   }
-  function update(dt, speed, t, air = 0) {
-    // speed: 0 idle … 1 full walk (or how hard she's pedalling); air: 0 on the ground … 1 mid-jump
-    phase += dt * (3 + 8.5 * speed);
-    const s = Math.sin(phase);
+  /// speed: 0 idle, 0.62 walking, 1 running (or how hard she's pedalling). air: 0 on the ground … 1 mid-jump.
+  /// dist: ground covered this frame; when given, the stride follows it so the feet don't skate.
+  /// Returns true on the frame a foot comes down.
+  function update(dt, speed, t, air = 0, dist = null) {
+    const stepBefore = Math.floor((phase - Math.PI / 2) / Math.PI);
+    const run = Math.min(1, Math.max(0, (speed - 0.62) / 0.38));
+    const k = Math.min(1, speed / 0.62); // 0 standing … 1 at walking pace and up
+    const amp = 0.5 + 0.32 * run;
+    if (dist !== null && pose === "walk") {
+      // One step covers the legs' reach, longer when running (both feet leave the ground).
+      phase += (dist / (2 * 0.76 * Math.sin(amp) * (1 + 0.45 * run))) * Math.PI;
+    } else phase += dt * (3 + 8.5 * speed);
+    const s = Math.sin(phase), c = Math.cos(phase);
     if (pose === "walk") {
-      legs[0].rotation.set(s * 0.7 * speed, 0, 0);
-      legs[1].rotation.set(-s * 0.7 * speed, 0, 0);
-      arms[0].rotation.set(-s * 0.6 * speed, 0, -0.1);
-      arms[1].rotation.set(s * 0.6 * speed, 0, 0.1);
-      body.position.y = Math.abs(Math.cos(phase)) * 0.045 * speed + Math.sin(t * 2.1) * 0.004 * (1 - speed);
-      body.rotation.x = 0.07 * speed;
+      legs[0].rotation.set(s * amp * k, 0, 0);
+      legs[1].rotation.set(-s * amp * k, 0, 0);
+      // Each knee bends as its foot swings through, more when running.
+      const bend = (0.5 + 0.8 * run) * k;
+      knees[0].rotation.x = 0.04 + bend * Math.max(0, -c);
+      knees[1].rotation.x = 0.04 + bend * Math.max(0, c);
+      const swing = (0.42 + 0.3 * run) * k;
+      arms[0].rotation.set(-s * swing, 0, -0.1);
+      arms[1].rotation.set(s * swing, 0, 0.1);
+      elbows[0].rotation.x = elbows[1].rotation.x = -0.1 - (0.25 + 1.0 * run) * k;
+      body.position.y = Math.abs(c) * (0.03 + 0.05 * run) * k + Math.sin(t * 2.1) * 0.004 * (1 - k);
+      body.rotation.x = (0.05 + 0.17 * run) * k;
       if (air > 0) {
-        // Mid-jump: one knee up, arms flung out.
-        legs[0].rotation.x += (-0.6 - legs[0].rotation.x) * air;
-        legs[1].rotation.x += (0.3 - legs[1].rotation.x) * air;
-        arms[0].rotation.x *= 1 - air;
-        arms[1].rotation.x *= 1 - air;
-        arms[0].rotation.z += (-1.15 - arms[0].rotation.z) * air;
-        arms[1].rotation.z += (1.15 - arms[1].rotation.z) * air;
+        // Mid-jump: one knee tucked up, arms flung out.
+        const to = (o, v) => o + (v - o) * air;
+        legs[0].rotation.x = to(legs[0].rotation.x, -0.75);
+        legs[1].rotation.x = to(legs[1].rotation.x, 0.25);
+        knees[0].rotation.x = to(knees[0].rotation.x, 1.3);
+        knees[1].rotation.x = to(knees[1].rotation.x, 0.45);
+        for (const a of arms) a.rotation.x *= 1 - air;
+        arms[0].rotation.z = to(arms[0].rotation.z, -1.15);
+        arms[1].rotation.z = to(arms[1].rotation.z, 1.15);
+        elbows[0].rotation.x = elbows[1].rotation.x = to(elbows[0].rotation.x, -0.35);
         body.position.y *= 1 - air;
       }
     } else if (pose === "sit") {
       // Seated, hands forward on the bars, legs pedalling.
       legs[0].rotation.set(-1.15 + s * 0.35 * speed, 0, 0);
       legs[1].rotation.set(-1.15 - s * 0.35 * speed, 0, 0);
-      arms[0].rotation.set(-1.15, 0, -0.12);
-      arms[1].rotation.set(-1.15, 0, 0.12);
+      knees[0].rotation.x = 1.25 - s * 0.3 * speed;
+      knees[1].rotation.x = 1.25 + s * 0.3 * speed;
+      arms[0].rotation.set(-1.0, 0, -0.12);
+      arms[1].rotation.set(-1.0, 0, 0.12);
+      elbows[0].rotation.x = elbows[1].rotation.x = -0.3;
       body.position.y = 0;
       body.rotation.x = 0.25;
     } else {
       // Riding stance: sideways-ish, knees soft, arms out for balance.
-      legs[0].rotation.set(0.12, 0, 0.12);
-      legs[1].rotation.set(-0.12, 0, -0.12);
+      legs[0].rotation.set(0.02, 0, 0.12);
+      legs[1].rotation.set(-0.22, 0, -0.12);
+      knees[0].rotation.x = knees[1].rotation.x = 0.3;
       arms[0].rotation.set(0, 0, -0.55 + Math.sin(t * 2) * 0.05);
       arms[1].rotation.set(0, 0, 0.55 - Math.sin(t * 2) * 0.05);
-      body.position.y = -0.03 + Math.sin(t * 3) * 0.008;
+      elbows[0].rotation.x = elbows[1].rotation.x = -0.25;
+      body.position.y = -0.05 + Math.sin(t * 3) * 0.008;
       body.rotation.x = 0.08;
     }
-    head.rotation.x = -0.05 * speed + Math.sin(t * 1.1) * 0.025 * (1 - speed);
+    head.rotation.x = -0.05 * k + Math.sin(t * 1.1) * 0.025 * (1 - k);
     for (const tl of tails) tl.rotation.x = tl.userData.rest + Math.sin(phase * 2) * 0.14 * speed + Math.sin(t * 1.7) * 0.03;
     if (bag) bag.rotation.x = Math.sin(phase) * 0.1 * speed;
     blink -= dt;
     const closed = blink < 0.12;
     for (const e of eyes) e.scale.y = closed ? 0.15 : 1;
     if (blink < 0) blink = 2 + Math.random() * 4;
+    return pose === "walk" && k > 0.15 && air === 0 && Math.floor((phase - Math.PI / 2) / Math.PI) !== stepBefore;
   }
 
   return { root, body, head, update, setPose };

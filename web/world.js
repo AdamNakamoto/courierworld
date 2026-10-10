@@ -44,7 +44,35 @@ const GRADIENT = (() => {
   t.needsUpdate = true;
   return t;
 })();
-export const toon = (color, extra = {}) => new THREE.MeshToonMaterial({ color, gradientMap: GRADIENT, ...extra });
+
+// Cutaway: anything between the camera and the courier is cut through along the line of sight, so
+// trees and walls never hide them. Shared by every material (and the normal pass) so the ink outlines
+// agree; the ground and anything near it are never cut.
+const CUT = { cutCam: { value: new THREE.Vector3() }, cutTarget: { value: new THREE.Vector3() }, cutR: { value: 0 } };
+function cutaway(material) {
+  material.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, CUT);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vCutWorld;")
+      .replace("#include <project_vertex>", `#include <project_vertex>
+        vec4 cutW = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          cutW = instanceMatrix * cutW;
+        #endif
+        vCutWorld = (modelMatrix * cutW).xyz;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vCutWorld;\nuniform vec3 cutCam, cutTarget;\nuniform float cutR;")
+      .replace("void main() {", `void main() {
+        if (cutR > 0.0 && length(vCutWorld) > ${(R + 0.3).toFixed(2)}) {
+          vec3 ab = cutTarget - cutCam;
+          float h = dot(vCutWorld - cutCam, ab) / dot(ab, ab);
+          float r = cutR * smoothstep(0.06, 0.3, h) * (1.0 - smoothstep(0.66, 0.84, h));
+          if (length(vCutWorld - cutCam - ab * clamp(h, 0.0, 1.0)) < r) discard;
+        }`);
+  };
+  return material;
+}
+export const toon = (color, extra = {}) => cutaway(new THREE.MeshToonMaterial({ color, gradientMap: GRADIENT, ...extra }));
 
 // Builders only use materials as colour carriers before baking; share them.
 const matCache = new Map();
@@ -692,7 +720,7 @@ export function createWorld(canvas) {
 
   const colorRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(1, 1) });
   const normalRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
-  const normalMat = new THREE.MeshNormalMaterial();
+  const normalMat = cutaway(new THREE.MeshNormalMaterial());
   const post = new THREE.ShaderMaterial({
     vertexShader: POST_VERT,
     fragmentShader: POST_FRAG,
@@ -730,6 +758,8 @@ export function createWorld(canvas) {
     normalRT.setSize(Math.round(w * dpr), Math.round(h * dpr));
     post.uniforms.res.value.set(Math.round(w * dpr), Math.round(h * dpr));
     camera.aspect = w / h;
+    // Keep a fair width of view on tall phone screens; wide screens use a narrower, flatter lens.
+    camera.fov = Math.min(70, Math.max(40, (2 * Math.atan(Math.tan(0.49) / camera.aspect) * 180) / Math.PI));
     camera.updateProjectionMatrix();
   }
   new ResizeObserver(resize).observe(canvas);
@@ -858,6 +888,14 @@ export function createWorld(canvas) {
 
   return {
     scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
+    /// Cut a see-through path from the camera to this point (world space), or pass null to stop.
+    setCutaway(target) {
+      CUT.cutR.value = target ? 0.85 : 0;
+      if (target) {
+        CUT.cutTarget.value.copy(target);
+        CUT.cutCam.value.copy(camera.position);
+      }
+    },
     /// How hard it's raining, 0..1 (applied with the next setTimeOfDay).
     setRain(r) { rain = r; },
     /// How dark it is, 0 (day) to 1 (night).

@@ -7,6 +7,7 @@ import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
 import { createAmbience } from "./ambience.js";
 import { createOffice } from "./office.js";
+import { createDust } from "./fx.js";
 
 const $ = (id) => document.getElementById(id);
 const W = createWorld($("c"));
@@ -61,10 +62,11 @@ function rider(params, rideKey = "foot") {
     group, ch, ride,
     kind: ride ? rideKey : null,
     speed: ride ? ride.mount.speed : 1,
-    update(dt, moving, t, air = 0) {
+    /// Returns true on the frame a foot comes down.
+    update(dt, moving, t, air = 0, dist = null) {
       ride?.update(dt, moving, t);
       if (ride) ch.root.position.y = ride.riderY(t);
-      ch.update(dt, ride ? (ride.mount.pedal ? moving : 0) : moving, t, air);
+      return ch.update(dt, ride ? (ride.mount.pedal ? moving : 0) : moving, t, air, ride ? null : dist);
     },
   };
 }
@@ -123,6 +125,14 @@ W.addresses.forEach((a, i) => {
   a.name = NAMES[i % NAMES.length];
   a.no = i + 1;
 });
+
+const dust = createDust(world, W.noNormals);
+/// Kick up dust at the courier's feet (it stays put on the ground as they move on).
+function kick(opts) {
+  world.updateMatrixWorld();
+  const at = world.worldToLocal(player.group.position.clone());
+  dust.puff(at, at.clone().normalize(), opts);
+}
 
 // A few residents waiting by their doors.
 const residents = [];
@@ -284,7 +294,7 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 addEventListener("blur", () => keys.clear());
 
-let pitch = 0.36, dist = 5.6;
+let pitch = 0.56, dist = 8;
 const canvas = $("c");
 let drag = null;
 canvas.addEventListener("pointerdown", (e) => {
@@ -302,7 +312,7 @@ canvas.addEventListener("pointermove", (e) => {
 canvas.addEventListener("pointerup", () => (drag = null));
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
-  dist = Math.min(10, Math.max(3, dist * Math.exp(e.deltaY * 0.001)));
+  dist = Math.min(12, Math.max(4.5, dist * Math.exp(e.deltaY * 0.001)));
 }, { passive: false });
 
 const joy = { x: 0, y: 0, id: null };
@@ -334,42 +344,87 @@ const joy = { x: 0, y: 0, id: null };
 
 // ---------------------------------------------------------------- movement
 
-const SPEED = 3.4, RUN = 6.2, BODY_R = 0.3;
-let heading = 0; // courier's facing relative to the camera; 0 = away from it
+const SPEED = 3.1, RUN = 5.8, BODY_R = 0.3;
+// playerQ turns the planet so the courier stands on top with the camera behind them: it's where they
+// really are. The view (world.quaternion) eases after it, so the camera follows with a little give
+// instead of being bolted to the courier.
+const playerQ = new THREE.Quaternion();
+const vel = new THREE.Vector2(); // x: to the camera's right, y: away from it; units per second
+let facing = 0; // where the courier faces, relative to the camera; 0 = away from it
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const ORIGIN2 = new THREE.Vector2();
 
-/// Turn the planet about the vertical axis (the camera orbits the courier).
+/// Turn the camera about the courier (the planet turns under them).
 function yaw(phi) {
-  world.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, phi));
-  heading = wrap(heading - phi);
+  playerQ.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, phi));
+  facing = wrap(facing - phi);
+  vel.rotateAround(ORIGIN2, phi);
 }
 function localPos() {
-  return UP.clone().applyQuaternion(world.quaternion.clone().invert());
+  return UP.clone().applyQuaternion(playerQ.clone().invert());
 }
-function blocked() {
-  const p = localPos();
-  for (const o of W.obstacles) {
-    if (p.dot(o.d) < o.cos) continue;
-    if (o.kind === "circle") {
-      if (arc(p, o.d) < o.r + BODY_R) return true;
-    } else {
-      const v = p.clone().sub(o.d).multiplyScalar(R);
-      if (Math.abs(v.dot(o.right)) < o.hw + BODY_R && Math.abs(v.dot(o.front)) < o.hd + BODY_R) return true;
+/// Push a spot on the planet (a unit vector) out of anything solid, so you slide along walls.
+function pushOut(p) {
+  const v = new THREE.Vector3();
+  for (let pass = 0; pass < 2; pass++) {
+    for (const o of W.obstacles) {
+      if (p.dot(o.d) < o.cos) continue;
+      if (o.kind === "circle") {
+        const gap = arc(p, o.d) - (o.r + BODY_R);
+        if (gap >= 0) continue;
+        v.subVectors(p, o.d);
+        v.addScaledVector(p, -v.dot(p));
+        if (v.lengthSq() < 1e-12) continue;
+        p.addScaledVector(v.normalize(), -gap / R).normalize();
+      } else {
+        v.subVectors(p, o.d).multiplyScalar(R);
+        const x = v.dot(o.right), z = v.dot(o.front);
+        const ex = o.hw + BODY_R - Math.abs(x), ez = o.hd + BODY_R - Math.abs(z);
+        if (ex <= 0 || ez <= 0) continue;
+        if (ex < ez) p.addScaledVector(o.right, ((Math.sign(x) || 1) * ex) / R);
+        else p.addScaledVector(o.front, ((Math.sign(z) || 1) * ez) / R);
+        p.normalize();
+      }
     }
   }
-  return false;
+  return p;
 }
-/// Walk `step` along `h` by rolling the planet under the courier.
-function tryMove(h, step) {
-  const dir = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
-  const axis = dir.clone().cross(UP).normalize();
-  const prev = world.quaternion.clone();
-  world.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, step / R));
-  if (blocked()) {
-    world.quaternion.copy(prev);
-    return false;
+/// Move by the velocity for dt, sliding along anything in the way. Returns the distance covered.
+function step(dt) {
+  if (vel.lengthSq() < 1e-8) return 0;
+  const inv = playerQ.clone().invert();
+  const from = UP.clone().applyQuaternion(inv);
+  // The step in the camera's frame at the top of the planet (forward is -z), then onto the planet.
+  const d = new THREE.Vector3(vel.x, 0, -vel.y).multiplyScalar(dt / R).applyQuaternion(inv);
+  const want = from.clone().add(d).normalize();
+  const to = pushOut(want.clone());
+  const push = to.clone().sub(want);
+  if (push.lengthSq() > 1e-14) {
+    // Lose the part of the velocity that runs into the wall; keep the part along it.
+    push.applyQuaternion(playerQ);
+    const n = new THREE.Vector2(push.x, -push.z).normalize();
+    const into = vel.dot(n);
+    if (into < 0) vel.addScaledVector(n, -into);
   }
-  return true;
+  // Roll the planet the shortest way to bring the new spot to the top (the camera keeps its heading).
+  playerQ.premultiply(new THREE.Quaternion().setFromUnitVectors(to.clone().applyQuaternion(playerQ), UP));
+  return arc(from, to);
+}
+/// Where the courier stands in the scene: on top of the planet, offset by however far the view still
+/// lags behind, leaning into turns and into speeding up or slowing down.
+let leanSide = 0, leanFwd = 0, lastV = 0;
+const leanE = new THREE.Euler(0, 0, 0, "YXZ");
+function placePlayer(dt, v, turnRate) {
+  const lag = world.quaternion.clone().multiply(playerQ.clone().invert());
+  player.group.position.copy(UP).applyQuaternion(lag).multiplyScalar(R + footY + jumpY);
+  const accel = (v - lastV) / Math.max(dt, 1e-3);
+  lastV = v;
+  const wheels = player.ride ? 1.8 : 1;
+  leanSide += (clamp(turnRate * Math.min(1, v / SPEED) * 0.045 * wheels, -0.3, 0.3) - leanSide) * (1 - Math.exp(-dt * 8));
+  leanFwd += (clamp(accel * 0.012, -0.1, 0.14) - leanFwd) * (1 - Math.exp(-dt * 6));
+  leanE.set(leanFwd, facingCamera ? 0 : Math.PI - facing, leanSide);
+  player.group.quaternion.copy(lag).multiply(new THREE.Quaternion().setFromEuler(leanE));
 }
 
 // ---------------------------------------------------------------- intro
@@ -419,7 +474,7 @@ const spin = new THREE.Vector3(0.2, 1, 0.12).normalize();
 let moveSpeed = 0, footY = 0.03;
 // Jumping: a quick hop with a stretch on the way up and a squash on landing.
 const JUMP_V = 5.6, GRAVITY = 18;
-let jumpY = 0, jumpV = 0, jumpBuffer = 0, landSquash = 0;
+let jumpY = 0, jumpV = 0, jumpBuffer = 0, landSquash = 0, skidIn = 0;
 function jump() {
   // Remember the press for a moment, so pressing just before landing still jumps again.
   if (mode === "play" && !dialog) jumpBuffer = 0.15;
@@ -453,6 +508,7 @@ const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 
 function frame() {
   const raw = clock.getDelta(), dt = Math.min(raw, 0.05), t = clock.elapsedTime;
+  let dist = 0, turnRate = 0, landed = false;
 
   if (mode === "title") {
     world.rotateOnWorldAxis(spin, dt * 0.07);
@@ -467,6 +523,7 @@ function frame() {
     camLook.lerpVectors(TITLE_CAM.look, f.look, e);
     if (intro.k >= 1) {
       mode = "play";
+      playerQ.copy(spawnQ);
       $("hud").hidden = false;
       fillBag();
       say(INTRO);
@@ -482,19 +539,33 @@ function frame() {
     }
     const mag = Math.min(1, Math.hypot(ix, iy));
     const run = keys.has("shift") || mag > 0.95 && joy.id !== null;
-    if (mag > 0.05) {
+    const steering = mag > 0.05;
+    const want = new THREE.Vector2();
+    if (steering) {
       facingCamera = false;
-      const target = Math.atan2(ix, iy);
-      heading = wrap(heading + wrap(target - heading) * (1 - Math.exp(-dt * 10)));
-      const step = (run ? RUN : SPEED) * mag * dt * player.speed;
-      if (!tryMove(heading, step)) {
-        for (const off of [0.5, -0.5, 1.0, -1.0, 1.4, -1.4]) if (tryMove(heading + off, step * Math.cos(off))) break;
-      }
-      // The camera swings in behind the courier when walking away from it.
-      yaw(heading * Math.max(0, Math.cos(target)) * Math.min(1, dt * 2.2));
+      want.set(ix, iy).setLength(mag * (run ? RUN : SPEED) * player.speed);
     }
-    const want = mag > 0.05 ? (run ? 1 : 0.62) * mag : 0;
-    moveSpeed += (want - moveSpeed) * (1 - Math.exp(-dt * 10));
+    // Quick to get going and quicker to stop; heavier on wheels, and only a little steering in mid-air.
+    const heavy = player.ride ? 0.45 : 1;
+    vel.lerp(want, 1 - Math.exp(-dt * (steering ? 9 : 12) * heavy * (jumpY > 0 ? 0.35 : 1)));
+    dist = step(dt);
+    const v = vel.length();
+    // Turn to face where you're steering (or, coasting, where you're going).
+    turnRate = 0;
+    if (steering || v > 0.4) {
+      const aim = steering ? Math.atan2(ix, iy) : Math.atan2(vel.x, vel.y);
+      const before = facing;
+      facing = wrap(facing + wrap(aim - facing) * (1 - Math.exp(-dt * 14 * heavy)));
+      turnRate = wrap(facing - before) / Math.max(dt, 1e-3);
+    }
+    // The camera swings in behind the courier when heading away from it.
+    if (v > 0.3 && !drag) {
+      const a = Math.atan2(vel.x, vel.y);
+      yaw(a * Math.max(0, Math.cos(a)) * Math.min(1, dt * 2.2) * Math.min(1, v / SPEED));
+    }
+    // Animation pace from the real speed: 0.62 at a walk, 1 at a run.
+    const u = v / player.speed;
+    moveSpeed = u <= SPEED ? (0.62 * u) / SPEED : Math.min(1, 0.62 + (0.38 * (u - SPEED)) / (RUN - SPEED));
 
     const p = localPos();
     // Step up onto sidewalks.
@@ -516,14 +587,22 @@ function frame() {
         landSquash = Math.min(1, -jumpV / JUMP_V);
         sounds.land(landSquash);
         jumpV = 0;
+        landed = true;
       }
     }
     landSquash *= Math.exp(-dt * 11);
     const stretch = 1 + (jumpY > 0 ? 0.1 * Math.min(1, Math.abs(jumpV) / JUMP_V) : 0) - 0.24 * landSquash;
     player.group.scale.set(1 / Math.sqrt(stretch), stretch, 1 / Math.sqrt(stretch));
-    player.group.position.y = R + footY + jumpY;
-    const yawWant = facingCamera ? 0 : Math.PI - heading;
-    player.group.rotation.y += wrap(yawWant - player.group.rotation.y) * (1 - Math.exp(-dt * 12));
+    // The view eases after the courier; faster rides pull it along a little quicker.
+    world.quaternion.slerp(playerQ, 1 - Math.exp(-dt * 7 * Math.sqrt(player.speed)));
+    placePlayer(dt, v, turnRate);
+    // Dust: a burst on landing, and a trail when skidding round to face the other way.
+    if (landed) kick({ n: 8, size: 0.4, spread: 1.4, life: 0.55 });
+    skidIn -= dt;
+    if (steering && v > 2 && want.dot(vel) < 0 && skidIn <= 0 && jumpY === 0) {
+      kick({ n: 2, size: 0.26, spread: 0.7, life: 0.4 });
+      skidIn = 0.05;
+    }
 
     // Deliveries and the post office.
     if (!dialog) {
@@ -546,7 +625,10 @@ function frame() {
     camLook.lerp(f.look, k);
   }
 
-  player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4));
+  const stepped = player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4), dist);
+  // A puff with each running step.
+  if (stepped && moveSpeed > 0.8 && mode === "play") kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
+  dust.update(dt, 1 - 0.55 * W.night);
   for (const r of residents) r.update(dt, 0, t);
   if (mode !== "title") {
     timeOfDay += dt / DAY_SECONDS;
@@ -554,7 +636,7 @@ function frame() {
   }
   W.setRain(weather.rain);
   W.setTimeOfDay(timeOfDay);
-  sounds.update(dt, { speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, air: jumpY > 0 });
+  sounds.update(dt, { speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, step: stepped && mode === "play" });
   for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
   if (dialog) {
     const line = dialog.lines[dialog.i];
@@ -566,6 +648,7 @@ function frame() {
 
   camera.position.copy(camPos);
   camera.lookAt(camLook);
+  W.setCutaway(mode === "play" ? player.group.position.clone().multiplyScalar((R + footY + jumpY + 0.9) / (R + footY + jumpY)) : null);
   W.render(t);
   requestAnimationFrame(frame);
 }

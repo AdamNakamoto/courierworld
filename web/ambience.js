@@ -19,7 +19,7 @@ function saveEnabled(on) {
 export function createAmbience() {
   let enabled = loadEnabled();
   let ctx = null, master, verbSend, noise, breeze, rainBed;
-  let stepPhase = 0, birdIn = 2, cricketIn = 1, dripIn = 0, rideKind, rideLoop = null;
+  let birdIn = 2, cricketIn = 1, dripIn = 0, rideKind, rideLoop = null;
 
   function build() {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -267,18 +267,10 @@ export function createAmbience() {
       return enabled;
     },
     /// Each frame. speed: 0 still, 0.62 walking, 1 running. ride: null on foot, else the ride's key.
-    /// night: 0 day to 1 night. rain: 0 dry to 1 a proper shower. air: true mid-jump.
-    update(dt, { speed, ride, night, rain = 0, air = false }) {
+    /// night: 0 day to 1 night. rain: 0 dry to 1 a proper shower. step: true as a foot comes down.
+    update(dt, { speed, ride, night, rain = 0, step = false }) {
       if (!live()) return;
-      // Footsteps, faster when running (and none in mid-air).
-      if (air) stepPhase = 0.6;
-      else if (!ride && speed > 0.08) {
-        stepPhase += dt * (1.2 + 1.9 * speed);
-        if (stepPhase >= 1) {
-          stepPhase -= 1;
-          footstep(speed);
-        }
-      } else stepPhase = 0.6; // the first step comes quickly after you start walking
+      if (step && !ride) footstep(speed);
       // The ride's loop.
       if (ride !== rideKind) {
         rideLoop?.stop();
