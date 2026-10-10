@@ -27,6 +27,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, refreshing = false;
+  let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
@@ -52,6 +53,14 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     try {
       snap = await chain.snapshot();
       onSnapshot?.(snap);
+      // The admin view, for the wallet the contracts pay; refreshed every few seconds while the panel is open.
+      if (chain.admin && snap.account && !panel.hidden) {
+        if (adminFor !== snap.account) [admin, adminFor, adminAt] = [null, snap.account, 0];
+        if (Date.now() - adminAt > 4000) {
+          adminAt = Date.now();
+          admin = (await chain.admin.isAdmin(snap.account)) ? await chain.admin.stats() : null;
+        }
+      } else if (!snap.account) admin = adminFor = null;
       draw();
     } catch (e) {
       console.error(e);
@@ -101,6 +110,40 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       }
     }
     html += `</div>`;
+
+    // ---- admin: only for the wallet the contracts pay
+    if (admin) {
+      const a = admin, m = a.market, usd = (n) => (m ? ` (≈ $${n.toLocaleString(undefined, { maximumFractionDigits: n < 1 ? 6 : 2 })})` : "");
+      const fees = Number(formatEther(a.pendingFees)), price = m ? m.stampUsd : 0;
+      const days = Math.floor(a.halvingIn / 86400), hours = Math.floor((a.halvingIn % 86400) / 3600);
+      const link = (addr) => (s.explorer ? `<a href="${s.explorer}/address/${addr}" target="_blank" rel="noopener">${short(addr)}</a>` : short(addr));
+      html += `<section class="admin"><h3>Admin <span class="muted">your wallet runs the treasury</span></h3>
+        <div class="pending"><b>${fmt(a.pendingFees, 4)}</b><span>IMD in trading fees${usd(m ? fees * m.imdUsd : 0)}</span></div>
+        <button class="pbtn primary wide" data-act="collectFees" ${a.pendingFees === 0n || busy ? "disabled" : ""}>Collect fees to ${short(a.feeRecipient)}</button>
+        <h4>Treasury · ${link(a.treasury)}</h4>
+        <div class="kv"><span>ETH</span><b>${fmt(a.treasuryEth, 4)}</b></div>
+        <div class="kv"><span>IMD</span><b>${fmt(a.treasuryImd, 2)}</b></div>
+        <div class="kv"><span>$STAMP</span><b>${fmt(a.treasuryStamp, 0)}</b></div>
+        <h4>$STAMP</h4>
+        ${m ? `<div class="kv"><span>Price</span><b>$${price.toPrecision(3)} · ${m.stampImd.toPrecision(3)} IMD</b></div>
+        <div class="kv"><span>Market cap (all minted)</span><b>$${Math.round(Number(formatEther(a.supply)) * price).toLocaleString()}</b></div>
+        <div class="kv"><span>Fully diluted (21M)</span><b>$${Math.round(21_000_000 * price).toLocaleString()}</b></div>` : ""}
+        <div class="kv"><span>Minted</span><b>${fmt(a.minted, 0)} / 21,000,000</b></div>
+        <div class="kv"><span>Earned by offices</span><b>${fmt(a.emitted, 0)}</b></div>
+        <div class="kv"><span>Burned</span><b>${fmt(a.burned, 0)}</b></div>
+        <div class="kv"><span>Reward per block</span><b>${fmt(a.reward, 4)}</b></div>
+        <div class="kv"><span>Next halving</span><b>in ${days}d ${hours}h</b></div>
+        <h4>Game</h4>
+        <div class="kv"><span>Delivery power, whole planet</span><b>${Number(a.totalPower).toLocaleString()}</b></div>
+        <div class="kv"><span>Office price</span><b>${fmt(s.officePrice, 3)} ETH</b></div>
+        <div class="kv"><span>NFT royalty</span><b>${a.royaltyBps / 100}% to ${short(a.royaltyTo)}</b></div>
+        <h4>Fee wallet</h4>
+        <p class="note">Trading fees are paid to ${link(a.feeRecipient)}. You can hand that to another wallet; after that only the new one can collect fees or change it again.</p>
+        <label class="field">New fee wallet<input id="feeWallet" data-act="feeWallet" placeholder="0x…" spellcheck="false" autocomplete="off"></label>
+        <button class="pbtn wide" data-act="setFeeWallet" ${busy ? "disabled" : ""}>Change the fee wallet</button>
+        <p class="note">Ownership of every contract is renounced, so these are the only levers left. Office sales (ETH), 25% of $STAMP spent in the game and NFT royalties reach the treasury by themselves.</p>
+      </section>`;
+    }
 
     // ---- office
     if (s.office && !s.office.open) {
@@ -204,6 +247,8 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       $("officeBody").innerHTML = top;
       const inp = $("invite");
       if (inp && document.activeElement !== inp) inp.value = invite;
+      const fw = $("feeWallet");
+      if (fw && document.activeElement !== fw) fw.value = newFeeWallet;
     }
     if (force || html !== lastMore) {
       lastMore = html;
@@ -226,6 +271,21 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
         if (invite && !isAddress(invite)) return toast("That invite address isn't valid.", "error");
         return run("Opening your post office", () => chain.openOffice(snap, invite || ZERO));
       case "claim": return run("Collecting $STAMP", () => chain.claim());
+      case "collectFees": return run("Collecting trading fees", async () => {
+        await chain.admin.collectFees();
+        adminAt = 0;
+      });
+      case "setFeeWallet": {
+        const to = newFeeWallet.trim();
+        if (!isAddress(to) || to === ZERO) return toast("That isn't a valid wallet address.", "error");
+        if (admin && to.toLowerCase() === admin.feeRecipient.toLowerCase()) return toast("That's already the fee wallet.", "error");
+        if (!confirm(`Send all future trading fees to ${to}?\n\nAfter this, only that wallet can collect the fees or change the fee wallet again. Double-check the address.`)) return;
+        return run("Changing the fee wallet", async () => {
+          await chain.admin.setFeeWallet(to);
+          newFeeWallet = "";
+          adminAt = 0;
+        });
+      }
       case "upgrade": return run("Upgrading the post office", () => chain.upgrade(snap));
       case "assign": return run(`Courier #${id} heading out`, () => chain.assign(id));
       case "unassign": return run(`Courier #${id} coming back`, () => chain.unassign(id));
@@ -248,6 +308,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
   });
   panel.addEventListener("input", (e) => {
     if (e.target.dataset.act === "invite") invite = e.target.value.trim();
+    if (e.target.dataset.act === "feeWallet") newFeeWallet = e.target.value.trim();
   });
 
   refresh();

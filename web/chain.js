@@ -254,6 +254,42 @@ export async function connectChain() {
     return { stampImd, imdUsd, stampUsd: stampImd * imdUsd };
   }
 
+  // ---------------------------------------------------------------- admin
+  // The wallet the contracts pay (the pool's fee recipient, and the treasury) gets an admin view. Ownership of
+  // everything is renounced, so the only things left to do on-chain are collecting the trading fees and handing
+  // the fee wallet to another address.
+  let payee = null, payeeAt = 0;
+  async function payees() {
+    if (!game || !T) return [];
+    if (!payee || Date.now() - payeeAt > 30_000) {
+      payee = await Promise.all([read(T.hook, "feeRecipient"), read(C.office, "treasury")]);
+      payeeAt = Date.now();
+    }
+    return payee;
+  }
+  async function isAdmin(a = account) {
+    if (!a) return false;
+    return (await payees()).some((p) => same(p, a));
+  }
+  let blockTimeMs = null;
+  async function adminStats() {
+    const [feeRecipient, treasury] = await payees();
+    if (blockTimeMs === null) blockTimeMs = await read(C.office, "blockTimeMs");
+    const [pendingFees, minted, supply, burned, emitted, totalPower, curBlock, reward, interval, royalty, tEth, tImd, tStamp, mkt] = await Promise.all([
+      read(T.hook, "pendingProtocolFees", [T.imd.address]), read(C.stamp, "totalMinted"), read(C.stamp, "totalSupply"),
+      read(C.stamp, "totalBurned"), read(C.office, "totalEmitted"), read(C.office, "totalPower"), read(C.office, "currentBlock"),
+      read(C.office, "rewardPerBlock"), read(C.office, "HALVING_INTERVAL"), read(C.nft, "royaltyInfo", [1n, 10_000n]),
+      pub.getBalance({ address: treasury }), read(T.imd, "balanceOf", [treasury]), read(C.stamp, "balanceOf", [treasury]),
+      market().catch(() => null),
+    ]);
+    const nextHalving = (curBlock / interval + 1n) * interval;
+    return {
+      feeRecipient, treasury, pendingFees, minted, supply, burned, emitted, totalPower, reward, market: mkt,
+      halvingIn: Number(((nextHalving - curBlock) * blockTimeMs) / 1000n), royaltyBps: Number(royalty[1]), royaltyTo: royalty[0],
+      treasuryEth: tEth, treasuryImd: tImd, treasuryStamp: tStamp,
+    };
+  }
+
   async function signPermit(spender, value, deadline) {
     const [nonce, domain] = await Promise.all([read(C.stamp, "nonces", [account]), read(C.stamp, "eip712Domain")]);
     const signature = await wallet.signTypedData({
@@ -351,6 +387,17 @@ export async function connectChain() {
     },
     claim: () => send(C.office, "claim"),
     trade: T ? { quote, market, execute: trade } : null,
+    admin: T ? {
+      isAdmin,
+      stats: adminStats,
+      /// Send the trading fees waiting in the pool to the fee wallet (anyone may; it always pays the fee wallet).
+      collectFees: () => send(T.hook, "collectProtocolFees", [T.imd.address]),
+      /// Hand the fee wallet to another address. Only the current fee wallet can.
+      async setFeeWallet(to) {
+        await send(T.hook, "setFeeRecipient", [to]);
+        payee = null;
+      },
+    } : null,
     /// Local chain only: reveal with the dev secret, as the owner (the reveal also ends the sale).
     async devReveal() {
       await send(C.nft, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
