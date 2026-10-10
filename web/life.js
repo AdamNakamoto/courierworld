@@ -188,6 +188,64 @@ function makeCat(coat) {
   return { root, body, head, tail };
 }
 
+// ---------------------------------------------------------------- DOg PEt, the dog by the post office
+
+/// A chunky grey pup in a red scarf, built from blocks like the pixel dog it comes from. Shaped like a
+/// character ({ root, head, update, setWave }), so it stands, turns and greets you like the residents.
+function makeDog() {
+  const COAT = 0x8f978c, DARK = 0x667066, LIGHT = 0xc2c8bd, SCARF = 0xd9534a, INK = 0x283033;
+  const root = new THREE.Group(), body = new THREE.Group();
+  root.add(body);
+  const add = (parent, geo, color, x, y, z) => {
+    const m = new THREE.Mesh(geo, toon(color));
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    parent.add(m);
+    return m;
+  };
+  const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  add(body, B(0.24, 0.2, 0.4), COAT, 0, 0.29, -0.02);
+  add(body, B(0.2, 0.05, 0.32), LIGHT, 0, 0.185, -0.02);
+  for (const [x, z] of [[-0.075, 0.12], [0.075, 0.12], [-0.075, -0.15], [0.075, -0.15]]) {
+    add(body, B(0.07, 0.2, 0.08), COAT, x, 0.1, z);
+    add(body, B(0.076, 0.04, 0.09), DARK, x, 0.02, z + 0.005);
+  }
+  // The scarf, knotted at the front.
+  add(body, B(0.27, 0.07, 0.13), SCARF, 0, 0.38, 0.15);
+  add(body, new THREE.ConeGeometry(0.06, 0.12, 3), SCARF, 0.04, 0.31, 0.22).rotation.x = Math.PI;
+  const head = new THREE.Group();
+  head.position.set(0, 0.47, 0.17);
+  body.add(head);
+  add(head, B(0.26, 0.22, 0.22), COAT, 0, 0.04, 0);
+  add(head, B(0.14, 0.09, 0.08), LIGHT, 0, -0.02, 0.14);
+  add(head, B(0.05, 0.035, 0.03), INK, 0, 0.015, 0.185);
+  add(head, B(0.08, 0.012, 0.012), INK, 0.01, -0.055, 0.181);
+  for (const s of [-1, 1]) {
+    const ear = add(head, new THREE.ConeGeometry(0.065, 0.13, 4), COAT, s * 0.085, 0.21, -0.02);
+    ear.rotation.set(0, Math.PI / 4, -s * 0.15);
+    add(head, B(0.035, 0.035, 0.02), INK, s * 0.065, 0.07, 0.112);
+    add(head, B(0.045, 0.018, 0.02), DARK, s * 0.065, 0.105, 0.112).rotation.z = s * 0.2;
+  }
+  const tail = new THREE.Group();
+  tail.position.set(0, 0.35, -0.21);
+  body.add(tail);
+  add(tail, B(0.05, 0.05, 0.14), COAT, 0, 0.04, -0.05).rotation.x = -0.8;
+  add(tail, B(0.052, 0.052, 0.06), DARK, 0, 0.1, -0.1);
+  compact(root);
+  let excited = 0;
+  return {
+    root, head,
+    setWave(k) { excited = k; },
+    setPose() {},
+    setSwim() {},
+    update(dt, speed, t) {
+      tail.rotation.y = Math.sin(t * (6 + excited * 10)) * (0.35 + excited * 0.3);
+      body.position.y = Math.abs(Math.sin(t * 9)) * 0.07 * excited;
+      head.rotation.z = Math.sin(t * 0.7) * 0.08;
+    },
+  };
+}
+
 // ---------------------------------------------------------------- the town's life
 
 export function createLife(W, { onFlutter, onMeow } = {}) {
@@ -219,14 +277,20 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   }
 
   // ---- people out in the other places: on the pier, at the beach, by the shrine, the cabin, the works
+  // (and the special guests: `own` means they only say their own lines, `hi` is how they say hello,
+  // and `fixed` keeps them facing their spot, turning only their head)
   W.npcs.forEach((s, i) => {
-    const ch = createCharacter({ ...villager(9000 + i * 977), ...s.look });
+    const dog = s.kind === "dog";
+    const ch = dog ? makeDog() : createCharacter({ ...villager(9000 + i * 977), ...s.look });
     const up = s.d.clone().normalize();
     ch.root.position.copy(up).multiplyScalar(R + s.y);
     world.add(ch.root);
     const home = s.face.clone().addScaledVector(up, -s.face.dot(up)).normalize();
     orient(ch.root, up, home);
-    const p = { kind: "door", name: s.name, lines: s.lines, ch, up, home, face: home.clone(), greetIn: 0, wave: 0, talking: false, y: s.y, body: { d: up, r: 0.28, y: s.y } };
+    const p = {
+      kind: "door", name: s.name, lines: s.lines, own: s.own, hi: s.hi, fixed: s.fixed, bubble: dog ? 1.0 : undefined,
+      ch, up, home, face: home.clone(), greetIn: 0, wave: 0, talking: false, y: s.y, body: { d: up, r: dog ? 0.24 : 0.28, y: s.y },
+    };
     people.push(p);
     bodies.push(p.body);
   });
@@ -429,7 +493,8 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
         const toMe = tangent(p.up, me);
         const near = active && arc(p.up, me) < 5;
         // Turn toward you when you're close by, back to the street when you've gone.
-        pose(p, dt, t, p.talking || (near && Math.abs(turnTo(p.up, p.home, toMe)) < 2.2) ? toMe.clone().normalize() : p.home, near ? toMe.normalize() : null);
+        const turn = !p.fixed && (p.talking || (near && Math.abs(turnTo(p.up, p.home, toMe)) < 2.2));
+        pose(p, dt, t, turn ? toMe.clone().normalize() : p.home, near ? toMe.normalize() : null);
         if (p.ch.root.visible) p.ch.update(dt, 0, t);
       }
       // Say hello (and wave) when you come by, now and then.
@@ -437,7 +502,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
       if (active && p.greetIn <= 0 && !p.talking && arc(p.up, me) < 3.2) {
         p.greetIn = 25 + Math.random() * 20;
         p.wave = 1.6;
-        bubbles.say(p.ch.root, hello(rain, night));
+        bubbles.say(p.ch.root, p.hi ? pick(p.hi) : hello(rain, night), p.bubble);
       }
     }
 
@@ -600,7 +665,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     },
     /// Something for this person to say, given the time and weather.
     chat(p, { night = 0, rain = 0 } = {}) {
-      if (p.lines && Math.random() < 0.8) return pick(p.lines);
+      if (p.lines && (p.own || Math.random() < 0.8)) return pick(p.lines);
       const pool = [...CHAT.any, ...(rain > 0.4 ? CHAT.rain : night > 0.5 ? CHAT.night : CHAT.day)];
       return pick(pool);
     },
@@ -613,7 +678,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
       for (const p of people) {
         if (arc(p.up, me) < 7 && p.wave <= 0) {
           p.wave = 1.6;
-          if (Math.random() < 0.5) bubbles.say(p.ch.root, pick(["Hi!", "Hey!", "Yo!", "Hello!"]));
+          if (p.hi || Math.random() < 0.5) bubbles.say(p.ch.root, pick(p.hi ?? ["Hi!", "Hey!", "Yo!", "Hello!"]), p.bubble);
         }
       }
     },

@@ -753,7 +753,7 @@ export function createWorld(canvas) {
     world.add(sign);
     const q = frameAt(d, spin);
     const door = d.clone().multiplyScalar(R).add(new THREE.Vector3(doorX, 0, spec.d / 2 + 1.3).applyQuaternion(q)).normalize();
-    spawn = { dir: offsetOnSphere(best.p, side, -0.4), tangent: tan, post: door, postSpin: spin };
+    spawn = { dir: offsetOnSphere(best.p, side, -0.4), tangent: tan, post: door, postSpin: spin, office: { d, spin, hd: spec.d / 2 } };
   }
 
   // ---- the seaside, Falls Hill, the woods, the works and the footbridge (before the houses, so
@@ -784,6 +784,35 @@ export function createWorld(canvas) {
     spray: (pos, up) => spray.puff(pos, up, { n: 1, size: 0.5, spread: 0.9, life: 0.8 }),
     smoke: (pos, up) => smoke.puff(pos, up, { n: 1, size: 1.1, spread: 0.2, life: 4, rise: 1.1, grow: 2.4 }),
   });
+
+  // ---- Adam and his dog, outside the main post office
+  {
+    const { d, spin, hd } = spawn.office, q = frameAt(d, spin);
+    const at = (x, z) => d.clone().multiplyScalar(R).add(new THREE.Vector3(x, 0, z).applyQuaternion(q)).normalize();
+    const face = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+    const adam = at(-2.1, hd + 0.75), dog = at(-2.85, hd + 0.95); // the other side of the door from the post box
+    npcs.push({
+      d: adam, y: terrain.surfaceAt(adam, 1.5), face, name: "Adam", own: true, hi: ["gm!", "gm, courier!", "Hey!"],
+      look: { skin: 0xf1dcc0, hair: 0x3d2a22, hairStyle: "bob", headwear: "bandana", accent: 0x5fb2dd, collar: 0xf4f1ea, glasses: "shades", earring: true,
+        shirt: 0xf4f1ea, bottoms: 0x4b5d7a, bottomsStyle: "pants", shoes: 0xf4f1ea, bag: "none", height: 1 },
+      lines: [
+        "gm, courier! Every letter on this planet finds its way home. Yours just get there faster.",
+        "Everyone here has an identity. Mine's mostly sunglasses.",
+        "Small planet, big ideas. I like it here.",
+        "Every time someone opens a post office, the town grows a little. Have you seen the new lots?",
+        "DOg PEt follows me everywhere. Well. Sits next to me everywhere.",
+      ],
+    });
+    npcs.push({
+      d: dog, y: terrain.surfaceAt(dog, 1.5), face, name: "DOg PEt", kind: "dog", own: true, hi: ["Woof!", "Arf!", "Woof woof!"],
+      lines: [
+        "Woof! (DOg PEt sniffs your bag. One of the letters smells of biscuits.)",
+        "Arf! (It sits up very straight, guarding the post office. Good dog.)",
+        "Woof woof! (It nudges your hand for a pat. Its tail goes even faster.)",
+        "(DOg PEt yawns, turns round twice and flops down by Adam's feet.)",
+      ],
+    });
+  }
 
   // ---- buildings along every street
   {
@@ -837,6 +866,16 @@ export function createWorld(canvas) {
   // ---- lots for the players' post offices: paved clearings facing a street, nearest the main post office
   // first. The strongest offices on the leaderboard move in (district.js builds them); empty ones get a sign.
   const lots = [];
+  let stage = null;
+  /// The spin that turns a spot to face its nearest street.
+  const faceStreet = (d) => {
+    let near = null;
+    for (const road of ROADS) {
+      const lat = Math.abs(d.dot(road.axis));
+      if (!near || lat < near.lat) near = { lat, road };
+    }
+    return spinToward(d, d.clone().addScaledVector(near.road.axis, -d.dot(near.road.axis)).normalize());
+  };
   {
     const lr = mulberry32(4242); // its own stream, so the rest of the town keeps its layout
     const cands = [];
@@ -851,19 +890,77 @@ export function createWorld(canvas) {
     for (const c of cands) {
       if (lots.length >= 30) break;
       if (lots.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
-      // Face the nearest street.
-      let near = null;
-      for (const road of ROADS) {
-        const lat = Math.abs(c.d.dot(road.axis));
-        if (!near || lat < near.lat) near = { lat, road };
-      }
-      const kerb = c.d.clone().addScaledVector(near.road.axis, -c.d.dot(near.road.axis)).normalize();
-      const spin = spinToward(c.d, kerb);
+      const spin = faceStreet(c.d);
       lots.push({ d: c.d, spin });
       taken.push({ d: c.d, r: 2.3 });
       const g = new THREE.Group();
       box(g, 3.8, 0.06, 3.8, C.walk, 0, 0.03, 0);
       bake(g, c.d, spin);
+    }
+  }
+
+  // ---- a little stage by a street, where Donal Trum makes speeches to anyone passing
+  {
+    const sr = mulberry32(777); // its own stream, so the rest of the town keeps its layout
+    let best = null;
+    for (let i = 0; i < 20000; i++) {
+      const d = new THREE.Vector3(sr() * 2 - 1, sr() * 2 - 1, sr() * 2 - 1).normalize();
+      const far = arc(d, spawnSpot.p);
+      if (far < 9 || far > 40) continue;
+      const nr = nearestRoad(d);
+      if (nr < ROAD_HW + WALK + 1.3 || nr > ROAD_HW + WALK + 2.8) continue;
+      if (!inTown(d) || wetNear(d, 2.5) || !clearOf(d, 2.2) || blocked(d, 2.2)) continue;
+      if (!best || Math.abs(far - 15) < Math.abs(best.far - 15)) best = { d, far };
+    }
+    if (best) {
+      const d = best.d, spin = faceStreet(d), q = frameAt(d, spin);
+      const at = (x, z) => d.clone().multiplyScalar(R).add(new THREE.Vector3(x, 0, z).applyQuaternion(q)).normalize();
+      const NAVY = 0x2c3e6b, GOLD = 0xe2b844, CREAM = 0xf4efe0, RED = 0xd9534a, INK = 0x2f3538;
+      const g = new THREE.Group();
+      box(g, 1.3, 0.03, 2.5, 0xc0504a, 0, 0.015, 0.75); // red carpet out to the street
+      box(g, 0.62, 1.0, 0.42, NAVY, 0, 0.5, 0.55); // the podium
+      box(g, 0.7, 0.06, 0.5, 0x23345a, 0, 1.03, 0.53, -0.15);
+      part(g, new THREE.CylinderGeometry(0.17, 0.17, 0.02, 24), GOLD, 0, 0.62, 0.765, Math.PI / 2);
+      box(g, 0.15, 0.1, 0.02, CREAM, 0, 0.62, 0.78);
+      for (const s of [-1, 1]) {
+        part(g, new THREE.CylinderGeometry(0.008, 0.008, 0.3, 5), INK, s * 0.08, 1.18, 0.48, 0.5, 0, -s * 0.25);
+        part(g, new THREE.CapsuleGeometry(0.028, 0.05, 4, 8), INK, s * 0.12, 1.32, 0.4, 1.0, 0, -s * 0.25);
+        part(g, new THREE.CylinderGeometry(0.04, 0.045, 2.7, 8), CREAM, s * 1.5, 1.35, -0.9);
+        part(g, new THREE.SphereGeometry(0.07, 10, 8), GOLD, s * 1.5, 2.74, -0.9);
+      }
+      box(g, 2.9, 0.75, 0.04, CREAM, 0, 2.2, -0.93); // the banner's back
+      box(g, 3.0, 0.015, 0.015, INK, 0, 2.66, -0.9); // bunting string
+      for (let i = 0; i < 11; i++) part(g, new THREE.ConeGeometry(0.075, 0.17, 3), [RED, CREAM, NAVY][i % 3], -1.35 + i * 0.27, 2.57, -0.88, Math.PI);
+      bake(g, d, spin);
+      const c = document.createElement("canvas"); c.width = 512; c.height = 128;
+      const bg = c.getContext("2d");
+      bg.fillStyle = "#2c3e6b"; bg.fillRect(0, 0, 512, 128);
+      bg.fillStyle = "#d9534a"; bg.fillRect(0, 0, 512, 14); bg.fillRect(0, 114, 512, 14);
+      bg.fillStyle = "#fbf6ea"; bg.font = "700 58px Bungee, Impact, sans-serif"; bg.textAlign = "center"; bg.textBaseline = "middle";
+      bg.fillText("THE BEST POST", 256, 68);
+      const banner = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 0.7), new THREE.MeshBasicMaterial({ map: texFromCanvas(c) }));
+      banner.position.copy(d).multiplyScalar(R);
+      banner.quaternion.copy(q);
+      banner.translateY(2.2); banner.translateZ(-0.905);
+      world.add(banner);
+      addRect(at(0, 0.55), spin, 0.33, 0.23, { h: 1.1, hd: 0.23 });
+      for (const s of [-1, 1]) addCircle(at(s * 1.5, -0.9), 0.08);
+      taken.push({ d, r: 2.6 });
+      const spot = at(0, 0.05);
+      npcs.push({
+        d: spot, y: terrain.surfaceAt(spot, 1.5), face: new THREE.Vector3(0, 0, 1).applyQuaternion(q), name: "Donal Trum",
+        own: true, fixed: true, hi: ["Tremendous!", "Fantastic!", "Believe me!", "Huge!"],
+        look: { head: "frog", skin: 0x7bb661, hair: 0xf0c75e, shirt: NAVY, collar: 0xf4f1ea, accent: NAVY, tie: RED, sleeves: "long",
+          bottoms: NAVY, bottomsStyle: "pants", socks: NAVY, shoes: 0x2b2b2e, bag: "none", height: 1.06 },
+        lines: [
+          "This is the greatest post office in the history of post offices. Maybe ever. Everybody says so.",
+          "Tremendous letters. The best letters. Nobody delivers letters like you, believe me.",
+          "Some people say this planet is small. It's not small. It's huge. Very round, very huge.",
+          "I know stamps. I have the best stamps. Golden ones. Many people are looking for them.",
+          "You're doing a fantastic job, courier. Fantastic. People are talking about it.",
+        ],
+      });
+      stage = { d, spot };
     }
   }
 
@@ -1131,6 +1228,7 @@ export function createWorld(canvas) {
     blocked,
     /// Lots for the players' post offices ({ d, spin }), nearest the main post office first.
     lots,
+    stage,
     /// The lie of the land: places, ground and water heights, what you can stand on.
     terrain,
     /// People who live out in the places (beach, pier, shrine, cabin, works), golden-stamp spots up

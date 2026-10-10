@@ -300,8 +300,13 @@ export function createCharacter(p) {
     // Upper arm, elbow, forearm, then a mitten of a hand (flat, palm inward).
     sk.tube([ring(1.18, 0.05), ring(1.05, 0.048), ring(0.92, 0.043), ring(0.82, 0.04), ring(0.745, 0.036),
       ring(0.72, 0.034, 0.048), ring(0.68, 0.04, 0.056), ring(0.64, 0.034, 0.05), ring(0.61, 0.016, 0.022)], p.skin, w, { cx, segs: 12 });
-    // Short, roomy sleeves.
-    sk.tube([ring(1.215, 0.068), ring(1.13, 0.078), ring(1.0, 0.088, 0.082)], p.shirt, only(arms[i]), { cx: s * 0.195, segs: 16, capTop: true });
+    if (p.sleeves === "long") {
+      // A jacket's sleeves, down to the wrist; they bend at the elbow with the arm.
+      sk.tube([ring(1.215, 0.066), ring(1.13, 0.07), ring(1.0, 0.064), ring(0.9, 0.058), ring(0.8, 0.055), ring(0.755, 0.055)], p.shirt, w, { cx: s * 0.192, segs: 16, capTop: true });
+    } else {
+      // Short, roomy sleeves.
+      sk.tube([ring(1.215, 0.068), ring(1.13, 0.078), ring(1.0, 0.088, 0.082)], p.shirt, only(arms[i]), { cx: s * 0.195, segs: 16, capTop: true });
+    }
   });
 
   // ---- bags: straps lie flat on the body (part of the soft body); the bag itself hangs off a bone
@@ -360,7 +365,7 @@ export function createCharacter(p) {
   root.add(skin);
 
   // ---- collar and chunky rounded shoes
-  const collar = add(chest, new THREE.TorusGeometry(0.07, 0.024, 8, 16), p.accent, 0, 0.115, 0.004);
+  const collar = add(chest, new THREE.TorusGeometry(0.07, 0.024, 8, 16), p.collar ?? p.accent, 0, 0.115, 0.004);
   collar.rotation.x = Math.PI / 2;
   collar.scale.set(1.05, 0.85, 1);
   for (const k of knees) {
@@ -368,130 +373,200 @@ export function createCharacter(p) {
     add(k, new THREE.SphereGeometry(0.065, 12, 9), p.shoes, 0, -0.33, -0.015).scale.set(0.95, 0.72, 1);
   }
 
+  if (p.tie) {
+    // An open jacket: a white shirt front in a V, and a long tie.
+    const v = new THREE.Shape();
+    v.moveTo(0, 0);
+    v.lineTo(0.06, 0.235);
+    v.lineTo(-0.06, 0.235);
+    v.closePath();
+    add(chest, new THREE.ShapeGeometry(v), 0xf4f1ea, 0, -0.08, 0.122).rotation.x = -0.15;
+    add(chest, new THREE.BoxGeometry(0.044, 0.036, 0.02), p.tie, 0, 0.125, 0.1);
+    add(chest, new THREE.BoxGeometry(0.038, 0.17, 0.012), p.tie, 0, 0.025, 0.124).rotation.x = -0.08;
+    const tip = add(chest, new THREE.ConeGeometry(0.027, 0.04, 4), p.tie, 0, -0.075, 0.125);
+    tip.rotation.set(Math.PI, Math.PI / 4, 0);
+    tip.scale.z = 0.4;
+  }
+
   // ---- head
-  const skull = add(head, new THREE.SphereGeometry(0.19, 20, 16), p.skin, 0, 0.17, 0);
-  skull.scale.set(1, 1.04, 0.97);
-  for (const s of [-1, 1]) add(head, new THREE.SphereGeometry(0.034, 8, 6), p.skin, s * 0.185, 0.15, 0);
+  const eyes = [], tails = []; // tails: swinging hair pieces
+  if (p.head === "frog") {
+    // A frog: a wide, flat head, big round eyes up top, a long smile and a golden swoop of hair.
+    const top = add(head, new THREE.SphereGeometry(0.2, 22, 16), p.skin, 0, 0.16, 0.01);
+    top.scale.set(1.22, 0.8, 1.02);
+    add(head, new THREE.SphereGeometry(0.17, 18, 12), 0xc5df9a, 0, 0.09, 0.035).scale.set(1.18, 0.5, 0.98);
+    const smile = new THREE.TorusGeometry(0.197, 0.011, 6, 28, 1.5).rotateX(Math.PI / 2).rotateY(0.75 - Math.PI / 2).scale(1.22, 1, 1.02);
+    add(head, smile, 0x3b5a2e, 0, 0.13, 0.01);
+    for (const s of [-1, 1]) {
+      add(head, new THREE.SphereGeometry(0.078, 14, 10), p.skin, s * 0.1, 0.25, 0.12);
+      add(head, new THREE.SphereGeometry(0.062, 14, 10), 0xffffff, s * 0.1, 0.255, 0.155);
+      const e = add(head, new THREE.SphereGeometry(0.03, 10, 8), 0x231d20, s * 0.1, 0.255, 0.21);
+      e.scale.set(1, 1.1, 0.5);
+      eyes.push(e);
+      add(head, new THREE.SphereGeometry(0.009, 6, 4), 0xffffff, s * 0.09, 0.27, 0.226);
+      add(head, new THREE.SphereGeometry(0.03, 8, 6), 0xf0a49a, s * 0.16, 0.13, 0.15).scale.set(1, 0.5, 0.3);
+      add(head, new THREE.SphereGeometry(0.01, 6, 4), 0x3b5a2e, s * 0.03, 0.2, 0.207);
+    }
+    add(head, new THREE.SphereGeometry(0.17, 16, 12), p.hair, 0, 0.26, -0.09).scale.set(1.25, 0.6, 1.0);
+    const sweep = add(head, new THREE.SphereGeometry(0.13, 16, 12), p.hair, 0.02, 0.33, -0.02);
+    sweep.scale.set(1.45, 0.48, 1.1);
+    sweep.rotation.z = -0.12;
+    const quiff = add(head, new THREE.SphereGeometry(0.08, 12, 10), p.hair, -0.06, 0.36, 0.0);
+    quiff.scale.set(1.5, 0.6, 1.0);
+    quiff.rotation.z = 0.25;
+  } else {
+    const skull = add(head, new THREE.SphereGeometry(0.19, 20, 16), p.skin, 0, 0.17, 0);
+    skull.scale.set(1, 1.04, 0.97);
+    for (const s of [-1, 1]) add(head, new THREE.SphereGeometry(0.034, 8, 6), p.skin, s * 0.185, 0.15, 0);
 
-  // Face: tall dark eyes with a catch-light, brows, a small mouth, blush.
-  const eyes = [];
-  for (const s of [-1, 1]) {
-    const e = add(head, new THREE.CapsuleGeometry(0.021, 0.032, 4, 8), 0x231d20, s * 0.068, 0.165, 0.168);
-    e.scale.set(1, 1, 0.45);
-    eyes.push(e);
-    add(head, new THREE.SphereGeometry(0.008, 6, 4), 0xffffff, s * 0.062, 0.18, 0.18);
-    const brow = add(head, new THREE.BoxGeometry(0.06, 0.012, 0.012), p.hair, s * 0.07, 0.235, 0.17);
-    brow.rotation.z = -s * 0.12;
-    const blush = add(head, new THREE.SphereGeometry(0.028, 8, 6), 0xf0a49a, s * 0.11, 0.115, 0.15);
-    blush.scale.set(1, 0.5, 0.3);
-  }
-  add(head, new THREE.BoxGeometry(0.03, 0.008, 0.01), 0x7a3b36, 0, 0.085, 0.182);
+    // Face: tall dark eyes with a catch-light, brows, a small mouth, blush.
+    for (const s of [-1, 1]) {
+      const e = add(head, new THREE.CapsuleGeometry(0.021, 0.032, 4, 8), 0x231d20, s * 0.068, 0.165, 0.168);
+      e.scale.set(1, 1, 0.45);
+      eyes.push(e);
+      add(head, new THREE.SphereGeometry(0.008, 6, 4), 0xffffff, s * 0.062, 0.18, 0.18);
+      const brow = add(head, new THREE.BoxGeometry(0.06, 0.012, 0.012), p.hair, s * 0.07, 0.235, 0.17);
+      brow.rotation.z = -s * 0.12;
+      const blush = add(head, new THREE.SphereGeometry(0.028, 8, 6), 0xf0a49a, s * 0.11, 0.115, 0.15);
+      blush.scale.set(1, 0.5, 0.3);
+    }
+    add(head, new THREE.BoxGeometry(0.03, 0.008, 0.01), 0x7a3b36, 0, 0.085, 0.182);
 
-  // ---- hair: a cap over the top and back, bangs, then the style
-  const hairCap = add(head, new THREE.SphereGeometry(0.205, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.56), p.hair, 0, 0.18, -0.01);
-  hairCap.rotation.x = -0.32;
-  const backHair = add(head, new THREE.SphereGeometry(0.188, 16, 12), p.hair, 0, 0.13, -0.045);
-  backHair.scale.set(1.02, 1, 0.9);
-  for (const [x, y, z] of [[-0.085, 0.29, 0.13], [0, 0.305, 0.145], [0.085, 0.29, 0.13]]) {
-    const b = add(head, new THREE.SphereGeometry(0.075, 10, 8), p.hair, x, y, z);
-    b.scale.set(1.1, 0.72, 0.55);
-  }
-  const tails = []; // swinging hair pieces
-  const tailAt = (x, y, z, len, rx, rz = 0) => {
-    const t = new THREE.Group();
-    t.position.set(x, y, z);
-    t.rotation.set(rx, 0, rz);
-    t.userData.rest = rx;
-    head.add(t);
-    add(t, new THREE.CapsuleGeometry(0.055, len, 4, 10), p.hair, 0, -len / 2 - 0.03, -0.02);
-    const tie = add(t, new THREE.TorusGeometry(0.038, 0.015, 6, 10), p.accent, 0, 0, 0);
-    tie.rotation.x = Math.PI / 2;
-    tails.push(t);
-  };
-  const sideLocks = (len) => {
-    for (const s of [-1, 1]) add(head, new THREE.CapsuleGeometry(0.035, len, 4, 8), p.hair, s * 0.165, 0.17 - len / 2, 0.05);
-  };
-  switch (p.hairStyle) {
-    case "pony":
-      sideLocks(0.12);
-      tailAt(0, 0.24, -0.17, 0.2, 0.55);
-      break;
-    case "bun":
-      sideLocks(0.1);
-      add(head, new THREE.SphereGeometry(0.085, 12, 10), p.hair, 0, 0.37, -0.08);
-      break;
-    case "bob": {
-      for (const s of [-1, 1]) {
-        const side = add(head, new THREE.SphereGeometry(0.11, 12, 10), p.hair, s * 0.15, 0.1, 0.0);
-        side.scale.set(0.7, 1.15, 1.25);
+    // ---- hair: a cap over the top and back, bangs, then the style
+    const hairCap = add(head, new THREE.SphereGeometry(0.205, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.56), p.hair, 0, 0.18, -0.01);
+    hairCap.rotation.x = -0.32;
+    const backHair = add(head, new THREE.SphereGeometry(0.188, 16, 12), p.hair, 0, 0.13, -0.045);
+    backHair.scale.set(1.02, 1, 0.9);
+    for (const [x, y, z] of [[-0.085, 0.29, 0.13], [0, 0.305, 0.145], [0.085, 0.29, 0.13]]) {
+      const b = add(head, new THREE.SphereGeometry(0.075, 10, 8), p.hair, x, y, z);
+      b.scale.set(1.1, 0.72, 0.55);
+    }
+    const tailAt = (x, y, z, len, rx, rz = 0) => {
+      const t = new THREE.Group();
+      t.position.set(x, y, z);
+      t.rotation.set(rx, 0, rz);
+      t.userData.rest = rx;
+      head.add(t);
+      add(t, new THREE.CapsuleGeometry(0.055, len, 4, 10), p.hair, 0, -len / 2 - 0.03, -0.02);
+      const tie = add(t, new THREE.TorusGeometry(0.038, 0.015, 6, 10), p.accent, 0, 0, 0);
+      tie.rotation.x = Math.PI / 2;
+      tails.push(t);
+    };
+    const sideLocks = (len) => {
+      for (const s of [-1, 1]) add(head, new THREE.CapsuleGeometry(0.035, len, 4, 8), p.hair, s * 0.165, 0.17 - len / 2, 0.05);
+    };
+    switch (p.hairStyle) {
+      case "pony":
+        sideLocks(0.12);
+        tailAt(0, 0.24, -0.17, 0.2, 0.55);
+        break;
+      case "bun":
+        sideLocks(0.1);
+        add(head, new THREE.SphereGeometry(0.085, 12, 10), p.hair, 0, 0.37, -0.08);
+        break;
+      case "bob": {
+        for (const s of [-1, 1]) {
+          const side = add(head, new THREE.SphereGeometry(0.11, 12, 10), p.hair, s * 0.15, 0.1, 0.0);
+          side.scale.set(0.7, 1.15, 1.25);
+        }
+        break;
       }
-      break;
+      case "twin":
+        sideLocks(0.1);
+        for (const s of [-1, 1]) tailAt(s * 0.17, 0.25, -0.08, 0.22, 0.3, s * 0.5);
+        break;
+      case "long": {
+        sideLocks(0.2);
+        const back = add(head, new THREE.CapsuleGeometry(0.15, 0.26, 4, 12), p.hair, 0, -0.02, -0.11);
+        back.scale.set(1.05, 1, 0.55);
+        break;
+      }
     }
-    case "twin":
-      sideLocks(0.1);
-      for (const s of [-1, 1]) tailAt(s * 0.17, 0.25, -0.08, 0.22, 0.3, s * 0.5);
-      break;
-    case "long": {
-      sideLocks(0.2);
-      const back = add(head, new THREE.CapsuleGeometry(0.15, 0.26, 4, 12), p.hair, 0, -0.02, -0.11);
-      back.scale.set(1.05, 1, 0.55);
-      break;
-    }
-  }
 
-  // ---- headwear
-  switch (p.headwear) {
-    case "cap": {
-      const crown = add(head, new THREE.SphereGeometry(0.212, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.42), p.accent, 0, 0.2, -0.01);
-      crown.scale.y = 0.9;
-      const brim = add(head, new THREE.CylinderGeometry(0.13, 0.13, 0.016, 16), p.accent, 0, 0.3, 0.17);
-      brim.scale.z = 0.75;
-      brim.rotation.x = 0.16;
-      add(head, new THREE.BoxGeometry(0.05, 0.04, 0.02), 0xf2c94c, 0, 0.36, 0.18);
-      break;
-    }
-    case "bucket": {
-      add(head, new THREE.CylinderGeometry(0.17, 0.2, 0.14, 16), p.accent, 0, 0.36, -0.01);
-      const brim = add(head, new THREE.CylinderGeometry(0.29, 0.29, 0.02, 20), p.accent, 0, 0.29, -0.01);
-      brim.rotation.x = 0.08;
-      add(head, new THREE.CylinderGeometry(0.205, 0.205, 0.035, 16), 0xf4efe0, 0, 0.31, -0.01);
-      break;
-    }
-    case "beanie": {
-      const cap = add(head, new THREE.SphereGeometry(0.215, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), p.accent, 0, 0.21, -0.02);
-      cap.rotation.x = -0.2;
-      const fold = add(head, new THREE.TorusGeometry(0.19, 0.035, 6, 20), p.accent, 0, 0.28, 0.0);
-      fold.rotation.x = Math.PI / 2 - 0.2;
-      add(head, new THREE.SphereGeometry(0.06, 10, 8), 0xf4efe0, 0, 0.45, -0.06);
-      break;
-    }
-    case "headphones": {
-      const band = add(head, new THREE.TorusGeometry(0.215, 0.022, 6, 20, Math.PI), 0x3b4145, 0, 0.17, 0);
-      band.rotation.z = 0;
-      for (const s of [-1, 1]) {
-        const cup = add(head, new THREE.CylinderGeometry(0.065, 0.065, 0.05, 14), p.accent, s * 0.205, 0.16, 0);
-        cup.rotation.z = Math.PI / 2;
+    // ---- headwear
+    switch (p.headwear) {
+      case "cap": {
+        const crown = add(head, new THREE.SphereGeometry(0.212, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.42), p.accent, 0, 0.2, -0.01);
+        crown.scale.y = 0.9;
+        const brim = add(head, new THREE.CylinderGeometry(0.13, 0.13, 0.016, 16), p.accent, 0, 0.3, 0.17);
+        brim.scale.z = 0.75;
+        brim.rotation.x = 0.16;
+        add(head, new THREE.BoxGeometry(0.05, 0.04, 0.02), 0xf2c94c, 0, 0.36, 0.18);
+        break;
       }
-      break;
-    }
-    case "hardhat": {
-      const dome = add(head, new THREE.SphereGeometry(0.218, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), 0xf4f1ea, 0, 0.21, -0.01);
-      dome.scale.y = 0.85;
-      const brim = add(head, new THREE.CylinderGeometry(0.25, 0.25, 0.02, 20), 0xf4f1ea, 0, 0.215, 0.02);
-      brim.scale.z = 1.08;
-      add(head, new THREE.BoxGeometry(0.03, 0.08, 0.36), 0xe8b93a, 0, 0.36, -0.01);
-      break;
-    }
-    case "goggles": {
-      const strapG = add(head, new THREE.TorusGeometry(0.2, 0.018, 6, 24), 0x6c5446, 0, 0.27, 0);
-      strapG.rotation.x = Math.PI / 2 - 0.25;
-      for (const s of [-1, 1]) {
-        const lens = add(head, new THREE.CylinderGeometry(0.048, 0.048, 0.04, 14), 0xc9962a, s * 0.06, 0.31, 0.155);
-        lens.rotation.x = Math.PI / 2 - 0.5;
-        const glass = add(head, new THREE.CylinderGeometry(0.036, 0.036, 0.045, 14), 0x8db8c6, s * 0.06, 0.31, 0.158);
-        glass.rotation.x = Math.PI / 2 - 0.5;
+      case "bucket": {
+        add(head, new THREE.CylinderGeometry(0.17, 0.2, 0.14, 16), p.accent, 0, 0.36, -0.01);
+        const brim = add(head, new THREE.CylinderGeometry(0.29, 0.29, 0.02, 20), p.accent, 0, 0.29, -0.01);
+        brim.rotation.x = 0.08;
+        add(head, new THREE.CylinderGeometry(0.205, 0.205, 0.035, 16), 0xf4efe0, 0, 0.31, -0.01);
+        break;
       }
-      break;
+      case "beanie": {
+        const cap = add(head, new THREE.SphereGeometry(0.215, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), p.accent, 0, 0.21, -0.02);
+        cap.rotation.x = -0.2;
+        const fold = add(head, new THREE.TorusGeometry(0.19, 0.035, 6, 20), p.accent, 0, 0.28, 0.0);
+        fold.rotation.x = Math.PI / 2 - 0.2;
+        add(head, new THREE.SphereGeometry(0.06, 10, 8), 0xf4efe0, 0, 0.45, -0.06);
+        break;
+      }
+      case "headphones": {
+        const band = add(head, new THREE.TorusGeometry(0.215, 0.022, 6, 20, Math.PI), 0x3b4145, 0, 0.17, 0);
+        band.rotation.z = 0;
+        for (const s of [-1, 1]) {
+          const cup = add(head, new THREE.CylinderGeometry(0.065, 0.065, 0.05, 14), p.accent, s * 0.205, 0.16, 0);
+          cup.rotation.z = Math.PI / 2;
+        }
+        break;
+      }
+      case "hardhat": {
+        const dome = add(head, new THREE.SphereGeometry(0.218, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), 0xf4f1ea, 0, 0.21, -0.01);
+        dome.scale.y = 0.85;
+        const brim = add(head, new THREE.CylinderGeometry(0.25, 0.25, 0.02, 20), 0xf4f1ea, 0, 0.215, 0.02);
+        brim.scale.z = 1.08;
+        add(head, new THREE.BoxGeometry(0.03, 0.08, 0.36), 0xe8b93a, 0, 0.36, -0.01);
+        break;
+      }
+      case "goggles": {
+        const strapG = add(head, new THREE.TorusGeometry(0.2, 0.018, 6, 24), 0x6c5446, 0, 0.27, 0);
+        strapG.rotation.x = Math.PI / 2 - 0.25;
+        for (const s of [-1, 1]) {
+          const lens = add(head, new THREE.CylinderGeometry(0.048, 0.048, 0.04, 14), 0xc9962a, s * 0.06, 0.31, 0.155);
+          lens.rotation.x = Math.PI / 2 - 0.5;
+          const glass = add(head, new THREE.CylinderGeometry(0.036, 0.036, 0.045, 14), 0x8db8c6, s * 0.06, 0.31, 0.158);
+          glass.rotation.x = Math.PI / 2 - 0.5;
+        }
+        break;
+      }
+      case "bandana": {
+        // A cloth tied over the top of the head, knotted at the back.
+        const cloth = add(head, new THREE.SphereGeometry(0.214, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.4), p.accent, 0, 0.19, -0.015);
+        cloth.rotation.x = -0.28;
+        const hem = add(head, new THREE.TorusGeometry(0.198, 0.018, 6, 24), p.accent, 0, 0.255, 0);
+        hem.rotation.x = Math.PI / 2 - 0.28;
+        add(head, new THREE.SphereGeometry(0.045, 8, 6), p.accent, 0, 0.2, -0.2);
+        for (const s of [-1, 1]) add(head, new THREE.BoxGeometry(0.05, 0.12, 0.015), p.accent, s * 0.03, 0.14, -0.2).rotation.z = s * 0.3;
+        break;
+      }
+    }
+
+    if (p.glasses === "shades") {
+      // Black sunglasses that wrap round a little, with gold hinges.
+      for (const s of [-1, 1]) {
+        add(head, rb(0.105, 0.075, 0.02, 0.012), 0x1b1c1f, s * 0.07, 0.172, 0.19).rotation.y = s * 0.22;
+        add(head, new THREE.BoxGeometry(0.06, 0.016, 0.014), 0x1b1c1f, s * 0.15, 0.19, 0.176);
+        add(head, new THREE.BoxGeometry(0.012, 0.016, 0.16), 0x1b1c1f, s * 0.178, 0.19, 0.095);
+        add(head, new THREE.BoxGeometry(0.016, 0.012, 0.03), 0xe2c46a, s * 0.181, 0.19, 0.15);
+      }
+      add(head, new THREE.BoxGeometry(0.04, 0.014, 0.014), 0x1b1c1f, 0, 0.19, 0.198);
+    }
+    if (p.earring) {
+      // Two silver studs joined by a little chain, and a cross hanging from the right ear.
+      const silver = 0xc9ced3;
+      add(head, new THREE.SphereGeometry(0.012, 6, 5), silver, -0.205, 0.13, 0.012);
+      add(head, new THREE.SphereGeometry(0.01, 6, 5), silver, -0.212, 0.168, 0.0);
+      add(head, new THREE.CapsuleGeometry(0.004, 0.03, 2, 4), silver, -0.212, 0.149, 0.006);
+      add(head, new THREE.BoxGeometry(0.008, 0.055, 0.008), silver, -0.207, 0.09, 0.012);
+      add(head, new THREE.BoxGeometry(0.03, 0.008, 0.008), silver, -0.207, 0.1, 0.012);
     }
   }
 
