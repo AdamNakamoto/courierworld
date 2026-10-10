@@ -21,6 +21,8 @@ CHAIN='{
   chainName: "Robinhood Chain",
   rpcUrl: "https://robinhood-rpc.publicnode.com",
   walletRpcUrl: "https://robinhood-rpc.publicnode.com",
+  logsRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+  logsRelay: "/api/logs",
   explorer: "https://robinhoodchain.blockscout.com"
 }'
 
@@ -36,6 +38,7 @@ if [ -f "$GAME" ]; then
     --argjson ethRouterAbi "$(abi StampEthRouter)" \
     "\$dep[0] as \$d | $CHAIN + {
       stage: \"game\",
+      officeBlock: (\$d.officeBlock // null),
       contracts: {stamp: \$d.stamp, nft: \$d.nft, office: \$d.office, renderer: \$d.renderer,
                   hook: \$d.hook, router: \$d.router, ethRouter: \$d.ethRouter, imd: \$d.imd,
                   poolManager: \"0x8366a39CC670B4001A1121B8F6A443A643e40951\",

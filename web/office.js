@@ -28,6 +28,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
   const panel = $("office");
   let snap = null, busy = null, qty = 1, refreshing = false;
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
+  let board = null; // every office, strongest first (from main.js, every 20 s)
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
@@ -170,6 +171,27 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
           : `<p class="note">Your post office is HQ. It doesn't get bigger than this.</p>`}
         ${o.referrer !== ZERO ? `<p class="note">2.5% of what you collect goes to ${short(o.referrer)}, who invited you.</p>` : ""}
       </section>`;
+    }
+
+    // ---- the leaderboard
+    if (s.game) {
+      html += `<section><h3>Leaderboard <span class="muted">${board ? `${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open` : "loading…"}</span></h3>`;
+      if (board?.count) {
+        const me = s.account?.toLowerCase();
+        const row = (o, i) => {
+          const share = board.totalPower ? Number((o.power * 10000n) / board.totalPower) / 100 : 0;
+          const mine = me && o.owner.toLowerCase() === me;
+          return `<li class="${mine ? "me" : ""}"><span class="rk">${i + 1}</span>
+            <a href="${s.explorer ? `${s.explorer}/address/${o.owner}` : "#"}" target="_blank" rel="noopener">${mine ? "You" : short(o.owner)}</a>
+            <span class="tr">${TIER_NAMES[o.tier] ?? `Tier ${o.tier + 1}`}</span><span class="pw">${Number(o.power).toLocaleString()}</span><span class="sh">${share.toFixed(1)}%</span></li>`;
+        };
+        const mineAt = me ? board.list.findIndex((o) => o.owner.toLowerCase() === me) : -1;
+        html += `<ol class="board">${board.list.slice(0, 10).map(row).join("")}${mineAt >= 10 ? `<li class="gap">…</li>${row(board.list[mineAt], mineAt)}` : ""}</ol>
+          <p class="note">Ranked by delivery power. The strongest offices stand on the lots by the main post office, with a gold, silver or bronze star for the top three.</p>`;
+      } else if (board) {
+        html += `<p class="note">No post offices yet. Open the first one and take the best lot in town.</p>`;
+      }
+      html += `</section>`;
     }
 
     // ---- before the game: stage 1 of the launch is the mint alone
@@ -321,5 +343,9 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       draw(true);
     },
     get snap() { return snap; },
+    setBoard(b) {
+      board = b;
+      draw();
+    },
   };
 }

@@ -834,6 +834,39 @@ export function createWorld(canvas) {
     });
   }
 
+  // ---- lots for the players' post offices: paved clearings facing a street, nearest the main post office
+  // first. The strongest offices on the leaderboard move in (district.js builds them); empty ones get a sign.
+  const lots = [];
+  {
+    const lr = mulberry32(4242); // its own stream, so the rest of the town keeps its layout
+    const cands = [];
+    for (let i = 0; i < 20000; i++) {
+      const d = new THREE.Vector3(lr() * 2 - 1, lr() * 2 - 1, lr() * 2 - 1).normalize();
+      const far = arc(d, spawnSpot.p), nr = nearestRoad(d);
+      if (far > 60 || nr < ROAD_HW + WALK + 1.7 || nr > ROAD_HW + WALK + 6) continue;
+      if (!inTown(d) || wetNear(d, 3) || !clearOf(d, 1.9) || blocked(d, 1.9)) continue;
+      cands.push({ d, far });
+    }
+    cands.sort((a, b) => a.far - b.far);
+    for (const c of cands) {
+      if (lots.length >= 30) break;
+      if (lots.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
+      // Face the nearest street.
+      let near = null;
+      for (const road of ROADS) {
+        const lat = Math.abs(c.d.dot(road.axis));
+        if (!near || lat < near.lat) near = { lat, road };
+      }
+      const kerb = c.d.clone().addScaledVector(near.road.axis, -c.d.dot(near.road.axis)).normalize();
+      const spin = spinToward(c.d, kerb);
+      lots.push({ d: c.d, spin });
+      taken.push({ d: c.d, r: 2.3 });
+      const g = new THREE.Group();
+      box(g, 3.8, 0.06, 3.8, C.walk, 0, 0.03, 0);
+      bake(g, c.d, spin);
+    }
+  }
+
   // ---- parks: trees, bushes and benches fill the blocks between streets
   for (let n = 0, placed = 0; placed < 260 && n < 9000; n++) {
     const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
@@ -1096,6 +1129,8 @@ export function createWorld(canvas) {
     scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
     /// Whether a spot on the planet (with this much room around it) is inside something solid or under water.
     blocked,
+    /// Lots for the players' post offices ({ d, spin }), nearest the main post office first.
+    lots,
     /// The lie of the land: places, ground and water heights, what you can stand on.
     terrain,
     /// People who live out in the places (beach, pier, shrine, cabin, works), golden-stamp spots up

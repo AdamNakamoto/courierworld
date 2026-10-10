@@ -2,7 +2,7 @@
 // Uses web/chain.json from ./dev.sh when present, otherwise the mainnet deployment.
 import {
   createPublicClient, createWalletClient, createTestClient, http, custom, defineChain,
-  maxUint256, zeroAddress, keccak256, encodeAbiParameters, parseSignature, decodeErrorResult, parseAbi, parseEther,
+  maxUint256, zeroAddress, keccak256, encodeAbiParameters, parseSignature, decodeErrorResult, parseAbi, parseAbiItem, parseEther,
   BaseError, ContractFunctionRevertedError,
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
@@ -254,6 +254,59 @@ export async function connectChain() {
     return { stampImd, imdUsd, stampUsd: stampImd * imdUsd };
   }
 
+  // ---------------------------------------------------------------- the leaderboard
+  // Every post office, from the OfficeOpened events, then each one's tier and power from the contract.
+  // Public RPCs won't serve old events, so the history comes from the chain's official RPC, or, where an
+  // internet provider blocks that, through the site's own relay (/api/logs). What's been read is kept in
+  // the browser, so later visits only read the new blocks.
+  const OPENED = parseAbiItem("event OfficeOpened(address indexed owner, address indexed referrer)");
+  const logSources = dep.local ? [pub] : [
+    dep.logsRpcUrl && createPublicClient({ chain, transport: http(dep.logsRpcUrl, { timeout: 5000, retryCount: 0 }) }),
+    dep.logsRelay && createPublicClient({ chain, transport: http(new URL(dep.logsRelay, location.href).href, { timeout: 20000 }) }),
+  ].filter(Boolean);
+  const boardKey = game ? `courier:offices:${dep.chainId}:${C.office.address.toLowerCase()}` : null;
+  let board = null, boardSource = 0;
+  // Start from whichever source worked last time (the relay, where the official RPC is blocked).
+  try { boardSource = Math.min(logSources.length - 1, Math.max(0, Number(localStorage.getItem("courier:logSource")) || 0)); } catch {}
+  async function scanOffices() {
+    if (!board) {
+      try { board = JSON.parse(localStorage.getItem(boardKey)); } catch {}
+      if (!board?.owners) board = { from: String(dep.officeBlock ?? 0), owners: [] };
+    }
+    for (; boardSource < logSources.length; boardSource++) {
+      const src = logSources[boardSource];
+      try {
+        const latest = await src.getBlockNumber();
+        let from = BigInt(board.from);
+        while (from <= latest) {
+          const to = from + 200_000n > latest ? latest : from + 200_000n;
+          const logs = await src.getLogs({ address: C.office.address, event: OPENED, fromBlock: from, toBlock: to });
+          for (const l of logs) if (!board.owners.includes(l.args.owner)) board.owners.push(l.args.owner);
+          from = to + 1n;
+          board.from = String(from);
+        }
+        try {
+          localStorage.setItem(boardKey, JSON.stringify(board));
+          localStorage.setItem("courier:logSource", String(boardSource));
+        } catch {}
+        return board.owners;
+      } catch (e) {
+        console.warn("office history: trying the next source", e?.shortMessage ?? e);
+      }
+    }
+    boardSource = 0; // try them all again next time
+    throw new Error("Couldn't read the post office history right now.");
+  }
+  /// Every post office, strongest first: { count, totalPower, list: [{ owner, tier, onDuty, power }] }.
+  async function leaderboard() {
+    if (!game) return null;
+    const owners = await scanOffices();
+    const rows = await Promise.all(owners.map((o) => read(C.office, "offices", [o])));
+    const list = owners.map((owner, i) => ({ owner, tier: Number(rows[i][1]), onDuty: Number(rows[i][2]), power: rows[i][6] }))
+      .sort((a, b) => (b.power === a.power ? b.tier - a.tier : b.power > a.power ? 1 : -1));
+    return { count: list.length, totalPower: list.reduce((s, x) => s + x.power, 0n), list };
+  }
+
   // ---------------------------------------------------------------- admin
   // The wallet the contracts pay (the pool's fee recipient, and the treasury) gets an admin view. Ownership of
   // everything is renounced, so the only things left to do on-chain are collecting the trading fees and handing
@@ -387,6 +440,7 @@ export async function connectChain() {
     },
     claim: () => send(C.office, "claim"),
     trade: T ? { quote, market, execute: trade } : null,
+    leaderboard,
     admin: T ? {
       isAdmin,
       stats: adminStats,

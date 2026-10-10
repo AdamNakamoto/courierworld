@@ -11,6 +11,7 @@ import { createOffice } from "./office.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
+import { createDistrict } from "./district.js";
 
 const $ = (id) => document.getElementById(id);
 const W = createWorld($("c"));
@@ -149,6 +150,22 @@ function kick(opts) {
 
 // Residents by their doors and out walking, birds, cats, butterflies and fireflies.
 const life = createLife(W, { onFlutter: () => sounds.flutter(), onMeow: () => sounds.meow() });
+// The players' post offices, standing on the lots near the main post office (filled from the leaderboard).
+const district = createDistrict(W);
+let board = null;
+async function refreshBoard(chain) {
+  try {
+    board = await chain.leaderboard();
+    if (!board) return;
+    district.update(board.list, chain.account);
+    office?.setBoard(board);
+    $("live").textContent = `📮 ${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open`;
+    $("live").hidden = false;
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
 // Golden stamps to find, and the sparkle when you do.
 const stamps = createStamps(W);
 const sparkle = createDust(world, W.noNormals, 24, 0xffd75e);
@@ -763,6 +780,7 @@ function frame() {
   if (stepped && moveSpeed > 0.8 && mode === "play" && !wading) kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
   dust.update(dt, 1 - 0.55 * W.night);
   sparkle.update(dt);
+  district.tick(t);
   splash.update(dt, 1 - 0.5 * W.night);
   const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog });
   if (got) collected(got);
@@ -855,7 +873,10 @@ const chainReady = connectChain()
         `Pick a wallet to play. Courier runs on ${chain.chainName}; your wallet will be asked to switch to it.`;
       await chain.resume().catch(() => false);
       if (chain.account) $("begin").textContent = "Begin";
-      chain.onAccountChange(() => office?.refresh());
+      chain.onAccountChange(() => {
+        office?.refresh();
+        if (board) district.update(board.list, chain.account);
+      });
     }
     $("officeBtn").hidden = false;
     office = createOffice(chain, {
@@ -866,6 +887,8 @@ const chainReady = connectChain()
         toast(`Now playing as ${c.name}, ${c.ride.name.toLowerCase()}`);
       },
     });
+    refreshBoard(chain);
+    setInterval(() => refreshBoard(chain), 20_000);
     return chain;
   })
   .catch((e) => {
