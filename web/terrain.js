@@ -6,6 +6,8 @@ import * as THREE from "https://esm.sh/three@0.160.0";
 
 export const SEA_LEVEL = -0.12; // the water's surface, just below the street
 export const STEP = 0.42; // how high a courier can step up without jumping
+export const SWIM = SEA_LEVEL - 1.0; // where your feet are when the water's too deep to stand: swimming
+export const KERB = 0.12; // how much higher a bridge's walkways are than its road (like a sidewalk)
 
 const smooth = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -148,8 +150,8 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
     return inRiverSpan(along) && Math.abs(across) < river.hw + 0.5;
   }
 
-  // ---- streets: where they cross water they become bridges, ramping up from the shore
-  const SAMPLES = 900;
+  // ---- streets: where they cross water they become bridges, ramping up from just before the shore
+  const SAMPLES = 900, LEAD = 1.4;
   const decks = ROADS.map((road) => {
     const wet = [];
     for (let i = 0; i < SAMPLES; i++) wet.push(waterAt(road.point((i / SAMPLES) * Math.PI * 2)) !== null);
@@ -169,15 +171,35 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
       bwd[i] = run;
     }
     const dry = fwd.map((f, i) => Math.min(f, bwd[i]));
+    // And on dry ground, metres to the nearest water, so the ramp can start a little before the shore.
+    const wetF = new Float32Array(SAMPLES), wetB = new Float32Array(SAMPLES);
+    run = Infinity;
+    for (let k = 0; k < SAMPLES * 2; k++) {
+      const i = k % SAMPLES;
+      run = wet[i] ? 0 : run + step;
+      wetF[i] = run;
+    }
+    run = Infinity;
+    for (let k = SAMPLES * 2 - 1; k >= 0; k--) {
+      const i = k % SAMPLES;
+      run = wet[i] ? 0 : run + step;
+      wetB[i] = run;
+    }
     const h = new Float32Array(SAMPLES);
-    for (let i = 0; i < SAMPLES; i++) h[i] = dry[i] > 0 ? Math.min(1.15, road.h + 0.42 * dry[i]) : 0;
+    for (let i = 0; i < SAMPLES; i++) {
+      const out = wet[i] ? dry[i] : -Math.min(wetF[i], wetB[i]); // + over water, - on land
+      h[i] = out > -LEAD ? Math.min(1.15, road.h + 0.42 * (out + LEAD)) : 0;
+    }
     return h;
   });
-  /// The bridge deck's height on road `ri` at angle t (0 where the road isn't a bridge).
+  /// The bridge deck's height on road `ri` at angle t (0 where the road isn't a bridge). It rises
+  /// smoothly from the street a little before the shore.
   function deckAt(ri, t) {
     const x = ((((t / (Math.PI * 2)) % 1) + 1) % 1) * SAMPLES, i = Math.floor(x), k = x - i;
     const a = decks[ri][i % SAMPLES], b = decks[ri][(i + 1) % SAMPLES];
-    return a && b ? a + (b - a) * k : 0;
+    if (!a && !b) return 0;
+    const road = ROADS[ri].h;
+    return (a || road) + ((b || road) - (a || road)) * k;
   }
   const roadT = (road, d) => Math.atan2(d.dot(road.v), d.dot(road.u));
   const DECK_HW = ROAD_HW + WALK; // bridges carry the sidewalks across too
@@ -221,16 +243,17 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
     });
     if (best < ROAD_HW) return ROADS[ri].h;
     if (best < ROAD_HW + WALK && nearestRoad(d, ri) > ROAD_HW + WALK + 0.2) return 0.16;
-    // In the water you wade on the shallows: never deeper than about the knee.
-    return Math.max(landAt(d), SEA_LEVEL - 0.4);
+    // In the water you wade until it's chest deep, then you swim.
+    return Math.max(landAt(d), SWIM);
   }
   /// Every height you could be standing at here: the ground, plus bridge decks, stairs and platforms.
   function heightsAt(d) {
     const hs = [baseAt(d)];
     ROADS.forEach((road, i) => {
-      if (Math.abs(d.dot(road.axis)) * R < DECK_HW) {
+      const lat = Math.abs(d.dot(road.axis)) * R;
+      if (lat < DECK_HW) {
         const h = deckAt(i, roadT(road, d));
-        if (h > 0.05) hs.push(h);
+        if (h > road.h + 0.005) hs.push(lat > ROAD_HW ? h + KERB : h);
       }
     });
     for (const r of ramps) {

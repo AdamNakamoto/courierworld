@@ -499,13 +499,17 @@ export function createCharacter(p) {
 
   // ---- poses and animation
   let pose = "walk"; // walk | sit (bike, moped) | stand (skateboard, plane)
-  let phase = 0, blink = 2 + Math.random() * 3, wave = 0;
+  let phase = 0, blink = 2 + Math.random() * 3, wave = 0, swim = 0;
   function setPose(next) {
     pose = next;
   }
   /// 0..1: how far the right hand is up, waving.
   function setWave(k) {
     wave = k;
+  }
+  /// 0..1: treading water.
+  function setSwim(k) {
+    swim = k;
   }
   /// speed: 0 idle, 0.62 walking, 1 running (or how hard she's pedalling). air: 0 on the ground … 1 mid-jump.
   /// dist: ground covered this frame; when given, the stride follows it so the feet don't skate.
@@ -582,6 +586,22 @@ export function createCharacter(p) {
       body.position.y = -0.05 + Math.sin(t * 3) * 0.008;
       body.rotation.x = 0.05;
     }
+    if (swim > 0.01 && pose === "walk") {
+      // Treading water: arms sweeping wide at the surface, legs kicking slowly below it.
+      const s2 = Math.sin(t * 3.2), c2 = Math.cos(t * 3.2), to = (o, v) => o + (v - o) * swim;
+      arms[0].rotation.x = to(arms[0].rotation.x, -0.9 + s2 * 0.35);
+      arms[1].rotation.x = to(arms[1].rotation.x, -0.9 - s2 * 0.35);
+      arms[0].rotation.z = to(arms[0].rotation.z, -0.95 + c2 * 0.25);
+      arms[1].rotation.z = to(arms[1].rotation.z, 0.95 - c2 * 0.25);
+      elbows[0].rotation.x = elbows[1].rotation.x = to(elbows[0].rotation.x, -0.6);
+      legs[0].rotation.x = to(legs[0].rotation.x, s2 * 0.4 - 0.2);
+      legs[1].rotation.x = to(legs[1].rotation.x, -s2 * 0.4 - 0.2);
+      knees[0].rotation.x = knees[1].rotation.x = to(knees[0].rotation.x, 0.55);
+      pelvis.rotation.y = to(pelvis.rotation.y, 0);
+      chest.rotation.y = to(chest.rotation.y, 0);
+      chest.rotation.x = to(chest.rotation.x, 0.15);
+      body.position.y = to(body.position.y, Math.sin(t * 2.2) * 0.04);
+    }
     if (wave > 0 && pose === "walk") {
       const osc = Math.sin(t * 11);
       arms[0].rotation.x *= 1 - wave;
@@ -599,5 +619,5 @@ export function createCharacter(p) {
   }
 
   compact(root, new Set(eyes));
-  return { root, body, head, update, setPose, setWave };
+  return { root, body, head, update, setPose, setWave, setSwim };
 }

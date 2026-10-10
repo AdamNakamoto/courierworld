@@ -3,7 +3,7 @@
 // Everything static is baked into one vertex-coloured mesh so the town stays cheap.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
-import { createTerrain, SEA_LEVEL } from "./terrain.js";
+import { createTerrain, SEA_LEVEL, KERB } from "./terrain.js";
 import { buildBiomes } from "./biomes.js";
 import { WATER } from "./water.js";
 import { createDust } from "./fx.js";
@@ -606,8 +606,8 @@ export function createWorld(canvas) {
         const s0 = new THREE.Vector3().crossVectors(p0, road.tangent(t0)).normalize();
         const s1 = new THREE.Vector3().crossVectors(p1, road.tangent(t1)).normalize();
         const at = (p, s, off, h) => offsetOnSphere(p, s, off).multiplyScalar(R + h);
-        // Over water the street becomes a bridge, ramping up from the shore.
-        const d0 = terrain.deckAt(ri, t0), d1 = terrain.deckAt(ri, t1), bridge = d0 > 0.05 || d1 > 0.05;
+        // Over water the street becomes a bridge, ramping up from just before the shore.
+        const d0 = terrain.deckAt(ri, t0), d1 = terrain.deckAt(ri, t1), bridge = d0 > road.h + 0.005 || d1 > road.h + 0.005;
         const h0 = bridge ? Math.max(road.h, d0) : road.h, h1 = bridge ? Math.max(road.h, d1) : road.h;
         // Asphalt, in narrow strips so the flat quads follow the planet's curve.
         for (let k = 0; k < 4; k++) {
@@ -617,29 +617,35 @@ export function createWorld(canvas) {
         const near = nearestRoad(p0, ri);
         const zone = terrain.zoneAt(p0).key;
         if (bridge) {
-          // The deck carries the sidewalks across, with a railing each side and piers below.
+          // The deck carries kerb-high walkways across (level with the sidewalks it starts from),
+          // with a railing each side once it's off the ground, and piers down to the water.
+          const k0 = h0 + KERB, k1 = h1 + KERB, railed = Math.max(h0, h1) > road.h + 0.15;
           for (const sg of [1, -1]) {
             const a = ROAD_HW * sg, b = (ROAD_HW + WALK) * sg;
-            batch.quad(at(p0, s0, a, h0), at(p0, s0, b, h0), at(p1, s1, b, h1), at(p1, s1, a, h1), walkC);
-            batch.quad(at(p0, s0, b, h0 - 0.35), at(p0, s0, b, h0), at(p1, s1, b, h1), at(p1, s1, b, h1 - 0.35), curbC, s0.clone().multiplyScalar(sg));
-            if (Math.max(h0, h1) > 0.3) {
+            batch.quad(at(p0, s0, a, k0), at(p0, s0, b, k0), at(p1, s1, b, k1), at(p1, s1, a, k1), walkC);
+            batch.quad(at(p0, s0, a, h0), at(p0, s0, a, k0), at(p1, s1, a, k1), at(p1, s1, a, h1), curbC, s0.clone().multiplyScalar(-sg));
+            batch.quad(at(p0, s0, b, h0 - 0.4), at(p0, s0, b, k0), at(p1, s1, b, k1), at(p1, s1, b, h1 - 0.4), curbC, s0.clone().multiplyScalar(sg));
+            if (railed) {
               const r = ROAD_HW + WALK - 0.06;
-              batch.quad(at(p0, s0, r * sg, h0 + 0.9), at(p0, s0, (r - 0.1) * sg, h0 + 0.9), at(p1, s1, (r - 0.1) * sg, h1 + 0.9), at(p1, s1, r * sg, h1 + 0.9), curbC);
+              batch.quad(at(p0, s0, r * sg, k0 + 0.9), at(p0, s0, (r - 0.1) * sg, k0 + 0.9), at(p1, s1, (r - 0.1) * sg, k1 + 0.9), at(p1, s1, r * sg, k1 + 0.9), curbC);
+              batch.quad(at(p0, s0, r * sg, k0 + 0.45), at(p0, s0, (r - 0.08) * sg, k0 + 0.45), at(p1, s1, (r - 0.08) * sg, k1 + 0.45), at(p1, s1, r * sg, k1 + 0.45), curbC);
               if (i % 3 === 0) {
                 const post = new THREE.Group();
                 box(post, 0.08, 0.9, 0.08, C.curb, 0, 0.45, 0);
-                bake(post, offsetOnSphere(p0, s0, r * sg), 0, h0);
+                bake(post, offsetOnSphere(p0, s0, r * sg), 0, k0);
+                // Solid while you're on the deck, but a jump clears it.
                 const rail = offsetOnSphere(p0, s0, r * sg);
-                addRect(rail, spinToward(rail, offsetOnSphere(p1, s1, r * sg)), 0.08, 0.6, null, { y0: 0.3 });
+                addRect(rail, spinToward(rail, offsetOnSphere(p1, s1, r * sg)), 0.08, 0.6, null, { y0: h0 - 0.3, y1: k0 + 0.5 });
               }
             }
           }
-          if (i % 12 === 6 && h0 > 0.35) {
+          if (i % 8 === 4 && h0 > 0.35) {
             for (const sg of [1, -1]) {
               const d = offsetOnSphere(p0, s0, (ROAD_HW + 0.6) * sg), floor = terrain.landAt(d);
               const pier = new THREE.Group();
               part(pier, new THREE.CylinderGeometry(0.22, 0.26, h0 - floor, 8), C.concrete, 0, (h0 - floor) / 2 - 0.2, 0);
               bake(pier, d, 0, floor);
+              addCircle(d, 0.26, { y1: h0 - 0.4 }); // in the way of anyone swimming underneath
             }
           }
         } else if (near > ROAD_HW + WALK + 0.2) {

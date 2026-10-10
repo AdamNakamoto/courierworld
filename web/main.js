@@ -1,6 +1,6 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
-import { SEA_LEVEL, STEP } from "./terrain.js";
+import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
 import { courier } from "./traits.js";
@@ -563,6 +563,7 @@ let moveSpeed = 0;
 // on the way up and a squash on landing; walk off an edge and you fall.
 const JUMP_V = 5.6, GRAVITY = 18;
 let bodyY = 0.04, footY = 0.04, jumpY = 0, jumpV = 0, jumpBuffer = 0, landSquash = 0, skidIn = 0, wading = false, splashIn = 0;
+let swimming = false, swimK = 0; // out of your depth: treading water, slowly
 function jump() {
   // Remember the press for a moment, so pressing just before landing still jumps again.
   if (mode === "play" && !dialog) jumpBuffer = 0.15;
@@ -657,7 +658,8 @@ function frame() {
     }
     // Quick to get going and quicker to stop; heavier on wheels, and only a little steering in mid-air.
     const heavy = player.ride ? 0.45 : 1;
-    if (wading) want.multiplyScalar(0.7); // slower through the water
+    if (swimming) want.multiplyScalar(0.5);
+    else if (wading) want.multiplyScalar(0.7); // slower through the water
     vel.lerp(want, 1 - Math.exp(-dt * (steering ? 9 : 12) * heavy * (jumpY > 0 ? 0.35 : 1)));
     dist = step(dt);
     const v = vel.length();
@@ -683,7 +685,7 @@ function frame() {
     let air = jumpV !== 0 || bodyY > footY + 0.02;
     const ground = W.terrain.surfaceAt(p, bodyY, air ? 0.05 : STEP);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
-    if (jumpBuffer > 0 && !air && !dialog) {
+    if (jumpBuffer > 0 && !air && !dialog && !swimming) {
       jumpBuffer = 0;
       jumpV = JUMP_V;
       air = true;
@@ -706,14 +708,17 @@ function frame() {
     } else bodyY += (ground - bodyY) * (1 - Math.exp(-dt * 14)); // kerbs and stairs
     footY = ground;
     jumpY = Math.max(0, bodyY - ground);
-    // Feet in the water: slower, and splashing.
+    // Feet in the water: slower, and splashing; out of your depth, you swim.
     const water = W.terrain.waterAt(p);
     wading = water !== null && bodyY < water + 0.05;
+    swimming = wading && !air && ground <= SWIM + 0.02;
     splashIn -= dt;
-    if (wading && v > 0.6 && splashIn <= 0) {
-      splashAt(0.22, 1);
-      splashIn = 0.18;
+    if (wading && splashIn <= 0 && (v > 0.6 || swimming)) {
+      splashAt(swimming ? 0.3 : 0.22, swimming && v > 0.4 ? 2 : 1);
+      splashIn = swimming ? (v > 0.4 ? 0.42 : 1.1) : 0.18;
     }
+    swimK += ((swimming ? 1 : 0) - swimK) * (1 - Math.exp(-dt * 6));
+    player.ch.setSwim(swimK);
     if (landed && water !== null && bodyY < water + 0.05) splashAt(0.4, 8);
     camLift += (bodyY - camLift) * (1 - Math.exp(-dt * 5));
     landSquash *= Math.exp(-dt * 11);

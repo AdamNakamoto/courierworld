@@ -221,10 +221,10 @@ export function buildBiomes(k) {
       k.plate({ d: mid, right: across, front: tangentTo(mid, pier.end), hw: 0.85, hd: len / 2 + 0.05, h: deck });
       for (const sx of [-1, 1]) {
         const r = step(mid, across, sx * 0.86);
-        k.addRect(r, spinAlong(r, out), 0.06, len / 2, null, { y0: deck - 0.2 });
+        k.addRect(r, spinAlong(r, out), 0.06, len / 2, null, { y0: deck - 0.2, y1: deck + 0.5 });
       }
       const endRail = step(pier.start, out, len + 0.05);
-      k.addRect(endRail, spinAlong(endRail, out), 0.9, 0.06, null, { y0: deck - 0.2 });
+      k.addRect(endRail, spinAlong(endRail, out), 0.9, 0.06, null, { y0: deck - 0.2, y1: deck + 0.5 });
       const endSpot = step(pier.start, out, len - 1.2);
       k.npc({ d: step(endSpot, across, 0.45), y: deck, face: out, name: "Old Captain", look: { shirt: 0x5d8fd1, headwear: "bucket", accent: 0xf2c94c, bottomsStyle: "pants" },
         lines: ["Nothing biting today. The fish read the post too, I reckon.", "On a clear night you can see the lighthouse beam go right round the planet.", "I've walked off the end of this pier twice. Mind your step."] });
@@ -295,7 +295,6 @@ export function buildBiomes(k) {
     cap.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), c));
     const sea = new THREE.Mesh(cap, bodyMaterial({ center: c, radius: rho, R }));
     world.add(sea);
-    k.addCircle(c, (rho - 0.07) * R, { y1: 0.2 }); // too deep to wade beyond the shallows
     k.ambient.sea = { d: c, r: rho };
   }
 
@@ -376,7 +375,6 @@ export function buildBiomes(k) {
     const cap = new THREE.SphereGeometry(R + SEA_LEVEL, 48, 10, 0, Math.PI * 2, 0, (pond.r + 0.6) / R);
     cap.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), pond.d));
     world.add(new THREE.Mesh(cap, bodyMaterial({ center: pond.d, radius: pond.r / R, R, deep: 0x2f8f91, shallow: 0x5bbcb3 })));
-    k.addCircle(pond.d, pond.r * 0.45, { y1: 0.2 });
     {
       const rv = T.river, pos = [], uv = [], idx = [];
       const a0 = (pond.r - 0.6) / R, a1 = rv.total - T.SEA_R + 0.02, n = Math.ceil(((a1 - a0) * R) / 0.5);
@@ -647,10 +645,10 @@ export function buildBiomes(k) {
         k.plate({ d: deckAt, right: side, front: out, hw: 1.6, hd: 0.8, h: H });
         for (const s of [-1, 1]) {
           const r = step(deckAt, out, s * 0.82);
-          k.addRect(r, spinAlong(r, side), 0.05, 1.6, null, { y0: H - 0.3 });
+          k.addRect(r, spinAlong(r, side), 0.05, 1.6, null, { y0: H - 0.3, y1: H + 0.5 });
         }
         const back = step(deckAt, side, -1.62);
-        k.addRect(back, spinAlong(back, out), 0.05, 0.8, null, { y0: H - 0.3 });
+        k.addRect(back, spinAlong(back, out), 0.05, 0.8, null, { y0: H - 0.3, y1: H + 0.5 });
         for (const [x, zz] of [[-1.5, -0.7], [1.5, -0.7], [-1.5, 0.7], [1.5, 0.7]]) k.addCircle(step(step(deckAt, side, x), out, zz), 0.08, { y1: H - 0.3 });
         k.taken.push({ d: stairBottom, r: 1.5 });
         k.stampSpot(step(deckAt, side, -1.0), H);
@@ -726,11 +724,11 @@ export function buildBiomes(k) {
       k.plate({ d: p, right: side, front: tan, hw: reach + 0.8, hd: 0.85, h: H });
       for (const zz of [-1, 1]) {
         const r = step(p, tan, zz * 0.87);
-        k.addRect(r, spinAlong(r, side), 0.06, reach + 0.8, null, { y0: H - 0.3 });
+        k.addRect(r, spinAlong(r, side), 0.06, reach + 0.8, null, { y0: H - 0.3, y1: H + 0.5 });
       }
       for (const s of [-1, 1]) {
         const r = step(p, side, s * (reach + 0.85));
-        k.addRect(r, spinAlong(r, tan), 0.06, 0.85, null, { y0: H - 0.3 });
+        k.addRect(r, spinAlong(r, tan), 0.06, 0.85, null, { y0: H - 0.3, y1: H + 0.5 });
         for (const zz of [-0.7, 0.7]) k.addCircle(step(step(p, side, s * (T.DECK_HW + 0.35)), tan, zz), 0.16, { y1: H - 0.3 });
       }
       // Stairs down each side, along the street.
