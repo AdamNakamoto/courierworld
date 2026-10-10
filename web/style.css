@@ -93,6 +93,20 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 }
 .jump-btn:active { transform: translate(2px, 3px); box-shadow: 1px 1px 0 rgba(40, 48, 51, 0.85); }
 .talk-btn { bottom: 176px; left: 34px; width: 64px; height: 64px; background: var(--paper); }
+/* The name of the place you've just walked into, like a title card. */
+.place {
+  position: absolute; left: 22px; bottom: 26px; max-width: calc(100vw - 44px); pointer-events: none !important;
+  font: 400 clamp(30px, 6vw, 58px)/0.95 Bungee, Impact, sans-serif; letter-spacing: .02em; text-transform: uppercase;
+  color: var(--paper); -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; text-shadow: 4px 5px 0 rgba(40, 48, 51, 0.85);
+  opacity: 0; transform: translateY(10px) rotate(-1.5deg);
+}
+.place.show { animation: place 4.2s ease forwards; }
+@keyframes place {
+  0% { opacity: 0; transform: translateY(14px) rotate(-1.5deg); }
+  10%, 75% { opacity: 1; transform: translateY(0) rotate(-1.5deg); }
+  100% { opacity: 0; transform: translateY(-6px) rotate(-1.5deg); }
+}
+@media (pointer: coarse) { .place { bottom: auto; top: 112px; left: 16px; } }
 
 /* ---------------------------------------------------------------- dialog */
 

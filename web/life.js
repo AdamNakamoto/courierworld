@@ -204,6 +204,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     const step = Math.max(1, Math.floor(W.addresses.length / 12));
     for (let i = 3, n = 0; i < W.addresses.length && n < 12; i += step, n++) {
       const a = W.addresses[i];
+      if (a.landmark) continue;
       const ch = createCharacter(villager(i * 7919 + 13));
       ch.root.position.copy(a.dir).multiplyScalar(R + 0.16);
       ch.root.quaternion.copy(W.frameAt(a.dir, a.spin));
@@ -211,11 +212,24 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
       world.add(ch.root);
       const up = ch.root.position.clone().normalize();
       const home = new THREE.Vector3(0, 0, 1).applyQuaternion(ch.root.quaternion);
-      const p = { kind: "door", name: a.name, ch, up, home, face: home.clone(), greetIn: 0, wave: 0, talking: false, body: { d: up, r: 0.28 } };
+      const p = { kind: "door", name: a.name, ch, up, home, face: home.clone(), greetIn: 0, wave: 0, talking: false, y: 0.16, body: { d: up, r: 0.28, y: 0.16 } };
       people.push(p);
       bodies.push(p.body);
     }
   }
+
+  // ---- people out in the other places: on the pier, at the beach, by the shrine, the cabin, the works
+  W.npcs.forEach((s, i) => {
+    const ch = createCharacter({ ...villager(9000 + i * 977), ...s.look });
+    const up = s.d.clone().normalize();
+    ch.root.position.copy(up).multiplyScalar(R + s.y);
+    world.add(ch.root);
+    const home = s.face.clone().addScaledVector(up, -s.face.dot(up)).normalize();
+    orient(ch.root, up, home);
+    const p = { kind: "door", name: s.name, lines: s.lines, ch, up, home, face: home.clone(), greetIn: 0, wave: 0, talking: false, y: s.y, body: { d: up, r: 0.28, y: s.y } };
+    people.push(p);
+    bodies.push(p.body);
+  });
 
   // ---- people out for a walk along the sidewalks
   for (let i = 0; i < 14; i++) {
@@ -225,7 +239,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     const p = {
       kind: "walker", name: WALKER_NAMES[i % WALKER_NAMES.length], ch, ri, road: ROADS[ri], t: rng() * Math.PI * 2,
       side: rng() < 0.5 ? 1 : -1, dir: rng() < 0.5 ? 1 : -1, speed: 0.95 + rng() * 0.45, go: 1, pauseIn: 8 + rng() * 20, pause: 0,
-      y: 0.16, face: new THREE.Vector3(), up: new THREE.Vector3(), greetIn: 0, wave: 0, talking: false, body: { d: new THREE.Vector3(), r: 0.28 },
+      y: 0.16, face: new THREE.Vector3(), up: new THREE.Vector3(), greetIn: 0, wave: 0, talking: false, body: { d: new THREE.Vector3(), r: 0.28, y: 0.16 },
     };
     people.push(p);
     bodies.push(p.body);
@@ -235,19 +249,20 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   const cats = [];
   for (let i = 0, n = 0; i < W.addresses.length * 2 && n < 7; i += 3) {
     const a = W.addresses[(i * 7 + 2) % W.addresses.length];
+    if (a.landmark) continue;
     const q = W.frameAt(a.dir, a.spin);
     const side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
     const d = offsetOnSphere(a.dir, side, rng() < 0.5 ? -1.6 : 1.6);
     if (blocked(d, 0.3) || nearestRoad(d) < ROAD_HW + 0.3 || cats.some((c) => arc(c.up, d) < 1.5)) continue;
     const cat = makeCat(CAT_COATS[n % CAT_COATS.length]);
-    cat.root.position.copy(d).multiplyScalar(R + (nearestRoad(d) < ROAD_HW + WALK ? 0.16 : 0.02));
+    cat.root.position.copy(d).multiplyScalar(R + W.terrain.baseAt(d) + 0.02);
     const up = d.clone();
     const home = new THREE.Vector3(0, 0, 1).applyQuaternion(q); // facing the street
     orient(cat.root, up, home);
     cat.root.scale.setScalar(1.15);
     world.add(cat.root);
     cats.push({ ...cat, up, home, face: home.clone(), near: 0, meowIn: 0, hop: 0 });
-    bodies.push({ d: up, r: 0.18 });
+    bodies.push({ d: up, r: 0.18, y: 0.16 });
     n++;
   }
 
@@ -270,7 +285,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
       const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
       const nr = nearestRoad(d);
       if (nr < ROAD_HW + 0.2 || nr > ROAD_HW + WALK + 3 || blocked(d, 0.7)) continue;
-      return { d, y: nr < ROAD_HW + WALK ? 0.16 : 0.0 };
+      return { d, y: W.terrain.baseAt(d) };
     }
     return { d: new THREE.Vector3(0, 1, 0), y: 0 };
   };
@@ -402,9 +417,10 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
         p.t += (p.dir * moved) / R;
         p.up.copy(d);
         p.body.d.copy(d);
-        // Up onto the sidewalk, down to cross the road at junctions.
-        const y = nearestRoad(d, p.ri) > ROAD_HW + WALK + 0.2 ? 0.16 : 0.04;
+        // Up onto the sidewalk, down to cross the road at junctions, up and over the bridges.
+        const y = W.terrain.surfaceAt(d, p.y + 0.5);
         p.y += (y - p.y) * (1 - Math.exp(-dt * 10));
+        p.body.y = p.y;
         p.ch.root.position.copy(d).multiplyScalar(R + p.y);
         const near = active && arc(d, me) < 4;
         pose(p, dt, t, p.talking ? toMe.normalize() : tan, near ? toMe.normalize() : null);
@@ -572,10 +588,11 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   return {
     update,
     bodies,
-    /// The nearest person within `range` of `me`, to talk to.
-    nearest(me, range = 2.2) {
+    /// The nearest person within `range` of `me` (and at about your height y), to talk to.
+    nearest(me, range = 2.2, y = null) {
       let best = null, bd = range;
       for (const p of people) {
+        if (y !== null && Math.abs(p.y - y) > 1.5) continue;
         const d = arc(p.up, me);
         if (d < bd) [best, bd] = [p, d];
       }
@@ -583,6 +600,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     },
     /// Something for this person to say, given the time and weather.
     chat(p, { night = 0, rain = 0 } = {}) {
+      if (p.lines && Math.random() < 0.8) return pick(p.lines);
       const pool = [...CHAT.any, ...(rain > 0.4 ? CHAT.rain : night > 0.5 ? CHAT.night : CHAT.day)];
       return pick(pool);
     },

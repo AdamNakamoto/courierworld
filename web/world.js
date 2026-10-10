@@ -3,6 +3,10 @@
 // Everything static is baked into one vertex-coloured mesh so the town stays cheap.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
+import { createTerrain, SEA_LEVEL } from "./terrain.js";
+import { buildBiomes } from "./biomes.js";
+import { WATER } from "./water.js";
+import { createDust } from "./fx.js";
 
 export const R = 24;
 export const UP = new THREE.Vector3(0, 1, 0);
@@ -480,18 +484,68 @@ export function createWorld(canvas) {
   }
   /// A solid footprint; buildings also say how tall they are and how deep the walls really are
   /// (hd includes the doorstep), so the camera can keep clear of them.
-  function addRect(dir, spin, hw, hd, wall = null) {
+  /// opts: { y0, y1 } solid only for feet between those heights (railings up on a deck, cliffs
+  /// below their top); except: a staircase cut through it; wall: as above, for circles.
+  function addRect(dir, spin, hw, hd, wall = null, opts = {}) {
     const q = frameAt(dir, spin);
     obstacles.push({
-      d: dir, kind: "rect", hw, hd, wall,
+      d: dir, kind: "rect", hw, hd, wall, ...opts,
       right: new THREE.Vector3(1, 0, 0).applyQuaternion(q), front: new THREE.Vector3(0, 0, 1).applyQuaternion(q),
       cos: Math.cos((Math.hypot(hw, hd) + 1) / R),
     });
   }
-  function addCircle(dir, r) {
-    obstacles.push({ d: dir, kind: "circle", r, cos: Math.cos((r + 1) / R) });
+  function addCircle(dir, r, opts = {}) {
+    obstacles.push({ d: dir, kind: "circle", r, ...opts, cos: Math.cos((r + 1) / R) });
   }
   const clearOf = (d, r) => taken.every((t) => arc(d, t.d) > t.r + r);
+
+  // The post office goes on the quietest stretch of the first street, and the other places are laid
+  // out round it, so find it first.
+  const spawnSpot = (() => {
+    const road = ROADS[0];
+    let best = null;
+    for (let i = 0; i < 360; i++) {
+      const t = (i / 360) * Math.PI * 2, p = road.point(t);
+      const score = nearestRoad(p, 0);
+      if (!best || score > best.score) best = { t, p, score };
+    }
+    return { ...best, tan: road.tangent(best.t) };
+  })();
+  const terrain = createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir: spawnSpot.p, spawnTan: spawnSpot.tan });
+  /// Whether a spot (with room r round it) is taken by something solid, or under water.
+  function blocked(d, r) {
+    if (terrain.waterAt(d) !== null) return true;
+    return obstacles.some((o) => {
+      if (d.dot(o.d) < o.cos) return false;
+      if (o.kind === "circle") return arc(d, o.d) < o.r + r;
+      const v = d.clone().sub(o.d).multiplyScalar(R);
+      return Math.abs(v.dot(o.right)) < o.hw + r && Math.abs(v.dot(o.front)) < o.hd + r;
+    });
+  }
+  /// Whether there's sand or water within r of a spot (no houses or parks there).
+  const wetNear = (d, r) => {
+    if (terrain.sandAt(d)) return true;
+    const t1 = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0.3, 1, 0.2)).normalize(), t2 = new THREE.Vector3().crossVectors(d, t1);
+    for (let i = 0; i < 6; i++) {
+      const p = d.clone().multiplyScalar(R).addScaledVector(t1, Math.cos(i) * r).addScaledVector(t2, Math.sin(i) * r).normalize();
+      if (terrain.sandAt(p)) return true;
+    }
+    return false;
+  };
+  const inTown = (d) => terrain.zoneAt(d).key === "town";
+  // The footbridge goes on the nearest long, quiet stretch of a town street (chosen now, so the
+  // street lamps leave room for it).
+  const footbridge = (() => {
+    let best = null;
+    ROADS.forEach((road, ri) => {
+      for (let i = 0; i < 720; i++) {
+        const t = (i / 720) * Math.PI * 2, p = road.point(t), far = arc(p, spawnSpot.p);
+        if (far < 8 || far > 32 || nearestRoad(p, ri) < 9.5 || !inTown(p) || terrain.deckAt(ri, t) > 0) continue;
+        if (!best || far < best.far) best = { ri, t, p, far };
+      }
+    });
+    return best;
+  })();
 
   // ---- ground
   {
@@ -499,13 +553,31 @@ export function createWorld(canvas) {
     const pos = geo.attributes.position, col = [];
     const v = new THREE.Vector3(), c = new THREE.Color();
     const g1 = new THREE.Color(C.grass), g2 = new THREE.Color(C.grass2);
+    const sand = new THREE.Color(0xeadcb4), wetSand = new THREE.Color(0xd6c497), seabed = new THREE.Color(0xc4b48c);
+    const woods1 = new THREE.Color(0x5f9a52), woods2 = new THREE.Color(0x4f8946), dirt = new THREE.Color(0x9c8460);
+    const concrete = new THREE.Color(0xb8bab1), dryGrass = new THREE.Color(0xa3b878);
     const patch = (p) => Math.sin(p.x * 9.1 + 1.7) * Math.sin(p.y * 8.7 + 0.3) * Math.sin(p.z * 9.3 + 2.1)
       + 0.5 * Math.sin(p.x * 23.3) * Math.sin(p.y * 21.1 + 1) * Math.sin(p.z * 22.7 + 0.5);
+    const m = new THREE.Vector3();
     for (let i = 0; i < pos.count; i += 3) {
       // Colour per face so the cel bands stay flat; patches come from low-frequency noise.
-      v.fromBufferAttribute(pos, i).normalize();
-      c.copy(patch(v) > 0.15 ? g2 : g1);
+      m.set(0, 0, 0);
+      for (let k = 0; k < 3; k++) m.add(v.fromBufferAttribute(pos, i + k));
+      m.normalize();
+      const n = patch(m), zone = terrain.zoneAt(m).key;
+      if (terrain.sandAt(m)) {
+        const h = terrain.landAt(m);
+        c.copy(h < SEA_LEVEL - 0.05 ? seabed : h < -0.04 ? wetSand : sand);
+      } else if (zone === "woods") c.copy(n > 0.55 ? dirt : n > 0.1 ? woods2 : woods1);
+      else if (zone === "works") c.copy(n > -0.1 ? concrete : dryGrass);
+      else c.copy(n > 0.15 ? g2 : g1);
       for (let k = 0; k < 3; k++) col.push(c.r, c.g, c.b);
+    }
+    // Down into the sea, the pond and the river.
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).normalize();
+      v.multiplyScalar(R + terrain.landAt(v));
+      pos.setXYZ(i, v.x, v.y, v.z);
     }
     geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
     // Smooth normals: a sphere's normal is just its position.
@@ -534,14 +606,44 @@ export function createWorld(canvas) {
         const s0 = new THREE.Vector3().crossVectors(p0, road.tangent(t0)).normalize();
         const s1 = new THREE.Vector3().crossVectors(p1, road.tangent(t1)).normalize();
         const at = (p, s, off, h) => offsetOnSphere(p, s, off).multiplyScalar(R + h);
+        // Over water the street becomes a bridge, ramping up from the shore.
+        const d0 = terrain.deckAt(ri, t0), d1 = terrain.deckAt(ri, t1), bridge = d0 > 0.05 || d1 > 0.05;
+        const h0 = bridge ? Math.max(road.h, d0) : road.h, h1 = bridge ? Math.max(road.h, d1) : road.h;
         // Asphalt, in narrow strips so the flat quads follow the planet's curve.
         for (let k = 0; k < 4; k++) {
           const a = -ROAD_HW + (k * ROAD_HW) / 2, b = a + ROAD_HW / 2;
-          batch.quad(at(p0, s0, a, road.h), at(p0, s0, b, road.h), at(p1, s1, b, road.h), at(p1, s1, a, road.h), asphalt);
+          batch.quad(at(p0, s0, a, h0), at(p0, s0, b, h0), at(p1, s1, b, h1), at(p1, s1, a, h1), asphalt);
         }
         const near = nearestRoad(p0, ri);
-        // Sidewalks stop where another street crosses.
-        if (near > ROAD_HW + WALK + 0.2) {
+        const zone = terrain.zoneAt(p0).key;
+        if (bridge) {
+          // The deck carries the sidewalks across, with a railing each side and piers below.
+          for (const sg of [1, -1]) {
+            const a = ROAD_HW * sg, b = (ROAD_HW + WALK) * sg;
+            batch.quad(at(p0, s0, a, h0), at(p0, s0, b, h0), at(p1, s1, b, h1), at(p1, s1, a, h1), walkC);
+            batch.quad(at(p0, s0, b, h0 - 0.35), at(p0, s0, b, h0), at(p1, s1, b, h1), at(p1, s1, b, h1 - 0.35), curbC, s0.clone().multiplyScalar(sg));
+            if (Math.max(h0, h1) > 0.3) {
+              const r = ROAD_HW + WALK - 0.06;
+              batch.quad(at(p0, s0, r * sg, h0 + 0.9), at(p0, s0, (r - 0.1) * sg, h0 + 0.9), at(p1, s1, (r - 0.1) * sg, h1 + 0.9), at(p1, s1, r * sg, h1 + 0.9), curbC);
+              if (i % 3 === 0) {
+                const post = new THREE.Group();
+                box(post, 0.08, 0.9, 0.08, C.curb, 0, 0.45, 0);
+                bake(post, offsetOnSphere(p0, s0, r * sg), 0, h0);
+                const rail = offsetOnSphere(p0, s0, r * sg);
+                addRect(rail, spinToward(rail, offsetOnSphere(p1, s1, r * sg)), 0.08, 0.6, null, { y0: 0.3 });
+              }
+            }
+          }
+          if (i % 12 === 6 && h0 > 0.35) {
+            for (const sg of [1, -1]) {
+              const d = offsetOnSphere(p0, s0, (ROAD_HW + 0.6) * sg), floor = terrain.landAt(d);
+              const pier = new THREE.Group();
+              part(pier, new THREE.CylinderGeometry(0.22, 0.26, h0 - floor, 8), C.concrete, 0, (h0 - floor) / 2 - 0.2, 0);
+              bake(pier, d, 0, floor);
+            }
+          }
+        } else if (near > ROAD_HW + WALK + 0.2) {
+          // Sidewalks stop where another street crosses.
           for (const sg of [1, -1]) {
             const a = ROAD_HW * sg, b = (ROAD_HW + WALK) * sg, top = 0.16;
             batch.quad(at(p0, s0, a, top), at(p0, s0, b, top), at(p1, s1, b, top), at(p1, s1, a, top), walkC);
@@ -552,11 +654,11 @@ export function createWorld(canvas) {
         }
         // Lane dashes, kept out of junctions.
         if (i % 4 < 2 && near > ROAD_HW + WALK + 2.2) {
-          batch.quad(at(p0, s0, -0.08, road.h + 0.01), at(p0, s0, 0.08, road.h + 0.01), at(p1, s1, 0.08, road.h + 0.01), at(p1, s1, -0.08, road.h + 0.01), paint);
+          batch.quad(at(p0, s0, -0.08, h0 + 0.01), at(p0, s0, 0.08, h0 + 0.01), at(p1, s1, 0.08, h1 + 0.01), at(p1, s1, -0.08, h1 + 0.01), paint);
         }
         // Zebra crossing on the approach to each junction.
         const X = ROAD_HW + WALK + 1.6;
-        if ((lastNear > X && near <= X) || (lastNear <= X && near > X)) {
+        if (!bridge && ((lastNear > X && near <= X) || (lastNear <= X && near > X))) {
           const mid = p0.clone().add(p1).normalize(), s = s0;
           const tan = road.tangent(t0);
           for (let k = -4; k <= 4; k++) {
@@ -568,10 +670,12 @@ export function createWorld(canvas) {
           }
         }
         lastNear = near;
-        // Utility poles every few metres on one side, wired together.
+        // Utility poles every few metres on one side, wired together (in town and at the works).
+        const poleSpot = offsetOnSphere(p0, s0, ROAD_HW + WALK - 0.25);
+        const byFootbridge = footbridge && arc(p0, footbridge.p) < 3.2;
         if (i % 14 === 7) {
-          if (near > ROAD_HW + WALK + 2.5) {
-            const d = offsetOnSphere(p0, s0, ROAD_HW + WALK - 0.25);
+          if (near > ROAD_HW + WALK + 2.5 && !bridge && !byFootbridge && (zone === "town" || zone === "works") && !wetNear(poleSpot, 1.5)) {
+            const d = poleSpot;
             const spin = spinToward(d, p1); // crossarm (local x) spans across the street
             bake(pole(), d, spin);
             addCircle(d, 0.2);
@@ -593,11 +697,13 @@ export function createWorld(canvas) {
             poleRun = tops;
           } else poleRun = null;
         }
-        if (i % 37 === 11 && near > ROAD_HW + WALK + 3) {
+        if (i % 37 === 11 && near > ROAD_HW + WALK + 3 && !bridge && !byFootbridge && zone === "town") {
           const d = offsetOnSphere(p0, s0, -(ROAD_HW + WALK - 0.3));
-          bake(streetSign(), d, spinToward(d, p0.clone().addScaledVector(road.tangent(t0), -1)));
-          addCircle(d, 0.12);
-          taken.push({ d, r: 0.4 });
+          if (!wetNear(d, 1)) {
+            bake(streetSign(), d, spinToward(d, p0.clone().addScaledVector(road.tangent(t0), -1)));
+            addCircle(d, 0.12);
+            taken.push({ d, r: 0.4 });
+          }
         }
       }
     });
@@ -619,14 +725,8 @@ export function createWorld(canvas) {
   // ---- spawn and post office: a quiet stretch of the first street
   let spawn;
   {
-    const road = ROADS[0];
-    let best = null;
-    for (let i = 0; i < 360; i++) {
-      const t = (i / 360) * Math.PI * 2, p = road.point(t);
-      const score = nearestRoad(p, 0);
-      if (!best || score > best.score) best = { t, p, score };
-    }
-    const tan = road.tangent(best.t), side = new THREE.Vector3().crossVectors(best.p, tan).normalize();
+    const best = spawnSpot;
+    const tan = best.tan, side = new THREE.Vector3().crossVectors(best.p, tan).normalize();
     const spec = { w: 6, d: 4.6 };
     const d = offsetOnSphere(best.p, side, ROAD_HW + WALK + 0.45 + spec.d / 2);
     const spin = spinToward(d, best.p);
@@ -649,6 +749,35 @@ export function createWorld(canvas) {
     const door = d.clone().multiplyScalar(R).add(new THREE.Vector3(doorX, 0, spec.d / 2 + 1.3).applyQuaternion(q)).normalize();
     spawn = { dir: offsetOnSphere(best.p, side, -0.4), tangent: tan, post: door, postSpin: spin };
   }
+
+  // ---- the seaside, Falls Hill, the woods, the works and the footbridge (before the houses, so
+  // the houses keep out of their way)
+  const npcs = [], stampSpots = [], animators = [], ambient = {};
+  const spray = createDust(world, noNormals, 70, 0xffffff);
+  const smoke = createDust(world, noNormals, 40, 0xd9d5cc);
+  buildBiomes({
+    R, C, ROADS, ROAD_HW, WALK, terrain, world, noNormals, spawn, footbridge, rng: mulberry32(1357),
+    part, box, tm, toon, texFromCanvas, bake, frameAt, spinToward, offsetOnSphere, nearestRoad,
+    addRect, addCircle, taken, clearOf, blocked, ambient,
+    /// Bake a group whose parts are already placed in planet space.
+    bakeAt(g) {
+      g.updateMatrixWorld(true);
+      g.traverse((o) => {
+        if (o.isMesh) batch.add(o.geometry, o.matrixWorld, o.material.color);
+      });
+      g.traverse((o) => o.geometry?.dispose());
+    },
+    landmark(a) {
+      addresses.push({ ...a, landmark: true });
+    },
+    npc: (spot) => npcs.push(spot),
+    stampSpot: (d, y) => stampSpots.push({ d, y }),
+    ramp: (...a) => terrain.addRamp(...a),
+    plate: (p) => terrain.addPlate(p),
+    animate: (fn) => animators.push(fn),
+    spray: (pos, up) => spray.puff(pos, up, { n: 1, size: 0.5, spread: 0.9, life: 0.8 }),
+    smoke: (pos, up) => smoke.puff(pos, up, { n: 1, size: 1.1, spread: 0.2, life: 4, rise: 1.1, grow: 2.4 }),
+  });
 
   // ---- buildings along every street
   {
@@ -674,7 +803,7 @@ export function createWorld(canvas) {
           const extra = k.f === shop ? 1.3 : 0; // room for vending machines
           const dir = offsetOnSphere(p, side, ROAD_HW + WALK + 0.65 + spec.d / 2);
           const r = Math.hypot(spec.w + extra, spec.d) / 2;
-          if (nearestRoad(dir, ri) > ROAD_HW + WALK + 0.3 + r && clearOf(dir, r * 0.92)) {
+          if (nearestRoad(dir, ri) > ROAD_HW + WALK + 0.3 + r && clearOf(dir, r * 0.92) && inTown(dir) && !wetNear(dir, r + 0.6)) {
             const spin = spinToward(dir, p);
             const b = k.f(spec);
             bake(b.g, dir, spin);
@@ -702,7 +831,7 @@ export function createWorld(canvas) {
   // ---- parks: trees, bushes and benches fill the blocks between streets
   for (let n = 0, placed = 0; placed < 260 && n < 9000; n++) {
     const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
-    if (nearestRoad(d) < ROAD_HW + WALK + 0.9 || !clearOf(d, 0.9)) continue;
+    if (nearestRoad(d) < ROAD_HW + WALK + 0.9 || !clearOf(d, 0.9) || !inTown(d) || wetNear(d, 1.2)) continue;
     const roll = rng();
     if (roll < 0.62) {
       const s = range(0.8, 1.2);
@@ -755,11 +884,13 @@ export function createWorld(canvas) {
     let n = 0;
     for (let tries = 0; n < N && tries < N * 4; tries++) {
       const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
-      if (nearestRoad(d) < ROAD_HW + WALK + 0.15 || !clearOf(d, 0.05)) continue;
+      if (nearestRoad(d) < ROAD_HW + WALK + 0.15 || !clearOf(d, 0.05) || terrain.sandAt(d)) continue;
+      if (terrain.zoneAt(d).key === "works" && rng() < 0.6) continue;
+      const lift = terrain.landAt(d);
       for (let b = 0; b < 3 && n < N; b++, n++) {
         q.setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromEuler(e.set((rng() - 0.5) * 0.9, rng() * 6, (rng() - 0.5) * 0.9)));
         const k = range(0.7, 1.3);
-        m.compose(d.clone().multiplyScalar(R + 0.08), q, sc.set(k, k * range(0.8, 1.4), k));
+        m.compose(d.clone().multiplyScalar(R + lift + 0.08), q, sc.set(k, k * range(0.8, 1.4), k));
         tufts.setMatrixAt(n, m);
       }
     }
@@ -856,6 +987,9 @@ export function createWorld(canvas) {
     sun.intensity = mixN(a, b, k, "sunI");
     litWindows.material.emissiveIntensity = mixN(a, b, k, "glow");
     pools.material.opacity = 0.42 * mixN(a, b, k, "glow");
+    // Water takes the sky's light: dimmer and bluer at night, warmer at dusk.
+    WATER.light.value = 0.15 + 0.85 * Math.pow(mixN(a, b, k, "hemiI") / 1.25, 1.5);
+    WATER.tint.value.copy(hemi.color).multiplyScalar(1 / Math.max(hemi.color.r, hemi.color.g, hemi.color.b));
     pools.visible = pools.material.opacity > 0.01;
     u.stars.value = mixN(a, b, k, "stars");
     night = mixN(a, b, k, "glow");
@@ -868,6 +1002,7 @@ export function createWorld(canvas) {
       hemi.intensity *= 1 - 0.22 * rain;
       sun.intensity *= 1 - 0.55 * rain;
       u.stars.value *= 1 - rain;
+      WATER.light.value *= 1 - 0.2 * rain;
     }
     u.overcast.value = rain;
   }
@@ -920,7 +1055,14 @@ export function createWorld(canvas) {
   setTimeOfDay(0.42);
 
   const rot4 = new THREE.Matrix4();
+  let lastFrame = 0;
   function render(t) {
+    const dt = Math.min(0.05, Math.max(0, t - lastFrame));
+    lastFrame = t;
+    WATER.time.value = t;
+    for (const fn of animators) fn(t, night, dt);
+    spray.update(dt, 1 - 0.5 * night);
+    smoke.update(dt, 1 - 0.55 * night);
     stepRain(t);
     camera.updateMatrixWorld();
     world.updateMatrixWorld();
@@ -946,15 +1088,13 @@ export function createWorld(canvas) {
 
   return {
     scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
-    /// Whether a spot on the planet (with this much room around it) is inside something solid.
-    blocked(d, r) {
-      return obstacles.some((o) => {
-        if (d.dot(o.d) < o.cos) return false;
-        if (o.kind === "circle") return arc(d, o.d) < o.r + r;
-        const v = d.clone().sub(o.d).multiplyScalar(R);
-        return Math.abs(v.dot(o.right)) < o.hw + r && Math.abs(v.dot(o.front)) < o.hd + r;
-      });
-    },
+    /// Whether a spot on the planet (with this much room around it) is inside something solid or under water.
+    blocked,
+    /// The lie of the land: places, ground and water heights, what you can stand on.
+    terrain,
+    /// People who live out in the places (beach, pier, shrine, cabin, works), golden-stamp spots up
+    /// high, and where the loud things are (the sea, the falls, the works) for the ambience.
+    npcs, stampSpots, ambient,
     /// Draw at this fraction (0.5..1) of the screen's full resolution.
     setQuality(q) {
       quality = q;

@@ -1,5 +1,6 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { createWorld, R, UP, ROAD_HW, WALK, arc, texFromCanvas } from "./world.js";
+import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
+import { SEA_LEVEL, STEP } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
 import { courier } from "./traits.js";
@@ -125,11 +126,20 @@ function autoAvatar(s) {
 }
 
 W.addresses.forEach((a, i) => {
-  a.name = NAMES[i % NAMES.length];
+  if (!a.landmark) a.name = NAMES[i % NAMES.length];
   a.no = i + 1;
 });
 
 const dust = createDust(world, W.noNormals);
+const splash = createDust(world, W.noNormals, 30, 0xeef8f6);
+/// Water kicked up round the courier's feet (and a splash sound).
+function splashAt(size, n) {
+  world.updateMatrixWorld();
+  const at = world.worldToLocal(player.group.position.clone());
+  at.setLength(R + SEA_LEVEL + 0.02);
+  splash.puff(at, at.clone().normalize(), { n, size, spread: 1.1, life: 0.45 });
+  sounds.splash(n > 2 ? 1 : 0.5);
+}
 /// Kick up dust at the courier's feet (it stays put on the ground as they move on).
 function kick(opts) {
   world.updateMatrixWorld();
@@ -375,12 +385,15 @@ function yaw(phi) {
 function localPos() {
   return UP.clone().applyQuaternion(playerQ.clone().invert());
 }
-/// Push a spot on the planet (a unit vector) out of anything solid, so you slide along walls.
-function pushOut(p) {
+/// Whether an obstacle stops you at height y here (railings only up on the deck, cliffs only below
+/// their top, and never on the stairs cut into them).
+const solidAt = (o, p, y) => !((o.y1 !== undefined && y >= o.y1) || (o.y0 !== undefined && y < o.y0) || (o.except && W.terrain.inRamp(o.except, p, 0.2) !== null));
+/// Push a spot on the planet (a unit vector) out of anything solid at height y, so you slide along walls.
+function pushOut(p, y = bodyY) {
   const v = new THREE.Vector3();
   for (let pass = 0; pass < 2; pass++) {
     for (const o of W.obstacles) {
-      if (p.dot(o.d) < o.cos) continue;
+      if (p.dot(o.d) < o.cos || !solidAt(o, p, y)) continue;
       if (o.kind === "circle") {
         const gap = arc(p, o.d) - (o.r + BODY_R);
         if (gap >= 0) continue;
@@ -400,7 +413,7 @@ function pushOut(p) {
     }
     for (const b of life.bodies) {
       const gap = arc(p, b.d) - (b.r + BODY_R);
-      if (gap >= 0 || b.d.dot(p) < 0.99) continue;
+      if (gap >= 0 || b.d.dot(p) < 0.99 || Math.abs((b.y ?? 0) - y) > 1.2) continue;
       v.subVectors(p, b.d);
       v.addScaledVector(p, -v.dot(p));
       if (v.lengthSq() < 1e-12) continue;
@@ -413,7 +426,7 @@ function pushOut(p) {
 let waveT = 0;
 function interact() {
   const me = localPos();
-  const who = life.nearest(me, 2.4);
+  const who = life.nearest(me, 2.4, bodyY);
   if (!who) {
     waveT = 1.6;
     life.waveBack(me);
@@ -453,7 +466,7 @@ let leanSide = 0, leanFwd = 0, lastV = 0;
 const leanE = new THREE.Euler(0, 0, 0, "YXZ");
 function placePlayer(dt, v, turnRate) {
   const lag = world.quaternion.clone().multiply(playerQ.clone().invert());
-  player.group.position.copy(UP).applyQuaternion(lag).multiplyScalar(R + footY + jumpY);
+  player.group.position.copy(UP).applyQuaternion(lag).multiplyScalar(R + bodyY);
   const accel = (v - lastV) / Math.max(dt, 1e-3);
   lastV = v;
   const wheels = player.ride ? 1.8 : 1;
@@ -476,14 +489,14 @@ const spawnQ = (() => {
 const TITLE_CAM = { pos: new THREE.Vector3(0, 6, 74), look: new THREE.Vector3(0, 0, 0) };
 // The camera you asked for (pitch, dist) and the one in use, which lifts over buildings that would
 // get in the way, or comes in closer, and eases back once the view is clear.
-let camPitch = 0.56, camDist = 8, camDodge = 0;
+let camPitch = 0.56, camDist = 8, camDodge = 0, camLift = 0; // camLift rises and falls with the courier
 const followCam = () => ({
-  pos: new THREE.Vector3(0, R + 1.0 + Math.sin(camPitch) * camDist, Math.cos(camPitch) * camDist),
-  look: new THREE.Vector3(0, R + 1.05, -1.8),
+  pos: new THREE.Vector3(0, R + camLift + 1.0 + Math.sin(camPitch) * camDist, Math.cos(camPitch) * camDist),
+  look: new THREE.Vector3(0, R + camLift + 1.05, -1.8),
 });
-/// Whether the view from this camera to the courier is clear of buildings.
+/// Whether the view from this camera to the courier is clear of buildings (and tanks and cliffs).
 function camClear(walls, inv, p, d) {
-  const from = new THREE.Vector3(0, R + 1.0, 0), to = new THREE.Vector3(0, R + 1.0 + Math.sin(p) * d, Math.cos(p) * d);
+  const from = new THREE.Vector3(0, R + camLift + 1.0, 0), to = new THREE.Vector3(0, R + camLift + 1.0 + Math.sin(p) * d, Math.cos(p) * d);
   const q = new THREE.Vector3(), v = new THREE.Vector3();
   for (let s = 0.1; s <= 1.0001; s += 0.075) {
     q.lerpVectors(from, to, s).applyQuaternion(inv);
@@ -491,6 +504,10 @@ function camClear(walls, inv, p, d) {
     q.divideScalar(len);
     for (const o of walls) {
       if (h > o.wall.h + 0.35 || q.dot(o.d) < o.cos) continue;
+      if (o.kind === "circle") {
+        if (arc(q, o.d) < o.r + 0.3) return false;
+        continue;
+      }
       v.subVectors(q, o.d).multiplyScalar(R);
       if (Math.abs(v.dot(o.right)) < o.hw + 0.3 && Math.abs(v.dot(o.front)) < o.wall.hd + 0.3) return false;
     }
@@ -540,10 +557,12 @@ $("begin").addEventListener("click", async () => {
 const clock = new THREE.Clock();
 const camPos = TITLE_CAM.pos.clone(), camLook = TITLE_CAM.look.clone();
 const spin = new THREE.Vector3(0.2, 1, 0.12).normalize();
-let moveSpeed = 0, footY = 0.03;
-// Jumping: a quick hop with a stretch on the way up and a squash on landing.
+let moveSpeed = 0;
+// Height: bodyY is where the feet are (metres above the plain); footY what's underfoot (street,
+// stairs, deck, river bed) and jumpY how far above it you are. Jumping is a quick hop with a stretch
+// on the way up and a squash on landing; walk off an edge and you fall.
 const JUMP_V = 5.6, GRAVITY = 18;
-let jumpY = 0, jumpV = 0, jumpBuffer = 0, landSquash = 0, skidIn = 0;
+let bodyY = 0.04, footY = 0.04, jumpY = 0, jumpV = 0, jumpBuffer = 0, landSquash = 0, skidIn = 0, wading = false, splashIn = 0;
 function jump() {
   // Remember the press for a moment, so pressing just before landing still jumps again.
   if (mode === "play" && !dialog) jumpBuffer = 0.15;
@@ -638,6 +657,7 @@ function frame() {
     }
     // Quick to get going and quicker to stop; heavier on wheels, and only a little steering in mid-air.
     const heavy = player.ride ? 0.45 : 1;
+    if (wading) want.multiplyScalar(0.7); // slower through the water
     vel.lerp(want, 1 - Math.exp(-dt * (steering ? 9 : 12) * heavy * (jumpY > 0 ? 0.35 : 1)));
     dist = step(dt);
     const v = vel.length();
@@ -659,28 +679,43 @@ function frame() {
     moveSpeed = u <= SPEED ? (0.62 * u) / SPEED : Math.min(1, 0.62 + (0.38 * (u - SPEED)) / (RUN - SPEED));
 
     const p = localPos();
-    // Step up onto sidewalks.
-    const rd = W.nearestRoad(p);
-    const groundY = rd < ROAD_HW ? 0.04 : rd < ROAD_HW + WALK ? 0.16 : 0.0;
-    footY += (groundY - footY) * (1 - Math.exp(-dt * 14));
+    // What's underfoot: the highest thing you can stand on from here (in the air, only what you're above).
+    let air = jumpV !== 0 || bodyY > footY + 0.02;
+    const ground = W.terrain.surfaceAt(p, bodyY, air ? 0.05 : STEP);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
-    if (jumpBuffer > 0 && jumpY === 0 && !dialog) {
+    if (jumpBuffer > 0 && !air && !dialog) {
       jumpBuffer = 0;
       jumpV = JUMP_V;
-      jumpY = 1e-4;
+      air = true;
       sounds.jump();
     }
-    if (jumpY > 0) {
+    // Walked off an edge: fall.
+    if (!air && ground < bodyY - 0.3) air = true;
+    if (air) {
       jumpV -= GRAVITY * dt;
-      jumpY += jumpV * dt;
-      if (jumpY <= 0) {
-        jumpY = 0;
+      bodyY += jumpV * dt;
+      if (bodyY <= ground) {
         landSquash = Math.min(1, -jumpV / JUMP_V);
-        sounds.land(landSquash);
+        if (landSquash > 0.15) {
+          sounds.land(landSquash);
+          landed = true;
+        }
+        bodyY = ground;
         jumpV = 0;
-        landed = true;
       }
+    } else bodyY += (ground - bodyY) * (1 - Math.exp(-dt * 14)); // kerbs and stairs
+    footY = ground;
+    jumpY = Math.max(0, bodyY - ground);
+    // Feet in the water: slower, and splashing.
+    const water = W.terrain.waterAt(p);
+    wading = water !== null && bodyY < water + 0.05;
+    splashIn -= dt;
+    if (wading && v > 0.6 && splashIn <= 0) {
+      splashAt(0.22, 1);
+      splashIn = 0.18;
     }
+    if (landed && water !== null && bodyY < water + 0.05) splashAt(0.4, 8);
+    camLift += (bodyY - camLift) * (1 - Math.exp(-dt * 5));
     landSquash *= Math.exp(-dt * 11);
     const stretch = 1 + (jumpY > 0 ? 0.1 * Math.min(1, Math.abs(jumpV) / JUMP_V) : 0) - 0.24 * landSquash;
     player.group.scale.set(1 / Math.sqrt(stretch), stretch, 1 / Math.sqrt(stretch));
@@ -688,7 +723,7 @@ function frame() {
     world.quaternion.slerp(playerQ, 1 - Math.exp(-dt * 7 * Math.sqrt(player.speed)));
     placePlayer(dt, v, turnRate);
     // Dust: a burst on landing, and a trail when skidding round to face the other way.
-    if (landed) kick({ n: 8, size: 0.4, spread: 1.4, life: 0.55 });
+    if (landed && !wading) kick({ n: 8, size: 0.4, spread: 1.4, life: 0.55 });
     skidIn -= dt;
     if (steering && v > 2 && want.dot(vel) < 0 && skidIn <= 0 && jumpY === 0) {
       kick({ n: 2, size: 0.26, spread: 0.7, life: 0.4 });
@@ -709,6 +744,7 @@ function frame() {
       }
     }
     compass(p);
+    placeTitle(p, dt);
 
     steerCamera(dt);
     const f = followCam();
@@ -719,10 +755,11 @@ function frame() {
 
   const stepped = player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4), dist);
   // A puff with each running step.
-  if (stepped && moveSpeed > 0.8 && mode === "play") kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
+  if (stepped && moveSpeed > 0.8 && mode === "play" && !wading) kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
   dust.update(dt, 1 - 0.55 * W.night);
   sparkle.update(dt);
-  const got = stamps.update(dt, t, { me: localPos(), chest: footY + jumpY + 0.85, active: mode === "play" && !dialog });
+  splash.update(dt, 1 - 0.5 * W.night);
+  const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog });
   if (got) collected(got);
   life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
   waveT = Math.max(0, waveT - dt);
@@ -733,7 +770,10 @@ function frame() {
   }
   W.setRain(weather.rain);
   W.setTimeOfDay(timeOfDay);
-  sounds.update(dt, { speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, step: stepped && mode === "play" });
+  sounds.update(dt, {
+    speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, step: stepped && mode === "play" && !wading,
+    ...(mode === "play" ? nearby(localPos()) : {}),
+  });
   for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
   if (dialog) {
     const line = dialog.lines[dialog.i];
@@ -745,9 +785,34 @@ function frame() {
 
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  W.setCutaway(mode === "play" ? player.group.position.clone().multiplyScalar((R + footY + jumpY + 0.9) / (R + footY + jumpY)) : null);
+  W.setCutaway(mode === "play" ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
   W.render(t);
   requestAnimationFrame(frame);
+}
+
+/// The name of the place you're in, shown big for a few seconds when you arrive (once you've been
+/// there for a moment, so walking along a border doesn't flicker).
+let place = null, placeNext = null, placeFor = 0;
+function placeTitle(p, dt) {
+  const z = W.terrain.zoneAt(p);
+  if (z.key === place) return void (placeNext = null);
+  if (z.key !== placeNext) [placeNext, placeFor] = [z.key, 0];
+  placeFor += dt;
+  if (placeFor < 0.8 && place !== null) return;
+  place = z.key;
+  const el = $("place");
+  el.textContent = z.name;
+  el.classList.remove("show");
+  void el.offsetWidth; // restart the animation
+  el.classList.add("show");
+}
+/// How loud the sea, the falls and the works are from here (0 far … 1 right there).
+function nearby(p) {
+  const A = W.ambient, out = { sea: 0, falls: 0, works: 0, woods: W.terrain.zoneAt(p).key === "woods" ? 1 : 0 };
+  if (A.sea) out.sea = 1 - Math.min(1, Math.max(0, (arc(p, A.sea.d) - A.sea.r * R) / 16));
+  if (A.falls?.length) out.falls = 1 - Math.min(1, Math.max(0, (Math.min(...A.falls.map((f) => arc(p, f))) - 2) / 16));
+  if (A.works) out.works = 1 - Math.min(1, Math.max(0, (arc(p, A.works.d) - A.works.r) / 12));
+  return out;
 }
 
 /// Arrow toward the nearest letter's door, or back to the post office.

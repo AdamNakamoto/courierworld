@@ -474,6 +474,14 @@ export function createCharacter(p) {
       }
       break;
     }
+    case "hardhat": {
+      const dome = add(head, new THREE.SphereGeometry(0.218, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), 0xf4f1ea, 0, 0.21, -0.01);
+      dome.scale.y = 0.85;
+      const brim = add(head, new THREE.CylinderGeometry(0.25, 0.25, 0.02, 20), 0xf4f1ea, 0, 0.215, 0.02);
+      brim.scale.z = 1.08;
+      add(head, new THREE.BoxGeometry(0.03, 0.08, 0.36), 0xe8b93a, 0, 0.36, -0.01);
+      break;
+    }
     case "goggles": {
       const strapG = add(head, new THREE.TorusGeometry(0.2, 0.018, 6, 24), 0x6c5446, 0, 0.27, 0);
       strapG.rotation.x = Math.PI / 2 - 0.25;

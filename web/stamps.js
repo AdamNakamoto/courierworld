@@ -3,7 +3,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, ROAD_HW, WALK, arc, toon, mulberry32, texFromCanvas, nearestRoad } from "./world.js";
 
-const STORE = "courier:stamps";
+const STORE = "courier:stamps2"; // the planet grew new places, so the stamps moved
 export const STAMPS = 15;
 
 function loadFound() {
@@ -45,25 +45,28 @@ export function createStamps(W) {
     return new THREE.SpriteMaterial({ map: texFromCanvas(c), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
   })();
   const stamps = [];
-  for (let tries = 0; stamps.length < STAMPS && tries < 6000; tries++) {
-    const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
-    const nr = nearestRoad(d);
-    // In the open (not up in a tree), and spread out round the planet.
-    if (nr < ROAD_HW + 0.3 || W.blocked(d, 1.6) || arc(d, W.spawn.dir) < 10 || stamps.some((s) => arc(s.d, d) < 7)) continue;
-    const ground = nr < ROAD_HW + WALK ? 0.16 : 0;
-    const high = stamps.length % 5 >= 3; // two in five need a jump
+  const place = (d, ground, high) => {
     const mesh = stampMesh();
     const halo = new THREE.Sprite(glow);
     halo.scale.set(1.3, 1.3, 1);
     mesh.add(halo);
     mesh.scale.setScalar(1.5);
     W.noNormals.push(halo);
-    const id = stamps.length;
+    const id = stamps.length, y = ground + (high ? 1.75 : 0.85);
     mesh.visible = !found.has(id);
-    mesh.position.copy(d).multiplyScalar(R + ground + (high ? 1.75 : 0.85));
+    mesh.position.copy(d).multiplyScalar(R + y);
     mesh.quaternion.copy(W.frameAt(d, rng() * 6));
     W.world.add(mesh);
-    stamps.push({ id, d, mesh, base: mesh.position.clone(), y: ground + (high ? 1.75 : 0.85), ph: rng() * 6 });
+    stamps.push({ id, d, mesh, base: mesh.position.clone(), y, ph: rng() * 6 });
+  };
+  // A few are up high: on the shrine hill, the end of the pier, the works catwalk, the footbridge.
+  for (const s of W.stampSpots.slice(0, 5)) place(s.d.clone().normalize(), s.y, false);
+  for (let tries = 0; stamps.length < STAMPS && tries < 6000; tries++) {
+    const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
+    const nr = nearestRoad(d);
+    // In the open (not up in a tree), and spread out round the planet.
+    if (nr < ROAD_HW + 0.3 || W.blocked(d, 1.6) || arc(d, W.spawn.dir) < 10 || stamps.some((s) => arc(s.d, d) < 7)) continue;
+    place(d, W.terrain.baseAt(d), stamps.length % 5 >= 3); // two in five need a jump
   }
   return {
     get found() { return found.size; },

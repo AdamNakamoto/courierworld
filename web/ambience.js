@@ -18,7 +18,8 @@ function saveEnabled(on) {
 
 export function createAmbience() {
   let enabled = loadEnabled();
-  let ctx = null, master, verbSend, noise, breeze, rainBed;
+  let ctx = null, master, verbSend, noise, breeze, rainBed, waves, waveSwell, roar, hum;
+  let clankIn = 3;
   let birdIn = 2, cricketIn = 1, dripIn = 0, rideKind, rideLoop = null;
 
   function build() {
@@ -64,6 +65,46 @@ export function createAmbience() {
     src.connect(lp).connect(breeze).connect(master);
     src.start();
     swell.start();
+
+    // The sea: a slow wash of surf, swelling in and out. Silent until you're near the bay.
+    const loop = (filterType, freq, q, rate = 1) => {
+      const s = ctx.createBufferSource();
+      s.buffer = noise;
+      s.loop = true;
+      s.playbackRate.value = rate;
+      const f = ctx.createBiquadFilter();
+      f.type = filterType;
+      f.frequency.value = freq;
+      f.Q.value = q;
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      s.connect(f).connect(g).connect(master);
+      s.start(0, Math.random() * 1.5);
+      return { f, g };
+    };
+    waves = loop("lowpass", 700, 0.5, 0.8);
+    waveSwell = ctx.createOscillator();
+    waveSwell.frequency.value = 0.11;
+    const swellDepth2 = ctx.createGain();
+    swellDepth2.gain.value = 420;
+    waveSwell.connect(swellDepth2).connect(waves.f.frequency);
+    waveSwell.start();
+    // The falls: a steady, bright roar.
+    roar = loop("bandpass", 1500, 0.35, 1.1);
+    // The works: a low machine hum.
+    hum = (() => {
+      const o = ctx.createOscillator();
+      o.type = "sawtooth";
+      o.frequency.value = 58;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 180;
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      o.connect(lp).connect(g).connect(master);
+      o.start();
+      return { g };
+    })();
 
     // Rain: a soft, wide hiss of countless drops; silent until it showers.
     rainBed = ctx.createGain();
@@ -268,7 +309,8 @@ export function createAmbience() {
     },
     /// Each frame. speed: 0 still, 0.62 walking, 1 running. ride: null on foot, else the ride's key.
     /// night: 0 day to 1 night. rain: 0 dry to 1 a proper shower. step: true as a foot comes down.
-    update(dt, { speed, ride, night, rain = 0, step = false }) {
+    /// sea, falls, works: how near the bay, the waterfalls and the works are (0..1); woods: in the woods.
+    update(dt, { speed, ride, night, rain = 0, step = false, sea = 0, falls = 0, works = 0, woods = 0 }) {
       if (!live()) return;
       if (step && !ride) footstep(speed);
       // The ride's loop.
@@ -281,8 +323,24 @@ export function createAmbience() {
         rideLoop.gain.gain.setTargetAtTime(speed > 0.05 ? 0.25 + 0.75 * speed : 0, ctx.currentTime, 0.15);
         rideLoop.pitch?.(speed);
       }
-      // Birds by day, crickets by night; both mostly keep quiet in the rain.
-      birdIn -= dt;
+      // The places: surf, the falls, the works (with a clank now and then).
+      const now = ctx.currentTime;
+      waves.g.gain.setTargetAtTime(0.22 * sea * sea, now, 0.4);
+      roar.g.gain.setTargetAtTime(0.2 * falls * falls, now, 0.4);
+      hum.g.gain.setTargetAtTime(0.06 * works, now, 0.4);
+      clankIn -= dt;
+      if (clankIn <= 0) {
+        clankIn = rand(2.5, 7);
+        if (works > 0.3) {
+          const out = panner(rand(-0.7, 0.7));
+          out.connect(master);
+          out.connect(verbSend);
+          tone(now + 0.01, "triangle", rand(180, 320), 0.06 * works, 0.4, out, rand(150, 260));
+          burst(now + 0.01, 0.08, "bandpass", rand(2000, 3500), 3, 0.05 * works, out);
+        }
+      }
+      // Birds by day (more of them in the woods), crickets by night; both mostly keep quiet in the rain.
+      birdIn -= dt * (1 + 1.5 * woods);
       if (birdIn <= 0) {
         if (chance((1 - night) * (1 - 0.85 * rain))) bird();
         birdIn = rand(2.5, 7);
@@ -300,6 +358,15 @@ export function createAmbience() {
         if (rain > 0.05) drip();
         dripIn = rand(0.02, 0.12) / Math.max(0.2, rain);
       }
+    },
+    /// Feet in the water: a little slosh (level 1 for a big splash).
+    splash(level = 0.5) {
+      if (!live()) return;
+      const out = panner(rand(-0.2, 0.2));
+      out.connect(master);
+      const t = ctx.currentTime + 0.005;
+      burst(t, 0.12 + 0.2 * level, "bandpass", rand(900, 1500), 0.9, 0.08 + 0.12 * level, out, rand(0.7, 1));
+      burst(t + 0.03, 0.08, "highpass", 3000, 0.7, 0.03 + 0.05 * level, out);
     },
     /// A golden stamp: a bright little run up the scale.
     collect() {
