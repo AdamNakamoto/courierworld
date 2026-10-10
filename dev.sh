@@ -55,6 +55,8 @@ if [ "$FORK" = 1 ]; then
   # contracts that forward any ETH they receive. Clear them so the fork's dev accounts are plain wallets.
   for a in "${ACCOUNTS[@]}"; do cast rpc anvil_setCode "$a" 0x --rpc-url "$RPC" >/dev/null; done
 fi
+# The reveal mixes in the previous block's hash, so a fresh chain needs a block or two first.
+cast rpc anvil_mine 2 --rpc-url "$RPC" >/dev/null
 # A throwaway reveal secret for this local chain only. The dev players (accounts 2-9) get couriers.
 export SECRET=$((RANDOM * 32768 + RANDOM))
 export FEE_RECIPIENT=${ACCOUNTS[1]} TREASURY=${ACCOUNTS[1]}

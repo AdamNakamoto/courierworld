@@ -4,6 +4,7 @@ import { createCharacter, COURIER, villager } from "./character.js";
 import { createRide } from "./rides.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
+import { createMusic } from "./music.js";
 import { createOffice } from "./office.js";
 
 const $ = (id) => document.getElementById(id);
@@ -232,12 +233,29 @@ function hud() {
 
 // ---------------------------------------------------------------- input
 
+const music = createMusic();
+function musicButton() {
+  $("musicBtn").classList.toggle("off", !music.enabled);
+  $("musicBtn").setAttribute("aria-pressed", String(music.enabled));
+  $("musicBtn").title = music.enabled ? "Music on (M)" : "Music off (M)";
+}
+musicButton();
+$("musicBtn").addEventListener("click", () => {
+  music.toggle();
+  musicButton();
+});
+
 const keys = new Set();
 const typing = (e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
 addEventListener("keydown", (e) => {
   if (typing(e)) return;
   if (e.key.toLowerCase() === "p" && office && mode === "play") {
     office.show($("office").hidden);
+    return;
+  }
+  if (e.key.toLowerCase() === "m" && mode !== "title") {
+    music.toggle();
+    musicButton();
     return;
   }
   if (dialog && (e.key === " " || e.key === "Enter")) {
@@ -354,6 +372,7 @@ let mode = "title"; // title | intro | play
 let intro = null;
 $("begin").addEventListener("click", async () => {
   if (mode !== "title") return;
+  music.start(); // first, while the click still counts as permission to play sound
   // On a real chain you log in with your wallet before playing.
   const chain = await chainReady;
   if (chain && chain.browserWallet && !chain.account) {
