@@ -77,6 +77,7 @@ function dispose(group) {
     if (o.isMesh) {
       o.geometry.dispose();
       if (!o.material.userData.shared) o.material.dispose();
+      if (o.isSkinnedMesh) o.skeleton.dispose();
     }
   });
 }

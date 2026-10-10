@@ -56,8 +56,9 @@ const CUT = {
 function cutaway(material) {
   material.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, CUT);
+    // Declared just before main(): not every built-in shader includes <common> (the normal one doesn't).
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vCutWorld;\nattribute float sway;\nuniform float windTime;")
+      .replace("void main() {", "varying vec3 vCutWorld;\nattribute float sway;\nuniform float windTime;\nvoid main() {")
       .replace("#include <begin_vertex>", `#include <begin_vertex>
         if (sway > 0.0) {
           float ph = dot(transformed, vec3(0.37, 0.21, 0.29));
@@ -72,8 +73,10 @@ function cutaway(material) {
         #endif
         vCutWorld = (modelMatrix * cutW).xyz;`);
     sh.fragmentShader = sh.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vCutWorld;\nuniform vec3 cutCam, cutTarget;\nuniform float cutR;")
-      .replace("void main() {", `void main() {
+      .replace("void main() {", `varying vec3 vCutWorld;
+      uniform vec3 cutCam, cutTarget;
+      uniform float cutR;
+      void main() {
         if (cutR > 0.0 && length(vCutWorld) > ${(R + 0.3).toFixed(2)}) {
           vec3 ab = cutTarget - cutCam;
           float h = dot(vCutWorld - cutCam, ab) / dot(ab, ab);
@@ -781,7 +784,7 @@ export function createWorld(canvas) {
       near: { value: camera.near },
       far: { value: camera.far },
       time: { value: 0 },
-      thickness: { value: dpr * 1.15 },
+      thickness: { value: dpr * 1.4 },
       invProj: { value: new THREE.Matrix4() },
       camRot: { value: new THREE.Matrix3() },
       worldInv: { value: new THREE.Matrix3() },
@@ -808,7 +811,7 @@ export function createWorld(canvas) {
     colorRT.setSize(Math.round(w * px), Math.round(h * px));
     normalRT.setSize(Math.round(w * px), Math.round(h * px));
     post.uniforms.res.value.set(Math.round(w * px), Math.round(h * px));
-    post.uniforms.thickness.value = px * 1.15;
+    post.uniforms.thickness.value = px * 1.4;
     camera.aspect = w / h;
     // Keep a fair width of view on tall phone screens; wide screens use a narrower, flatter lens.
     camera.fov = Math.min(70, Math.max(40, (2 * Math.atan(Math.tan(0.49) / camera.aspect) * 180) / Math.PI));

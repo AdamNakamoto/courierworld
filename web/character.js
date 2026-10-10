@@ -1,7 +1,9 @@
-// Characters built from simple shapes and cel-shaded, so the ink pass outlines
-// them like the rest of the world. Faces +z; feet at the origin; about 1.6 tall.
+// Characters with a soft, skinned body (so knees, elbows and the waist bend smoothly and straps
+// lie flat on it) and a head built from simple shapes, all cel-shaded so the ink pass outlines them
+// like the rest of the world. Faces +z; feet at the origin; about 1.6 tall.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
+import { RoundedBoxGeometry } from "https://esm.sh/three@0.160.0/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { toon, mulberry32 } from "./world.js";
 
 // One vertex-coloured material shared by every character's merged parts.
@@ -16,7 +18,7 @@ export function compact(root, keep = new Set()) {
     if (!o.isMesh) joints.push(o);
   });
   for (const j of joints) {
-    const parts = j.children.filter((c) => c.isMesh && !keep.has(c) && !c.children.length && c.material.emissive?.getHex() === 0);
+    const parts = j.children.filter((c) => c.isMesh && !c.isSkinnedMesh && !keep.has(c) && !c.children.length && c.material.emissive?.getHex() === 0);
     if (parts.length < 2) continue;
     let geos = parts.map((m) => {
       m.updateMatrix();
@@ -61,10 +63,148 @@ export function villager(seed) {
   };
 }
 
+// ---------------------------------------------------------------- soft body
+
+// One vertex-coloured, skinned material shared by every character's body.
+const SKIN = toon(0xffffff, { vertexColors: true });
+SKIN.userData.shared = true;
+
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+/// Radii of a ring profile [{ y, rx, rz }] (top to bottom) at height y.
+function radiiAt(rings, y) {
+  if (y >= rings[0].y) return [rings[0].rx, rings[0].rz];
+  for (let i = 1; i < rings.length; i++) {
+    const a = rings[i - 1], b = rings[i];
+    if (y >= b.y) {
+      const k = (y - b.y) / (a.y - b.y);
+      return [b.rx + (a.rx - b.rx) * k, b.rz + (a.rz - b.rz) * k];
+    }
+  }
+  const z = rings[rings.length - 1];
+  return [z.rx, z.rz];
+}
+
+/// A body made of rings of vertices stacked along the bones and skinned to them, so knees, elbows,
+/// waist and neck bend smoothly instead of hinging between separate parts.
+class Skin {
+  constructor() {
+    this.pos = []; this.col = []; this.si = []; this.sw = []; this.idx = []; this.n = 0;
+  }
+  vertex(x, y, z, color, weights) {
+    this.pos.push(x, y, z);
+    this.col.push(color.r, color.g, color.b);
+    // Up to four bones, strongest first, weights summing to 1.
+    const w = weights.filter(([, v]) => v > 1e-4).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const sum = w.reduce((s, [, v]) => s + v, 0) || 1;
+    for (let i = 0; i < 4; i++) {
+      this.si.push(w[i] ? w[i][0] : 0);
+      this.sw.push(w[i] ? w[i][1] / sum : 0);
+    }
+    return this.n++;
+  }
+  /// A tube through rings [{ y, rx, rz }] (top to bottom) around (cx, cz).
+  tube(rings, hex, weigh, { cx = 0, cz = 0, segs = 14, capTop = false, capBottom = false } = {}) {
+    const color = new THREE.Color(hex), start = this.n;
+    for (const r of rings) {
+      for (let i = 0; i < segs; i++) {
+        const a = (i / segs) * Math.PI * 2;
+        const x = cx + r.rx * Math.sin(a), z = cz + r.rz * Math.cos(a);
+        this.vertex(x, r.y, z, color, weigh(r.y, x));
+      }
+    }
+    for (let j = 0; j < rings.length - 1; j++) {
+      for (let i = 0; i < segs; i++) {
+        const a = start + j * segs + i, b = start + j * segs + ((i + 1) % segs);
+        const c = a + segs, d = b + segs;
+        this.idx.push(a, c, b, b, c, d);
+      }
+    }
+    const cap = (j, y, flip) => {
+      const mid = this.vertex(cx, y, cz, color, weigh(y, cx));
+      for (let i = 0; i < segs; i++) {
+        const a = start + j * segs + i, b = start + j * segs + ((i + 1) % segs);
+        if (flip) this.idx.push(mid, b, a);
+        else this.idx.push(mid, a, b);
+      }
+    };
+    if (capTop) cap(0, rings[0].y + Math.min(rings[0].rx, rings[0].rz) * 0.4, false);
+    if (capBottom) cap(rings.length - 1, rings[rings.length - 1].y - Math.min(rings[rings.length - 1].rx, rings[rings.length - 1].rz) * 0.4, true);
+  }
+  /// A flat band through `points` (closed loop if `loop`), lying on the surface whose outward
+  /// direction at each point is `out`: a strap hugging the body.
+  band(points, out, width, thick, hex, weigh, loop = true) {
+    const color = new THREE.Color(hex), start = this.n, n = points.length;
+    const t = new THREE.Vector3(), w = new THREE.Vector3(), p = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      const next = points[loop ? (i + 1) % n : Math.min(n - 1, i + 1)], prev = points[loop ? (i - 1 + n) % n : Math.max(0, i - 1)];
+      t.subVectors(next, prev).normalize();
+      w.crossVectors(t, out[i]).normalize().multiplyScalar(width / 2);
+      for (const [side, lift] of [[1, thick], [-1, thick], [-1, 0], [1, 0]]) {
+        p.copy(points[i]).addScaledVector(w, side).addScaledVector(out[i], lift);
+        this.vertex(p.x, p.y, p.z, color, weigh(p.y, p.x));
+      }
+    }
+    const segsN = loop ? n : n - 1;
+    for (let i = 0; i < segsN; i++) {
+      const a = start + i * 4, b = start + ((i + 1) % n) * 4;
+      for (let k = 0; k < 4; k++) {
+        const k2 = (k + 1) % 4;
+        this.idx.push(a + k, b + k, a + k2, a + k2, b + k, b + k2);
+      }
+    }
+  }
+  build() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(this.si, 4));
+    g.setAttribute("skinWeight", new THREE.Float32BufferAttribute(this.sw, 4));
+    g.setIndex(this.idx);
+    g.computeVertexNormals();
+    return g;
+  }
+}
+
+/// A loop round the torso through two points on its front-to-back midline: a strap's path.
+function strapLoop(torso, from, to, inset = 0.016, n = 44) {
+  // The plane through the line from→to that also runs front to back.
+  const slope = (to.y - from.y) / (to.x - from.x);
+  const pts = [], out = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    let y = 1.0, x = 0, z = 0;
+    for (let k = 0; k < 10; k++) {
+      const [rx, rz] = radiiAt(torso, y);
+      x = (rx + inset) * Math.sin(a);
+      z = (rz + inset) * Math.cos(a);
+      y = 0.5 * y + 0.5 * Math.min(torso[0].y - 0.01, Math.max(torso[torso.length - 1].y, from.y + slope * (x - from.x)));
+    }
+    const [rx, rz] = radiiAt(torso, y);
+    pts.push(new THREE.Vector3(x, y, z));
+    out.push(new THREE.Vector3(x / (rx * rx), 0, z / (rz * rz)).normalize());
+  }
+  return { pts, out };
+}
+/// A strap looping up over one shoulder (x = sx), from the chest to the back.
+function shoulderLoop(torso, sx, low, n = 28) {
+  const pts = [], out = [];
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * Math.PI; // 0 front, π back
+    let y = low + (torso[0].y - 0.03 - low) * Math.sin(a);
+    const [rx, rz] = radiiAt(torso, Math.min(y, torso[1].y));
+    const zr = (rz + 0.018) * Math.sqrt(Math.max(0, 1 - (sx * sx) / ((rx + 0.018) * (rx + 0.018))));
+    const z = zr * Math.cos(a);
+    pts.push(new THREE.Vector3(sx, y + 0.02 * Math.sin(a), z));
+    out.push(new THREE.Vector3(0, Math.sin(a), Math.cos(a)).normalize());
+  }
+  return { pts, out };
+}
+
 export function createCharacter(p) {
   const root = new THREE.Group();
-  const body = new THREE.Group();
-  root.add(body);
   const mats = new Map();
   const mat = (c, extra) => {
     const key = extra ? `${c}:${JSON.stringify(extra)}` : c;
@@ -81,108 +221,154 @@ export function createCharacter(p) {
   };
   const pants = p.bottomsStyle === "pants", skirt = p.bottomsStyle === "skirt";
 
-  // ---- legs (pivot at the hip, bending at the knee)
-  const legs = [], knees = [];
+  // ---- skeleton (feet at the origin, facing +z; index 0 of each pair is the right side, x < 0)
+  const bone = (parent, x, y, z) => {
+    const b = new THREE.Bone();
+    b.position.set(x, y, z);
+    parent?.add(b);
+    return b;
+  };
+  const body = bone(null, 0, 0, 0);
+  const pelvis = bone(body, 0, 0.8, 0);
+  const spine = bone(pelvis, 0, 0.14, 0);
+  const chest = bone(spine, 0, 0.14, 0);
+  const neck = bone(chest, 0, 0.13, 0);
+  const head = bone(neck, 0, 0.06, 0);
+  const arms = [], elbows = [], legs = [], knees = [];
   for (const s of [-1, 1]) {
-    const hip = new THREE.Group();
-    hip.position.set(s * 0.085, 0.76, 0);
-    body.add(hip);
-    if (!skirt) add(hip, new THREE.CylinderGeometry(0.083, 0.076, 0.22, 10), p.bottoms, 0, -0.09, 0);
-    const leg = pants ? p.bottoms : p.skin, top = pants ? 0.066 : 0.05, mid = pants ? 0.062 : 0.046, low = pants ? 0.058 : 0.042;
-    add(hip, new THREE.CylinderGeometry(top, mid, 0.2, 8), leg, 0, -0.26, 0);
-    const knee = new THREE.Group();
-    knee.position.set(0, -0.36, 0);
-    hip.add(knee);
-    add(knee, new THREE.SphereGeometry(mid, 8, 6), leg, 0, 0, 0);
-    add(knee, new THREE.CylinderGeometry(mid, low, 0.24, 8), leg, 0, -0.12, 0);
-    if (!pants) add(knee, new THREE.CylinderGeometry(0.047, 0.046, 0.11, 8), p.socks, 0, -0.24, 0);
-    const shoe = add(knee, new THREE.CapsuleGeometry(0.055, 0.1, 4, 8), p.shoes, 0, -0.345, 0.035);
-    shoe.rotation.x = Math.PI / 2;
-    shoe.scale.set(1, 1, 0.72);
-    legs.push(hip);
-    knees.push(knee);
+    const sh = bone(chest, s * 0.19, 0.06, 0);
+    arms.push(sh);
+    elbows.push(bone(sh, 0, -0.22, 0));
   }
+  for (const s of [-1, 1]) {
+    const hip = bone(pelvis, s * 0.085, -0.04, 0);
+    legs.push(hip);
+    knees.push(bone(hip, 0, -0.36, 0));
+  }
+  const bones = [body, pelvis, spine, chest, neck, head, arms[0], elbows[0], arms[1], elbows[1], legs[0], knees[0], legs[1], knees[1]];
+  const B = (b) => bones.indexOf(b);
 
-  // ---- hips, torso, shoulders
-  const pelvis = add(body, new THREE.SphereGeometry(0.16, 14, 10), p.bottoms, 0, 0.8, 0);
-  pelvis.scale.set(1.05, 0.72, 0.86);
-  if (skirt) add(body, new THREE.CylinderGeometry(0.15, 0.25, 0.3, 14), p.bottoms, 0, 0.66, 0);
-  add(body, new THREE.CylinderGeometry(0.135, 0.152, 0.42, 14), p.shirt, 0, 0.99, 0);
-  for (const s of [-1, 1]) add(body, new THREE.SphereGeometry(0.072, 10, 8), p.shirt, s * 0.15, 1.15, 0);
-  const collar = add(body, new THREE.TorusGeometry(0.074, 0.026, 6, 14), p.accent, 0, 1.19, 0);
-  collar.rotation.x = Math.PI / 2;
-  add(body, new THREE.CylinderGeometry(0.045, 0.05, 0.1, 8), p.skin, 0, 1.24, 0); // neck
+  // ---- how each part follows the bones
+  const torsoW = (y) => {
+    const wp = 1 - smooth(0.84, 0.98, y), wc = smooth(0.98, 1.12, y), wn = smooth(1.2, 1.3, y);
+    return [[B(pelvis), wp * (1 - wn)], [B(spine), Math.max(0, 1 - wp - wc) * (1 - wn)], [B(chest), wc * (1 - wn)], [B(neck), wn]];
+  };
+  const neckW = (y) => [[B(chest), 1 - smooth(1.2, 1.3, y)], [B(neck), smooth(1.2, 1.3, y) * (1 - smooth(1.3, 1.36, y))], [B(head), smooth(1.3, 1.36, y)]];
+  // Legs bend at the knee; their tops lean a little toward the hips (hidden under the shorts).
+  const legW = (i, hips = 0.3) => (y) => {
+    const t = smooth(0.33, 0.47, y), top = smooth(0.66, 0.82, y) * hips;
+    return [[B(pelvis), top], [B(legs[i]), t * (1 - top)], [B(knees[i]), (1 - t) * (1 - top)]];
+  };
+  const armW = (i) => (y) => {
+    const t = smooth(0.86, 0.98, y);
+    return [[B(arms[i]), t], [B(elbows[i]), 1 - t]];
+  };
+  const only = (b) => () => [[B(b), 1]];
 
-  // ---- bag
+  // ---- the soft body: torso, shorts, legs, socks, arms and hands, sleeves, neck
+  const sk = new Skin();
+  const ring = (y, rx, rz = rx) => ({ y, rx, rz });
+  // A loose shirt: soft sloping shoulders, flaring out a little to the hem.
+  const torso = [ring(1.245, 0.045, 0.042), ring(1.228, 0.095, 0.078), ring(1.205, 0.132, 0.1), ring(1.17, 0.152, 0.112), ring(1.12, 0.156, 0.118),
+    ring(1.04, 0.152, 0.118), ring(0.95, 0.153, 0.12), ring(0.86, 0.168, 0.13), ring(0.79, 0.182, 0.142)];
+  sk.tube(torso, p.shirt, torsoW, { segs: 18 });
+  sk.tube([ring(1.36, 0.044), ring(1.27, 0.045), ring(1.19, 0.05)], p.skin, neckW, { segs: 10 });
+  if (skirt) {
+    sk.tube([ring(0.87, 0.14, 0.11), ring(0.8, 0.168, 0.135), ring(0.58, 0.26, 0.23)], p.bottoms, only(pelvis), { segs: 18 });
+  } else {
+    sk.tube([ring(0.87, 0.135, 0.105), ring(0.8, 0.155, 0.122), ring(0.72, 0.17, 0.134), ring(0.66, 0.16, 0.126), ring(0.625, 0.105, 0.085)],
+      p.bottoms, only(pelvis), { segs: 18, capBottom: true });
+  }
+  [-1, 1].forEach((s, i) => {
+    const cx = s * 0.085, w = legW(i);
+    if (pants) {
+      // Loose trousers down to the ankle, with a turned-up cuff.
+      sk.tube([ring(0.76, 0.09), ring(0.6, 0.088), ring(0.4, 0.082), ring(0.2, 0.078), ring(0.13, 0.08)], p.bottoms, w, { cx });
+      sk.tube([ring(0.15, 0.087), ring(0.11, 0.087)], p.bottoms, w, { cx });
+      sk.tube([ring(0.13, 0.045), ring(0.06, 0.041)], p.socks, w, { cx, segs: 10, capBottom: true });
+    } else {
+      // Bare legs; shorts flare out over the thighs.
+      sk.tube([ring(0.74, 0.06), ring(0.6, 0.056), ring(0.47, 0.05), ring(0.4, 0.049), ring(0.33, 0.048), ring(0.22, 0.047), ring(0.12, 0.041), ring(0.07, 0.039)],
+        p.skin, w, { cx, segs: 12, capBottom: true });
+      sk.tube([ring(0.165, 0.051), ring(0.06, 0.049)], p.socks, w, { cx, segs: 12 });
+      // The shorts' legs go wholly with the thighs, so they swing instead of stretching.
+      if (!skirt) sk.tube([ring(0.8, 0.094), ring(0.66, 0.104), ring(0.52, 0.116)], p.bottoms, legW(i, 0), { cx: cx * 1.15, segs: 16 });
+    }
+  });
+  [-1, 1].forEach((s, i) => {
+    const cx = s * 0.19, w = armW(i);
+    // Upper arm, elbow, forearm, then a mitten of a hand (flat, palm inward).
+    sk.tube([ring(1.18, 0.05), ring(1.05, 0.048), ring(0.92, 0.043), ring(0.82, 0.04), ring(0.745, 0.036),
+      ring(0.72, 0.034, 0.048), ring(0.68, 0.04, 0.056), ring(0.64, 0.034, 0.05), ring(0.61, 0.016, 0.022)], p.skin, w, { cx, segs: 12 });
+    // Short, roomy sleeves.
+    sk.tube([ring(1.215, 0.068), ring(1.13, 0.078), ring(1.0, 0.088, 0.082)], p.shirt, only(arms[i]), { cx: s * 0.195, segs: 16, capTop: true });
+  });
+
+  // ---- bags: straps lie flat on the body (part of the soft body); the bag itself hangs off a bone
   let bag = null;
-  const strap = (z, rz, color = 0x6e4a2c) => {
-    const s = add(body, new THREE.BoxGeometry(0.045, 0.62, 0.025), color, 0, 0.98, z);
-    s.rotation.z = rz;
+  const rb = (w, h, d, r = 0.025) => new RoundedBoxGeometry(w, h, d, 2, r);
+  const satchelLoop = (hex) => {
+    const { pts, out } = strapLoop(torso, new THREE.Vector3(-0.13, 1.22, 0), new THREE.Vector3(0.16, 0.84, 0));
+    sk.band(pts, out, 0.05, 0.014, hex, torsoW);
   };
   if (p.bag === "satchel" || p.bag === "golden") {
     const gold = p.bag === "golden";
     const leather = gold ? 0xe8b93a : 0xa0693c, flap = gold ? 0xc9962a : 0x7e5230;
-    strap(0.15, 0.72, gold ? 0xb88a22 : 0x6e4a2c);
-    strap(-0.15, -0.72, gold ? 0xb88a22 : 0x6e4a2c);
+    satchelLoop(gold ? 0xb88a22 : 0x6e4a2c);
     bag = new THREE.Group();
-    bag.position.set(0.2, 0.86, 0.02);
-    body.add(bag);
+    bag.position.set(0.2, 0.05, 0.02);
+    pelvis.add(bag);
     const extra = gold ? { emissive: 0x3a2800 } : undefined;
-    add(bag, new THREE.BoxGeometry(0.1, 0.22, 0.26), leather, 0, -0.1, 0, extra);
-    add(bag, new THREE.BoxGeometry(0.11, 0.1, 0.27), flap, 0, -0.02, 0, extra);
-    add(bag, new THREE.BoxGeometry(0.115, 0.04, 0.05), gold ? 0xfff2b0 : 0xe2c46a, 0, -0.07, 0.06);
+    add(bag, rb(0.1, 0.22, 0.26, 0.035), leather, 0, -0.1, 0, extra);
+    add(bag, rb(0.112, 0.1, 0.27, 0.03), flap, 0, -0.02, 0, extra);
+    add(bag, rb(0.118, 0.045, 0.05, 0.012), gold ? 0xfff2b0 : 0xe2c46a, 0, -0.07, 0.06);
   } else if (p.bag === "backpack") {
     for (const s of [-1, 1]) {
-      const st = add(body, new THREE.BoxGeometry(0.04, 0.36, 0.025), 0x4e5a67, s * 0.09, 1.0, 0.145);
-      st.rotation.x = -0.1;
+      const { pts, out } = shoulderLoop(torso, s * 0.085, 0.93);
+      sk.band(pts, out, 0.042, 0.014, 0x4e5a67, torsoW, false);
     }
     bag = new THREE.Group();
-    bag.position.set(0, 0.98, -0.2);
-    body.add(bag);
-    add(bag, new THREE.BoxGeometry(0.28, 0.34, 0.14), p.accent, 0, 0, 0);
-    add(bag, new THREE.BoxGeometry(0.22, 0.14, 0.05), 0xf4efe0, 0, -0.06, -0.08);
-    add(bag, new THREE.BoxGeometry(0.29, 0.06, 0.15), 0x3b4145, 0, 0.14, 0);
+    bag.position.set(0, -0.1, -0.2);
+    chest.add(bag);
+    add(bag, rb(0.28, 0.34, 0.14, 0.05), p.accent, 0, 0, 0);
+    add(bag, rb(0.22, 0.14, 0.05, 0.02), 0xf4efe0, 0, -0.06, -0.08);
+    add(bag, rb(0.29, 0.06, 0.15, 0.025), 0x3b4145, 0, 0.14, 0);
   } else if (p.bag === "tote") {
-    strap(0.14, 0.2, 0xd8cdb0);
+    const { pts, out } = shoulderLoop(torso, 0.1, 0.86);
+    sk.band(pts, out, 0.04, 0.012, 0xd8cdb0, torsoW, false);
     bag = new THREE.Group();
-    bag.position.set(0.17, 0.76, 0.06);
-    body.add(bag);
-    add(bag, new THREE.BoxGeometry(0.06, 0.28, 0.26), 0xeee4c8, 0, 0, 0);
-    add(bag, new THREE.BoxGeometry(0.065, 0.08, 0.12), p.accent, 0, 0.02, 0);
+    bag.position.set(0.17, -0.04, 0.06);
+    pelvis.add(bag);
+    add(bag, rb(0.06, 0.28, 0.26, 0.02), 0xeee4c8, 0, 0, 0);
+    add(bag, rb(0.065, 0.08, 0.12, 0.015), p.accent, 0, 0.02, 0);
   } else if (p.bag === "sack") {
+    satchelLoop(0x8a6a4a);
     bag = new THREE.Group();
-    bag.position.set(0.1, 1.08, -0.2);
-    body.add(bag);
-    const sk = add(bag, new THREE.SphereGeometry(0.2, 12, 10), 0xd2b48c, 0, 0, 0);
-    sk.scale.set(1, 1.15, 0.8);
-    add(bag, new THREE.CylinderGeometry(0.05, 0.08, 0.1, 8), 0xb8986e, 0.06, 0.24, 0.02);
+    bag.position.set(0.1, 0.0, -0.2);
+    chest.add(bag);
+    const sack = add(bag, new THREE.SphereGeometry(0.2, 14, 12), 0xd2b48c, 0, 0, 0);
+    sack.scale.set(1, 1.15, 0.8);
+    add(bag, new THREE.CylinderGeometry(0.05, 0.08, 0.1, 10), 0xb8986e, 0.06, 0.24, 0.02);
     add(bag, new THREE.BoxGeometry(0.12, 0.08, 0.02), 0xf4efe0, 0, -0.02, -0.16); // envelope peeking out
-    strap(0.15, 0.55, 0x8a6a4a);
   }
 
-  // ---- arms (pivot at the shoulder, bending at the elbow)
-  const arms = [], elbows = [];
-  for (const s of [-1, 1]) {
-    const sh = new THREE.Group();
-    sh.position.set(s * 0.19, 1.14, 0);
-    sh.rotation.z = s * 0.1;
-    body.add(sh);
-    add(sh, new THREE.CylinderGeometry(0.06, 0.056, 0.17, 10), p.shirt, 0, -0.06, 0);
-    add(sh, new THREE.CylinderGeometry(0.04, 0.038, 0.1, 8), p.skin, 0, -0.17, 0);
-    const elbow = new THREE.Group();
-    elbow.position.set(0, -0.22, 0);
-    sh.add(elbow);
-    add(elbow, new THREE.SphereGeometry(0.038, 8, 6), p.skin, 0, 0, 0);
-    add(elbow, new THREE.CylinderGeometry(0.038, 0.035, 0.22, 8), p.skin, 0, -0.1, 0);
-    add(elbow, new THREE.SphereGeometry(0.046, 8, 6), p.skin, 0, -0.24, 0);
-    arms.push(sh);
-    elbows.push(elbow);
+  const skin = new THREE.SkinnedMesh(sk.build(), SKIN);
+  skin.add(body);
+  skin.bind(new THREE.Skeleton(bones));
+  skin.castShadow = skin.receiveShadow = true;
+  skin.frustumCulled = false;
+  root.add(skin);
+
+  // ---- collar and chunky rounded shoes
+  const collar = add(chest, new THREE.TorusGeometry(0.07, 0.024, 8, 16), p.accent, 0, 0.115, 0.004);
+  collar.rotation.x = Math.PI / 2;
+  collar.scale.set(1.05, 0.85, 1);
+  for (const k of knees) {
+    add(k, new THREE.SphereGeometry(0.08, 14, 10), p.shoes, 0, -0.335, 0.055).scale.set(0.95, 0.62, 1.3);
+    add(k, new THREE.SphereGeometry(0.065, 12, 9), p.shoes, 0, -0.33, -0.015).scale.set(0.95, 0.72, 1);
   }
 
   // ---- head
-  const head = new THREE.Group();
-  head.position.set(0, 1.27, 0);
-  body.add(head);
   const skull = add(head, new THREE.SphereGeometry(0.19, 20, 16), p.skin, 0, 0.17, 0);
   skull.scale.set(1, 1.04, 0.97);
   for (const s of [-1, 1]) add(head, new THREE.SphereGeometry(0.034, 8, 6), p.skin, s * 0.185, 0.15, 0);
@@ -337,8 +523,14 @@ export function createCharacter(p) {
       arms[0].rotation.set(-s * swing, 0, -0.1);
       arms[1].rotation.set(s * swing, 0, 0.1);
       elbows[0].rotation.x = elbows[1].rotation.x = -0.1 - (0.25 + 1.0 * run) * k;
+      // The hips swing with the legs and the chest turns against them; the waist bends between.
+      pelvis.rotation.set(0, s * (0.09 + 0.06 * run) * k, c * 0.035 * k);
+      chest.rotation.set((0.04 + 0.1 * run) * k, -s * (0.14 + 0.08 * run) * k, -c * 0.03 * k);
+      spine.rotation.x = 0.06 * run * k;
       body.position.y = Math.abs(c) * (0.03 + 0.05 * run) * k + Math.sin(t * 2.1) * 0.004 * (1 - k);
-      body.rotation.x = (0.05 + 0.17 * run) * k;
+      body.rotation.x = (0.03 + 0.1 * run) * k;
+      // Breathing, when standing about.
+      chest.rotation.x += Math.sin(t * 2.1) * 0.015 * (1 - k);
       if (air > 0) {
         // Mid-jump: one knee tucked up, arms flung out.
         const to = (o, v) => o + (v - o) * air;
@@ -350,6 +542,7 @@ export function createCharacter(p) {
         arms[0].rotation.z = to(arms[0].rotation.z, -1.15);
         arms[1].rotation.z = to(arms[1].rotation.z, 1.15);
         elbows[0].rotation.x = elbows[1].rotation.x = to(elbows[0].rotation.x, -0.35);
+        chest.rotation.x = to(chest.rotation.x, -0.12);
         body.position.y *= 1 - air;
       }
     } else if (pose === "sit") {
@@ -361,8 +554,11 @@ export function createCharacter(p) {
       arms[0].rotation.set(-1.0, 0, -0.12);
       arms[1].rotation.set(-1.0, 0, 0.12);
       elbows[0].rotation.x = elbows[1].rotation.x = -0.3;
+      pelvis.rotation.set(0, 0, 0);
+      spine.rotation.x = 0.12;
+      chest.rotation.set(0.1, 0, 0);
       body.position.y = 0;
-      body.rotation.x = 0.25;
+      body.rotation.x = 0.05;
     } else {
       // Riding stance: sideways-ish, knees soft, arms out for balance.
       legs[0].rotation.set(0.02, 0, 0.12);
@@ -371,8 +567,12 @@ export function createCharacter(p) {
       arms[0].rotation.set(0, 0, -0.55 + Math.sin(t * 2) * 0.05);
       arms[1].rotation.set(0, 0, 0.55 - Math.sin(t * 2) * 0.05);
       elbows[0].rotation.x = elbows[1].rotation.x = -0.25;
+      // Turned a little sideways on the deck, swaying to keep balance.
+      pelvis.rotation.set(0, 0.25, 0);
+      spine.rotation.x = 0.06;
+      chest.rotation.set(0.04, -0.15, Math.sin(t * 2) * 0.04);
       body.position.y = -0.05 + Math.sin(t * 3) * 0.008;
-      body.rotation.x = 0.08;
+      body.rotation.x = 0.05;
     }
     if (wave > 0 && pose === "walk") {
       const osc = Math.sin(t * 11);
