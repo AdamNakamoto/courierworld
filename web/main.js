@@ -3,7 +3,7 @@ import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
-import { createNet, PHRASES } from "./net.js";
+import { createNet, EMOTES } from "./net.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
@@ -184,7 +184,7 @@ const MP_URL = new URLSearchParams(location.search).get("mp") ?? "wss://courier-
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 const net = createNet(W, {
-  url: MP_URL, makeRider: rider, dispose, say: (obj, text, h) => life.say(obj, text, h),
+  url: MP_URL, makeRider: rider, dispose,
   tier(addr) {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
@@ -213,16 +213,30 @@ async function titleCount() {
     $("onlineTitle").hidden = !online;
   } catch {}
 }
-/// The chat button: a little menu of phrases (the same as keys 1-8).
-PHRASES.forEach((text, i) => {
-  const b = document.createElement("button");
-  b.innerHTML = `<kbd>${i + 1}</kbd>${text}`;
-  b.addEventListener("click", () => {
-    net.say(i);
+/// Emotes: a bar of buttons (on screens with a mouse), the chat button's menu (on phones), and keys
+/// 1-9 and 0. A short wait between them, so nobody can flood the planet.
+let emoteAt = 0;
+function emote(i) {
+  if (mode !== "play" || performance.now() - emoteAt < 700) return;
+  emoteAt = performance.now();
+  net.say(i);
+}
+EMOTES.forEach(({ e, t }, i) => {
+  const key = i < 9 ? String(i + 1) : "0";
+  const bar = document.createElement("button");
+  bar.innerHTML = `<span>${e}</span><kbd>${key}</kbd>`;
+  bar.title = `${t ?? e} (${key})`;
+  bar.setAttribute("aria-label", t ?? e);
+  bar.addEventListener("click", () => emote(i));
+  $("emoteBar").append(bar);
+  const menu = document.createElement("button");
+  menu.innerHTML = `<span>${e}</span>${t ? ` ${t}` : ""}`;
+  menu.addEventListener("click", () => {
+    emote(i);
     $("phrases").hidden = true;
     $("chatBtn").setAttribute("aria-expanded", "false");
   });
-  $("phrases").append(b);
+  $("phrases").append(menu);
 });
 $("chatBtn").addEventListener("click", () => {
   $("phrases").hidden = !$("phrases").hidden;
@@ -277,6 +291,7 @@ let dialog = null; // { lines, i, chars, onDone }
 function say(lines, onDone) {
   dialog = { lines, i: 0, chars: 0, onDone };
   $("dialog").hidden = false;
+  $("emoteBar").classList.add("away");
   drawDialog();
 }
 function drawDialog() {
@@ -294,6 +309,7 @@ function advance() {
     const done = dialog.onDone;
     dialog = null;
     $("dialog").hidden = true;
+    $("emoteBar").classList.remove("away");
     done?.();
     return;
   } else {
@@ -383,8 +399,8 @@ addEventListener("keydown", (e) => {
     if (!e.repeat) jump();
     return;
   }
-  if (/^[1-8]$/.test(e.key) && mode === "play" && !dialog) {
-    if (!e.repeat) net.say(Number(e.key) - 1);
+  if (/^[0-9]$/.test(e.key) && mode === "play" && !dialog) {
+    if (!e.repeat) emote(e.key === "0" ? 9 : Number(e.key) - 1);
     return;
   }
   keys.add(e.key.toLowerCase());

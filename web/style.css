@@ -156,7 +156,6 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   body { font-size: 18px; }
   #compass { top: 64px; font-size: 17px; }
   .help { display: none; }
-  .online { top: 110px; }
   #dialog { bottom: 16px; padding: 22px 54px 14px 18px; }
   #dtext { font-size: 19px; }
 }
@@ -182,9 +181,26 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   border-radius: 3px; padding: 7px 10px; cursor: pointer; text-align: left; white-space: nowrap;
 }
 .phrases button:hover { background: var(--yellow); }
-.phrases kbd { font: 700 11px ui-monospace, Menlo, monospace; opacity: .55; margin-right: 6px; }
+.phrases span { font-size: 17px; }
+/* The emote bar: always there on screens with a mouse (phones use the button's menu). */
+.emote-bar { position: absolute; left: 14px; bottom: 14px; display: flex; gap: 6px; padding: 6px; background: rgba(251, 248, 239, .85);
+  border: 2.5px solid var(--ink); border-radius: 30px; box-shadow: 3px 4px 0 rgba(40, 48, 51, 0.85); }
+.emote-bar button {
+  position: relative; width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--ink); background: #fff; cursor: pointer;
+  font-size: 21px; line-height: 1; padding: 0; transition: transform .08s;
+}
+.emote-bar.away { opacity: 0; pointer-events: none; }
+.emote-bar button:hover { background: var(--yellow); transform: translateY(-2px); }
+.emote-bar button:active { transform: translateY(1px); }
+.emote-bar kbd { position: absolute; right: -3px; bottom: -4px; font: 700 10px ui-monospace, Menlo, monospace; background: var(--paper);
+  border: 1.5px solid var(--ink); border-radius: 3px; padding: 0 3px; color: var(--ink); }
+@media (hover: none), (max-width: 640px) { .emote-bar { display: none; } }
+/* Leave the emote bar its corner: the controls help wraps beside it, and steps aside on narrow windows. */
+@media (hover: hover) and (min-width: 641px) { .help { max-width: calc(100% - 520px); } }
+@media (hover: hover) and (min-width: 641px) and (max-width: 900px) { .help { display: none; } }
 .online { position: absolute; top: 62px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(.8deg); }
 .online b { font-size: 20px; }
+@media (max-width: 640px) { .online { top: 110px; } } /* below the compass, which drops to the second row on phones */
 .sounds-btn.off svg path:last-child { opacity: 0; }
 .office-btn kbd { font: inherit; font-size: 11px; border: 2px solid var(--ink); border-radius: 3px; padding: 1px 4px; margin-left: 6px; background: var(--paper); }
 .office {

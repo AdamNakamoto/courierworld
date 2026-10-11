@@ -10,7 +10,7 @@ const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their di
 const FAR_EVERY = 8; // everyone else gets one in eight
 const MAX_PLAYERS = 200;
 const MAX_MSG = 2048;
-const PHRASES = 8; // preset phrases the game can show; -1 is a wave
+const PHRASES = 16; // emotes the game can show (web/net.js EMOTES); -1 is a wave
 
 const ORIGINS = [/^https:\/\/(www\.)?courierworld\.fun$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
 const ENUMS = {

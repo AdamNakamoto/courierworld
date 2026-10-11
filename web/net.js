@@ -5,8 +5,12 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
 
-/// What you can say to the players around you (keys 1-8, or the chat button).
-export const PHRASES = ["gm!", "Hi!", "Nice!", "Follow me!", "Race you!", "GG!", "Thanks!", "Wow!"];
+/// What you can show the players around you: an emoji, or an emoji and a few words. It pops up
+/// over your head (keys 1-9 and 0, or the emote buttons). The order matters: the room sends the index.
+export const EMOTES = [
+  { e: "😊" }, { e: "👋", t: "Hey!" }, { e: "🔥", t: "LFG!" }, { e: "🎉", t: "Have fun!" }, { e: "😂" },
+  { e: "❤️" }, { e: "👍", t: "GG!" }, { e: "☀️", t: "gm!" }, { e: "🙏", t: "Thanks!" }, { e: "📮", t: "Follow me!" },
+];
 const SEND_EVERY = 0.15; // seconds between position updates while you move
 const SEEN = 22; // how far away (in metres) other couriers are drawn
 
@@ -63,6 +67,97 @@ function nameTag(name, sub) {
   return s;
 }
 
+/// An emote's picture: a big emoji on its own, or an emoji and words in a bold bubble.
+function emoteTexture({ e, t }) {
+  const c = document.createElement("canvas");
+  const g = c.getContext("2d");
+  const emojiFont = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+  if (!t) {
+    c.width = c.height = 192;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.shadowColor = "rgba(40, 48, 51, 0.45)";
+    g.shadowBlur = 10;
+    g.shadowOffsetY = 4;
+    g.font = `140px ${emojiFont}`;
+    g.fillText(e, 96, 104);
+  } else {
+    c.width = 512;
+    c.height = 160;
+    g.font = "800 58px system-ui, -apple-system, sans-serif";
+    const w = Math.min(500, g.measureText(t).width + 150), x = (512 - w) / 2;
+    g.fillStyle = "#fbf8ef";
+    g.strokeStyle = "#283033";
+    g.lineWidth = 7;
+    g.beginPath();
+    g.roundRect(x, 10, w, 104, 30);
+    g.fill();
+    g.stroke();
+    g.beginPath();
+    g.moveTo(236, 111);
+    g.lineTo(256, 148);
+    g.lineTo(278, 111);
+    g.fill();
+    g.stroke();
+    g.fillRect(238, 102, 38, 12);
+    g.textBaseline = "middle";
+    g.textAlign = "left";
+    g.font = `64px ${emojiFont}`;
+    g.fillText(e, x + 22, 64);
+    g.fillStyle = "#283033";
+    g.font = "800 58px system-ui, -apple-system, sans-serif";
+    g.fillText(t, x + 108, 66);
+  }
+  return texFromCanvas(c);
+}
+
+/// Emotes popping up over people's heads: a little pool of sprites that rise, then shrink away.
+function createEmotes(world, noNormals) {
+  const textures = EMOTES.map(emoteTexture);
+  const pool = [];
+  for (let i = 0; i < 12; i++) {
+    // They write depth (see-through edges don't), so the painted sky isn't laid over them.
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, alphaTest: 0.35 }));
+    s.visible = false;
+    s.scale.setScalar(0); // the outline pass turns sprites back on, so an idle one is also shrunk to nothing
+    s.renderOrder = 3;
+    world.add(s);
+    noNormals.push(s);
+    pool.push({ s, who: null, age: 0, life: 0, h: 2.4, w: 1, ht: 1 });
+  }
+  return {
+    show(who, i, h = 2.4) {
+      const em = EMOTES[i];
+      if (!em) return;
+      const b = pool.find((p) => p.who === who) ?? pool.find((p) => p.life <= 0) ?? pool.reduce((a, p) => (p.age > a.age ? p : a));
+      b.s.material.map = textures[i];
+      b.s.material.needsUpdate = true;
+      [b.who, b.age, b.life, b.h] = [who, 0, 2.6, h];
+      [b.w, b.ht] = em.t ? [2.2, 0.69] : [0.95, 0.95];
+      b.s.visible = true;
+    },
+    update(dt) {
+      for (const b of pool) {
+        if (b.life <= 0) continue;
+        b.age += dt;
+        if (b.age >= b.life || !b.who) {
+          b.life = 0;
+          b.who = null;
+          b.s.visible = false;
+          b.s.scale.setScalar(0);
+          continue;
+        }
+        // Pop in with a bounce, drift up, shrink away at the end.
+        const a = b.age, pop = a < 0.3 ? Math.sin((a / 0.3) * Math.PI * 0.75) / Math.sin(Math.PI * 0.75) : 1;
+        const k = Math.max(0, pop * Math.min(1, (b.life - a) / 0.35));
+        b.s.scale.set(b.w * k, b.ht * k, 1);
+        const up = b.who.position.clone().normalize();
+        b.s.position.copy(b.who.position).addScaledVector(up, b.h + Math.min(a, 1.2) * 0.35);
+      }
+    },
+  };
+}
+
 const _m = new THREE.Matrix4(), _x = new THREE.Vector3(), _z = new THREE.Vector3();
 /// Point an object up `up` (its local +y) and facing `forward` (its local +z).
 function orient(obj, up, forward) {
@@ -75,13 +170,14 @@ function orient(obj, up, forward) {
 }
 
 /// `url`: the room's WebSocket address. `makeRider(look, ride)` builds a courier (the same as yours),
-/// `dispose(group)` frees one, `say(obj, text, h)` pops a speech bubble over something on the planet,
+/// `dispose(group)` frees one,
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
 /// (null while not connected).
-export function createNet(W, { url, makeRider, dispose, say, tier = () => null, onCount = () => {} }) {
+export function createNet(W, { url, makeRider, dispose, tier = () => null, onCount = () => {} }) {
   const players = new Map(); // id -> { hello, root, rider, tag, pos, fwd, target, h, air, spd, swim, wave }
-  const anchor = new THREE.Object3D(); // where you are on the planet, for your own speech bubbles
+  const anchor = new THREE.Object3D(); // where you are on the planet, for your own emotes
   W.world.add(anchor);
+  const emotes = createEmotes(W.world, W.noNormals);
   let ws = null, me = null, started = false, retry = 1, sendIn = 0, pingIn = 0, last = null;
 
   const count = () => onCount(ws?.readyState === 1 && me ? players.size + 1 : null);
@@ -175,7 +271,7 @@ export function createNet(W, { url, makeRider, dispose, say, tier = () => null, 
         const p = players.get(m[1]);
         if (!p) return;
         p.wave = 1.6;
-        if (m[2] >= 0 && p.root.visible) say(p.rider.group, PHRASES[m[2]] ?? "Hi!", 2.55);
+        if (m[2] >= 0 && p.root.visible) emotes.show(p.rider.group, m[2], p.rider.ride ? 3.2 : 2.85); // above the name tag
         return;
       }
     }
@@ -194,16 +290,17 @@ export function createNet(W, { url, makeRider, dispose, say, tier = () => null, 
         send(["hi", me]);
       }
     },
-    /// Wave (-1) or say one of PHRASES to the players around you.
+    /// Wave (-1) or show one of EMOTES to the players around you (and over your own head).
     say(i) {
       send(["say", i]);
-      if (i >= 0) say(anchor, PHRASES[i], 2.55);
+      if (i >= 0) emotes.show(anchor, i, 2.55);
     },
     /// Each frame: `state` is where you are ({ p, f, h, air, spd, swim }: your direction from the
     /// planet's centre, the way you face, height, jump, speed and swim), or null when not playing.
     /// `me` is your position for deciding who to draw; `all` draws everyone (the title screen).
     update(dt, t, state, mePos, all = false) {
       if (state) anchor.position.copy(state.p).multiplyScalar(R + state.h);
+      emotes.update(dt);
       if (ws?.readyState === 1 && me) {
         if ((pingIn -= dt) <= 0) {
           send("ping");
