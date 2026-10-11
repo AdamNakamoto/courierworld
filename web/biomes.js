@@ -9,7 +9,7 @@ import { SEA_LEVEL } from "./terrain.js";
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 export function buildBiomes(k) {
-  const { R, C, part, box, terrain: T, world, noNormals, ROAD_HW, WALK, nearestRoad } = k;
+  const { R, K, C, part, box, terrain: T, world, noNormals, ROAD_HW, WALK, nearestRoad } = k;
   const rnd = k.rng;
   const range = (a, b) => a + rnd() * (b - a);
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
@@ -233,7 +233,7 @@ export function buildBiomes(k) {
 
     // Umbrellas and towels, rocks, pines at the back of the beach, a sunbather.
     let umbrellas = 0;
-    for (let i = 0; i < 80 && umbrellas < 7; i++) {
+    for (let i = 0; i < 80 * K && umbrellas < 7 * K; i++) {
       const d = around(c, rho + range(0.05, 0.1), rnd() * Math.PI * 2);
       if (nearestRoad(d) < ROAD_HW + WALK + 1.2 || !free(d, 1.3)) continue;
       k.bake(umbrella(pick([0xe46f5f, 0x5d8fd1, 0xf2c94c]), 0xfbf6ea), d, rnd() * 6, T.landAt(d));
@@ -245,13 +245,13 @@ export function buildBiomes(k) {
       }
       umbrellas++;
     }
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 14 * K; i++) {
       const d = around(c, rho + range(-0.01, 0.12), rnd() * Math.PI * 2);
       if (nearestRoad(d) < ROAD_HW + WALK + 0.8 || k.blocked(d, 0.5)) continue;
       k.bake(rock(range(0.7, 1.6), 0xc9bfa9), d, 0, T.landAt(d));
       k.addCircle(d, 0.35);
     }
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 30 * K; i++) {
       const d = around(c, rho + range(0.13, 0.17), rnd() * Math.PI * 2);
       if (nearestRoad(d) < ROAD_HW + WALK + 1.2 || !free(d, 1.2)) continue;
       k.bake(pine(range(0.8, 1.1)), d, rnd() * 6, T.landAt(d));
@@ -259,7 +259,7 @@ export function buildBiomes(k) {
       k.taken.push({ d, r: 1.2 });
     }
     // Boats and buoys bobbing on the bay.
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 6 * K; i++) {
       const boat = i < 2;
       const d = around(c, rho - range(0.12, 0.3), rnd() * Math.PI * 2);
       if (nearestRoad(d) < ROAD_HW + WALK + 2) continue;
@@ -448,7 +448,7 @@ export function buildBiomes(k) {
     }
     // Trees, thick and tall, with ferns, logs, mushrooms and mossy rocks underneath.
     let n = 0;
-    for (let tries = 0; tries < 5000 && n < 210; tries++) {
+    for (let tries = 0; tries < 5000 * K && n < 210 * K; tries++) {
       const d = around(z.d, z.r * Math.sqrt(rnd()), rnd() * Math.PI * 2);
       if (nearestRoad(d) < ROAD_HW + WALK + 1.0 || !free(d, 0.8)) continue;
       const s = range(0.8, 1.2);
@@ -462,7 +462,7 @@ export function buildBiomes(k) {
       k.taken.push({ d, r: 1.0 * s });
       n++;
     }
-    for (let i = 0; i < 260; i++) {
+    for (let i = 0; i < 260 * K; i++) {
       const d = around(z.d, z.r * Math.sqrt(rnd()), rnd() * Math.PI * 2);
       if (nearestRoad(d) < ROAD_HW + WALK + 0.4 || k.blocked(d, 0.3) || T.waterAt(d) !== null) continue;
       const r = rnd();
@@ -655,7 +655,7 @@ export function buildBiomes(k) {
       }
     }
     // Shipping containers.
-    for (let i = 0, placed = 0; i < 60 && placed < 7; i++) {
+    for (let i = 0, placed = 0; i < 60 * K && placed < 7 * K; i++) {
       const d = at(range(-9, 9), range(-9, 9));
       if (nearestRoad(d) < ROAD_HW + WALK + 2 || !free(d, 1.8)) continue;
       placed++;
@@ -698,6 +698,276 @@ export function buildBiomes(k) {
       k.taken.push({ d: gate, r: 2 });
     }
     k.ambient.works = { d: yard, r: 11 };
+  }
+
+  // ---------------------------------------------------------------- the neon district
+
+  {
+    const z = T.ZONES.find((q) => q.key === "neon");
+    if (z) {
+      const { glow, NEON } = k;
+      const [PINK, CYAN, VIOLET, GOLD] = NEON;
+      const inZone = (d) => T.zoneAt(d).key === "neon";
+      /// The spot nearest `from` with room r around it, clear of the streets by `clear` metres.
+      const roomFor = (r, clear, from = z.d) => {
+        for (let i = 0; i < 900; i++) {
+          const d = around(from, z.r * 0.95 * Math.sqrt(i / 900), i * 2.399);
+          if (inZone(d) && nearestRoad(d) > clear && free(d, r)) return d;
+        }
+        return null;
+      };
+      const faceOf = (d, spin) => V(0, 0, 1).applyQuaternion(k.frameAt(d, spin));
+      /// The spin that turns a spot to face its nearest street.
+      const streetSpin = (d) => {
+        let best = null;
+        for (const r of k.ROADS) {
+          const lat = Math.abs(d.dot(r.axis));
+          if (!best || lat < best.lat) best = { lat, r };
+        }
+        return k.spinToward(d, d.clone().addScaledVector(best.r.axis, -d.dot(best.r.axis)).normalize());
+      };
+      /// A glowing word on a dark board (unlit, so it shines).
+      const neonSign = (text, color, w, h, d, spin, lift, face = 0) => {
+        const c = document.createElement("canvas");
+        c.width = 256;
+        c.height = Math.round((256 * h) / w);
+        const g2 = c.getContext("2d"), col = `#${color.toString(16).padStart(6, "0")}`;
+        g2.fillStyle = "#14121c";
+        g2.fillRect(0, 0, c.width, c.height);
+        g2.strokeStyle = col;
+        g2.lineWidth = 8;
+        g2.strokeRect(6, 6, c.width - 12, c.height - 12);
+        g2.fillStyle = col;
+        g2.textAlign = "center";
+        g2.textBaseline = "middle";
+        g2.font = `700 ${Math.round(c.height * 0.5)}px Bungee, "Hiragino Sans", "Yu Gothic", "Noto Sans JP", Impact, sans-serif`;
+        g2.fillText(text, c.width / 2, c.height * 0.54);
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: k.texFromCanvas(c) }));
+        m.position.copy(d).multiplyScalar(R + lift);
+        m.quaternion.copy(k.frameAt(d, spin));
+        m.translateZ(face);
+        world.add(m);
+        return m;
+      };
+      const _m = new THREE.Matrix4(), _x = new THREE.Vector3();
+      const orientTo = (obj, up, fwd) => {
+        _x.crossVectors(up, fwd).normalize();
+        _m.makeBasis(_x, up, new THREE.Vector3().crossVectors(_x, up));
+        obj.quaternion.setFromRotationMatrix(_m);
+      };
+
+      // ---- neon lamps along the district's streets
+      k.ROADS.forEach((road) => {
+        let side = 1;
+        for (let t = 0; t < Math.PI * 2; t += 6.5 / R) {
+          const p = road.point(t);
+          if (!inZone(p)) continue;
+          const sideV = new THREE.Vector3().crossVectors(p, road.tangent(t)).normalize();
+          const d = step(p, sideV, side * (ROAD_HW + WALK - 0.25));
+          side = -side;
+          if (k.blocked(d, 0.3) || T.waterAt(d) !== null) continue;
+          const g = new THREE.Group(), col = pick(NEON);
+          part(g, new THREE.CylinderGeometry(0.06, 0.08, 3.2, 6), 0x2a2a35, 0, 1.6, 0);
+          glow(g, new THREE.CylinderGeometry(0.05, 0.05, 1.3, 6), col, 0, 2.6, 0);
+          part(g, new THREE.CylinderGeometry(0.16, 0.12, 0.12, 8), 0x2a2a35, 0, 3.28, 0);
+          glow(g, new THREE.TorusGeometry(0.16, 0.025, 4, 12), col, 0, 3.36, 0, Math.PI / 2);
+          k.bake(g, d, 0);
+          k.addCircle(d, 0.12); // (not marked as taken: the towers along the street stand just behind)
+        }
+      });
+
+      // ---- the plaza: a pedestal with a giant hologram envelope turning over it
+      const plaza = roomFor(2.8, ROAD_HW + WALK + 0.6);
+      if (plaza) {
+        const spin = rnd() * 6;
+        const g = new THREE.Group();
+        part(g, new THREE.CylinderGeometry(2.6, 2.7, 0.08, 32), 0x2a2638, 0, 0.04, 0);
+        glow(g, new THREE.TorusGeometry(2.45, 0.05, 6, 48), PINK, 0, 0.1, 0, Math.PI / 2);
+        glow(g, new THREE.TorusGeometry(1.25, 0.04, 6, 32), CYAN, 0, 0.1, 0, Math.PI / 2);
+        part(g, new THREE.CylinderGeometry(0.55, 0.7, 0.9, 16), 0x3b3550, 0, 0.45, 0);
+        glow(g, new THREE.CylinderGeometry(0.58, 0.58, 0.06, 16), CYAN, 0, 0.88, 0);
+        k.bake(g, plaza, spin);
+        k.addCircle(plaza, 0.75);
+        k.taken.push({ d: plaza, r: 2.9 });
+        const holo = new THREE.Group();
+        holo.position.copy(plaza).multiplyScalar(R);
+        holo.quaternion.copy(k.frameAt(plaza, spin));
+        world.add(holo);
+        const holoMat = new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: 0.55, depthWrite: false });
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xc8fbff, transparent: true, opacity: 0.85, depthWrite: false });
+        const env = new THREE.Group();
+        env.position.y = 2.3;
+        holo.add(env);
+        env.add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.0, 0.04), holoMat));
+        for (const sx of [-1, 1]) {
+          const b = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.05, 0.05), lineMat);
+          b.position.set(sx * 0.36, 0.2, 0.03);
+          b.rotation.z = sx * 0.6;
+          env.add(b);
+        }
+        const beam = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.5, 24, 1, true),
+          new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }));
+        beam.position.y = 1.65;
+        beam.rotation.x = Math.PI;
+        holo.add(beam);
+        holo.traverse((o) => o.isMesh && noNormals.push(o));
+        k.animate((t) => {
+          env.rotation.y = t * 0.6;
+          env.position.y = 2.3 + Math.sin(t * 1.3) * 0.12;
+          holoMat.opacity = 0.42 + 0.14 * Math.sin(t * 7.3) ** 2;
+        });
+        k.stampSpot(step(plaza, basis(plaza)[0], 1.9), 0);
+        // A netrunner leaning by the plaza, typing on thin air.
+        const [e1, e2] = basis(plaza);
+        for (const a of [0.6, 2.2, 3.8, 5.2]) {
+          const d = step(step(plaza, e1, Math.cos(a) * 3.4), e2, Math.sin(a) * 3.4);
+          if (!free(d, 0.4) || nearestRoad(d) < ROAD_HW + 0.3) continue;
+          k.npc({ d, y: T.landAt(d), face: tangentTo(d, plaza), name: "Netrunner Rei", look: { hair: 0x7a4fd0, hairStyle: "bob", headwear: "headphones", accent: PINK, shirt: 0x2a2638, bottoms: 0x1c1a24, bottomsStyle: "pants", shoes: 0x2b2b2e },
+            lines: ["I hacked the hologram once. For a whole minute it was a picture of my cat.", "Everything here runs on neon and noodles. Mostly noodles.", "Your bag of letters is the most secure network in town. Nobody can phish paper.", "Up there, the towers. Down here, the real post moves."] });
+          k.taken.push({ d, r: 0.6 });
+          break;
+        }
+      }
+
+      // ---- hover cars circling over the streets
+      const cars = [];
+      for (let i = 0; i < 5; i++) {
+        const g = new THREE.Group();
+        part(g, new THREE.BoxGeometry(0.9, 0.32, 1.9), pick([0x2b2f45, 0xd9534a, 0xe8e4f0, 0x3f6fbf, 0x3a3346]), 0, 0, 0);
+        part(g, new THREE.BoxGeometry(0.7, 0.28, 0.9), 0x8db8c6, 0, 0.28, -0.1);
+        glow(g, new THREE.BoxGeometry(0.8, 0.04, 1.6), pick(NEON), 0, -0.18, 0);
+        for (const sx of [-1, 1]) glow(g, new THREE.BoxGeometry(0.16, 0.08, 0.04), 0xff3b3b, sx * 0.3, 0.02, -0.96);
+        world.add(g);
+        cars.push({ g, rho: z.r * (0.35 + 0.15 * i), h: 4.4 + (i % 3) * 1.1, w: (i % 2 ? 1 : -1) * (0.16 + 0.05 * i), a0: i * 1.9 });
+      }
+      k.animate((t) => {
+        for (const c of cars) {
+          const a = c.a0 + t * c.w;
+          const d = around(z.d, c.rho, a), d2 = around(z.d, c.rho, a + Math.sign(c.w) * 0.02);
+          c.g.position.copy(d).multiplyScalar(R + c.h + Math.sin(t * 1.7 + c.a0) * 0.15);
+          orientTo(c.g, d, d2.clone().sub(d).normalize());
+        }
+      });
+
+      // ---- steam from grates in the street
+      for (let i = 0, made = 0; i < 40 && made < 3; i++) {
+        const d = roomFor(0.5, ROAD_HW + 0.2, around(z.d, z.r * 0.6, i * 2.1));
+        if (!d) continue;
+        const g = new THREE.Group();
+        part(g, new THREE.BoxGeometry(0.8, 0.04, 0.8), 0x2a2a35, 0, 0.02, 0);
+        for (let j = 0; j < 4; j++) part(g, new THREE.BoxGeometry(0.7, 0.05, 0.06), 0x55596a, 0, 0.03, -0.27 + j * 0.18);
+        k.bake(g, d, 0);
+        k.taken.push({ d, r: 0.6 });
+        const up = d.clone(), pos = d.clone().multiplyScalar(R + 0.1);
+        let next = i * 0.13;
+        k.animate((t) => {
+          if (t < next) return;
+          next = t + 0.35;
+          k.smoke(pos, up);
+        });
+        made++;
+      }
+
+      // ---- a ramen stall with its chef
+      const stall = roomFor(1.7, ROAD_HW + WALK + 0.4, around(z.d, z.r * 0.5, 2.4));
+      if (stall) {
+        const spin = streetSpin(stall), q = k.frameAt(stall, spin);
+        const g = new THREE.Group();
+        box(g, 2.2, 1.0, 0.8, 0x6c5446, 0, 0.5, 0.2);
+        box(g, 2.3, 0.06, 0.95, 0x3b2f28, 0, 1.03, 0.2);
+        for (const [x, zz] of [[-1.1, -0.45], [1.1, -0.45], [-1.1, 0.6], [1.1, 0.6]]) part(g, new THREE.CylinderGeometry(0.04, 0.04, 2.1, 5), 0x3b2f28, x, 1.05, zz);
+        box(g, 2.6, 0.12, 1.5, 0xd9534a, 0, 2.15, 0.05);
+        for (const x of [-0.8, 0.8]) glow(g, new THREE.SphereGeometry(0.16, 10, 8), 0xff5a4f, x, 1.85, 0.75);
+        for (const x of [-0.6, 0.6]) part(g, new THREE.CylinderGeometry(0.18, 0.15, 0.6, 10), 0x3b3550, x, 0.3, 1.05);
+        k.bake(g, stall, spin);
+        k.addRect(stall, spin, 1.15, 0.5);
+        k.taken.push({ d: stall, r: 1.9 });
+        neonSign("ラーメン", GOLD, 1.6, 0.42, stall.clone().multiplyScalar(R).add(V(0, 0, 0.82).applyQuaternion(q)).normalize(), spin, 2.45);
+        const chef = stall.clone().multiplyScalar(R).add(V(0, 0, -0.55).applyQuaternion(q)).normalize();
+        k.npc({ d: chef, y: T.landAt(chef), face: faceOf(stall, spin), name: "Chef Jun", look: { shirt: 0xf4f1ea, accent: 0xd9534a, headwear: "beanie", bottomsStyle: "pants", bottoms: 0x2a2a35 },
+          lines: ["One bowl of ramen, extra noodles? Couriers eat free on rainy nights.", "I've been cooking under these signs for thirty years. The signs got brighter. The ramen stayed the same.", "Deliver this broth to the tower on the corner? Careful, it's hot!"] });
+      }
+
+      // ---- Cee Zee at the SAFU booth
+      const booth = roomFor(1.3, ROAD_HW + WALK + 0.4, around(z.d, z.r * 0.45, 4.4));
+      if (booth) {
+        const spin = streetSpin(booth), q = k.frameAt(booth, spin);
+        const g = new THREE.Group();
+        box(g, 1.6, 2.3, 1.2, 0x1d1f27, 0, 1.15, 0);
+        glow(g, new THREE.BoxGeometry(1.64, 0.06, 1.24), GOLD, 0, 2.3, 0);
+        glow(g, new THREE.BoxGeometry(1.64, 0.06, 1.24), GOLD, 0, 0.05, 0);
+        part(g, new THREE.CylinderGeometry(0.42, 0.42, 0.08, 20), 0x9aa0aa, 0, 1.1, 0.62, Math.PI / 2);
+        for (let i = 0; i < 4; i++) part(g, new THREE.BoxGeometry(0.06, 0.5, 0.04), 0x5a5f6e, 0, 1.1, 0.67, 0, 0, (i * Math.PI) / 4);
+        k.bake(g, booth, spin);
+        k.addRect(booth, spin, 0.85, 0.65, { h: 2.4, hd: 0.65 });
+        k.taken.push({ d: booth, r: 1.6 });
+        neonSign("SAFU", GOLD, 1.4, 0.45, booth.clone().multiplyScalar(R).add(V(0, 0, 0.62).applyQuaternion(q)).normalize(), spin, 1.9);
+        const cz = booth.clone().multiplyScalar(R).add(V(-0.9, 0, 1.05).applyQuaternion(q)).normalize();
+        k.npc({ d: cz, y: T.landAt(cz), face: faceOf(booth, spin), name: "Cee Zee", own: true, hi: ["SAFU!", "4", "Keep building!"],
+          look: { hairStyle: "short", hair: 0x1c1a1c, skin: 0xeccfae, shirt: 0x1f2a44, accent: GOLD, collar: 0x1f2a44, bottoms: 0x1c1c22, bottomsStyle: "pants", shoes: 0xf4f1ea, headwear: "none", bag: "none", height: 1 },
+          lines: ["Funds are SAFU. Letters too. Especially the ones in your bag.", "4. That's it. That's the whole message.", "Ignore the noise. Deliver the post.", "Build. Ship. Deliver. Repeat.", "Stay SAFU out there, courier. Watch out for puddles."] });
+      }
+
+      // ---- the rocket pad, where Elon Tusk and Doge wait for launch day
+      const pad = roomFor(3.1, ROAD_HW + WALK + 1.2, around(z.d, z.r * 0.55, 0.9));
+      if (pad) {
+        const spin = streetSpin(pad), q = k.frameAt(pad, spin);
+        const g = new THREE.Group();
+        part(g, new THREE.CylinderGeometry(2.7, 2.8, 0.08, 32), 0x5a5f6e, 0, 0.04, 0);
+        part(g, new THREE.TorusGeometry(2.45, 0.05, 4, 40), GOLD, 0, 0.09, 0, Math.PI / 2);
+        part(g, new THREE.CylinderGeometry(0.42, 0.55, 0.5, 16), 0x2a2a35, 0, 0.5, 0); // engine bell
+        part(g, new THREE.CylinderGeometry(0.55, 0.55, 4.6, 20), 0xf2f2f5, 0, 3.05, 0); // body
+        part(g, new THREE.CylinderGeometry(0.56, 0.56, 0.3, 20), 0xd9534a, 0, 4.1, 0); // band
+        part(g, new THREE.ConeGeometry(0.55, 1.4, 20), 0xd9534a, 0, 6.05, 0); // nose
+        part(g, new THREE.CylinderGeometry(0.2, 0.2, 0.06, 16), 0x8db8c6, 0, 4.8, 0.55, Math.PI / 2); // porthole
+        for (let i = 0; i < 3; i++) {
+          const a = (i / 3) * Math.PI * 2;
+          box(g, 0.06, 1.2, 0.8, 0xd9534a, Math.sin(a) * 0.7, 1.15, Math.cos(a) * 0.7, 0, a, 0);
+        }
+        // The gantry beside it: four legs and rungs.
+        for (const [x, zz] of [[1.5, -0.4], [2.3, -0.4], [1.5, 0.4], [2.3, 0.4]]) box(g, 0.1, 6.4, 0.1, 0x8d9790, x, 3.45, zz);
+        for (let i = 1; i < 9; i++) box(g, 0.9, 0.06, 0.9, 0x8d9790, 1.9, 0.25 + i * 0.75, 0);
+        box(g, 0.9, 0.06, 0.08, 0x8d9790, 1.0, 4.6, 0); // arm to the rocket
+        glow(g, new THREE.SphereGeometry(0.1, 8, 6), 0xff3b3b, 1.9, 6.75, 0);
+        k.bake(g, pad, spin);
+        k.addCircle(pad, 0.85, { wall: { h: 6.8 } });
+        k.addCircle(pad.clone().multiplyScalar(R).add(V(1.9, 0, 0).applyQuaternion(q)).normalize(), 0.7, { wall: { h: 6.6 } });
+        k.taken.push({ d: pad, r: 3.2 });
+        neonSign("MARS POST", PINK, 2.4, 0.5, pad.clone().multiplyScalar(R).add(V(-1.6, 0, 1.9).applyQuaternion(q)).normalize(), spin, 1.6);
+        const signPost = new THREE.Group();
+        for (const x of [-1.1, 1.1]) part(signPost, new THREE.CylinderGeometry(0.04, 0.04, 1.4, 5), 0x2a2a35, x, 0.7, -0.02);
+        const signAt = pad.clone().multiplyScalar(R).add(V(-1.6, 0, 1.9).applyQuaternion(q)).normalize();
+        k.bake(signPost, signAt, spin);
+        const face = faceOf(pad, spin);
+        const elon = pad.clone().multiplyScalar(R).add(V(0.2, 0, 3.0).applyQuaternion(q)).normalize();
+        const doge = pad.clone().multiplyScalar(R).add(V(1.0, 0, 3.2).applyQuaternion(q)).normalize();
+        k.npc({ d: elon, y: T.landAt(elon), face, name: "Elon Tusk", own: true, hi: ["To Mars!", "Hello, Earthling!", "Ship it!"],
+          look: { hairStyle: "short", hair: 0x3a2a24, skin: 0xf2d3be, shirt: 0x1f2024, accent: 0x1f2024, bottoms: 0x2f3a4a, bottomsStyle: "pants", shoes: 0x2b2b2e, headwear: "none", bag: "none", height: 1.08 },
+          lines: ["We're going to deliver letters to Mars. The stamps will have to be very, very big.", "This rocket is fully reusable. Like envelopes, if you're careful.",
+            "Doge keeps saying it's going to the moon. I told him the moon has no post office. Yet.", "I'm thinking of renaming the alphabet to just X. Saves ink.", "Some nights I sleep at the post office. Have you tried delivering faster?"] });
+        k.npc({ d: doge, y: T.landAt(doge), face, name: "Doge", kind: "doge", own: true, hi: ["Wow!", "Such wow!", "Much hi!"],
+          lines: ["Wow. Such letters. Very delivery. Much stamps.", "Many courier. So planet. Wow.", "(Doge looks at the rocket, then at you, then back at the rocket. Much hope.)", "To the moon? Very far. Much walk."] });
+        k.stampSpot(pad.clone().multiplyScalar(R).add(V(-1.7, 0, -1.3).applyQuaternion(q)).normalize(), 0.08);
+      }
+
+      // ---- the back rows: more towers behind the ones along the streets, for a skyline
+      for (let i = 0, built = 0; i < 700 && built < 14 * K; i++) {
+        const d = around(z.d, z.r * 0.92 * Math.sqrt(i / 700), i * 2.399);
+        const spec = { w: range(3.4, 4.6), d: range(3.4, 4.2), floors: Math.round(range(5, 9)) };
+        const r = Math.hypot(spec.w, spec.d) / 2;
+        if (!inZone(d) || nearestRoad(d) < ROAD_HW + WALK + 0.65 + 4.4 + r || !free(d, r + 0.3)) continue;
+        const spin = streetSpin(d), b = k.tower(spec);
+        k.bake(b.g, d, spin);
+        b.extras.position.copy(d).multiplyScalar(R);
+        b.extras.quaternion.copy(k.frameAt(d, spin));
+        world.add(b.extras);
+        k.addRect(d, spin, spec.w / 2 + 0.05, spec.d / 2 + 0.05, { h: b.h, hd: spec.d / 2 + 0.05 });
+        k.taken.push({ d, r: r + 0.2 });
+        built++;
+      }
+
+      k.ambient.neon = { d: z.d, r: z.r * R * 0.8 };
+    }
   }
 
   // ---------------------------------------------------------------- the footbridge on Main Street

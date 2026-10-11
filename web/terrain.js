@@ -41,6 +41,20 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
     }
     ZONES.push({ key: "works", name: "Old Works", d: best ? best.d : at(1.25, 3.0), r });
   }
+  // The neon district: towers along a street, so it sits on one, clear of the other places (the
+  // most room from them wins).
+  {
+    const r = 0.46;
+    let best = null;
+    for (let i = 0; i < 2400; i++) {
+      const th = 0.9 + 1.1 * ((i * 0.618) % 1), ph = i * 2.399;
+      const d = at(th, ph);
+      if (nearestRoad(d) > 2.5) continue;
+      const room = Math.min(...ZONES.map((z) => ang(d, z.d) - z.r - r));
+      if (room > 0.04 && (!best || room > best.room)) best = { d, room };
+    }
+    if (best) ZONES.push({ key: "neon", name: "Neon District", d: best.d, r });
+  }
   const TOWN = { key: "town", name: "Main Street", d: S, r: 0 };
   const zone = (key) => ZONES.find((z) => z.key === key);
   /// The area a spot belongs to (anything outside the others is town).

@@ -3,8 +3,8 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, ROAD_HW, WALK, arc, toon, mulberry32, texFromCanvas, nearestRoad } from "./world.js";
 
-const STORE = "courier:stamps2"; // the planet grew new places, so the stamps moved
-export const STAMPS = 15;
+const STORE = "courier:stamps3"; // the planet grew (radius 34), so the stamps moved
+export const STAMPS = 24;
 
 function loadFound() {
   try { return new Set(JSON.parse(localStorage.getItem(STORE) || "[]")); } catch { return new Set(); }

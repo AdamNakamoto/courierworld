@@ -5,8 +5,8 @@
 // players nearby. Nothing here touches the chain: it's all just for show.
 import { DurableObject } from "cloudflare:workers";
 
-const R = 24; // the planet's radius, in metres
-const NEAR = Math.cos(32 / R); // players within 32 m (a dot product of their directions) get every update
+const R = 34; // the planet's radius, in metres (matches web/world.js)
+const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
 const FAR_EVERY = 8; // everyone else gets one in eight
 const MAX_PLAYERS = 200;
 const MAX_MSG = 2048;

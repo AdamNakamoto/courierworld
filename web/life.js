@@ -3,7 +3,7 @@
 // fireflies at night. It all lives on the planet (in W.world), so it stays put as you walk on.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
-import { R, ROADS, ROAD_HW, WALK, arc, toon, mulberry32, texFromCanvas, offsetOnSphere, nearestRoad } from "./world.js";
+import { R, K, ROADS, ROAD_HW, WALK, arc, toon, mulberry32, texFromCanvas, offsetOnSphere, nearestRoad } from "./world.js";
 import { createCharacter, villager, compact } from "./character.js";
 
 const WALKER_NAMES = ["Mr. Abe", "Koko", "Granny Sue", "Ken", "Mai", "Mr. Fuji", "Lulu", "Hiro", "Mrs. Tan", "Bo", "Nori", "Uncle Teo", "Saki", "Gen"];
@@ -192,8 +192,11 @@ function makeCat(coat) {
 
 /// A chunky grey pup in a red scarf, built from blocks like the pixel dog it comes from. Shaped like a
 /// character ({ root, head, update, setWave }), so it stands, turns and greets you like the residents.
-function makeDog() {
-  const COAT = 0x8f978c, DARK = 0x667066, LIGHT = 0xc2c8bd, SCARF = 0xd9534a, INK = 0x283033;
+const PUP = { coat: 0x8f978c, dark: 0x667066, light: 0xc2c8bd, scarf: 0xd9534a };
+/// A shiba: ginger with cream cheeks, chest and brows, its tail curled over its back.
+const SHIBA = { coat: 0xd9944f, dark: 0xb06f34, light: 0xf6e6c8, scarf: null, curl: true };
+function makeDog(p = PUP) {
+  const COAT = p.coat, DARK = p.dark, LIGHT = p.light, SCARF = p.scarf, INK = 0x283033;
   const root = new THREE.Group(), body = new THREE.Group();
   root.add(body);
   const add = (parent, geo, color, x, y, z) => {
@@ -210,9 +213,13 @@ function makeDog() {
     add(body, B(0.07, 0.2, 0.08), COAT, x, 0.1, z);
     add(body, B(0.076, 0.04, 0.09), DARK, x, 0.02, z + 0.005);
   }
-  // The scarf, knotted at the front.
-  add(body, B(0.27, 0.07, 0.13), SCARF, 0, 0.38, 0.15);
-  add(body, new THREE.ConeGeometry(0.06, 0.12, 3), SCARF, 0.04, 0.31, 0.22).rotation.x = Math.PI;
+  if (SCARF) {
+    // The scarf, knotted at the front.
+    add(body, B(0.27, 0.07, 0.13), SCARF, 0, 0.38, 0.15);
+    add(body, new THREE.ConeGeometry(0.06, 0.12, 3), SCARF, 0.04, 0.31, 0.22).rotation.x = Math.PI;
+  } else {
+    add(body, B(0.2, 0.16, 0.06), LIGHT, 0, 0.3, 0.19); // a cream chest
+  }
   const head = new THREE.Group();
   head.position.set(0, 0.47, 0.17);
   body.add(head);
@@ -224,13 +231,19 @@ function makeDog() {
     const ear = add(head, new THREE.ConeGeometry(0.065, 0.13, 4), COAT, s * 0.085, 0.21, -0.02);
     ear.rotation.set(0, Math.PI / 4, -s * 0.15);
     add(head, B(0.035, 0.035, 0.02), INK, s * 0.065, 0.07, 0.112);
-    add(head, B(0.045, 0.018, 0.02), DARK, s * 0.065, 0.105, 0.112).rotation.z = s * 0.2;
+    add(head, B(0.045, 0.018, 0.02), p.curl ? LIGHT : DARK, s * 0.065, 0.105, 0.112).rotation.z = s * 0.2;
+    if (p.curl) add(head, B(0.07, 0.06, 0.02), LIGHT, s * 0.085, -0.035, 0.112); // cheeks
   }
   const tail = new THREE.Group();
   tail.position.set(0, 0.35, -0.21);
   body.add(tail);
-  add(tail, B(0.05, 0.05, 0.14), COAT, 0, 0.04, -0.05).rotation.x = -0.8;
-  add(tail, B(0.052, 0.052, 0.06), DARK, 0, 0.1, -0.1);
+  if (p.curl) {
+    add(tail, B(0.06, 0.06, 0.16), COAT, 0, 0.08, -0.02).rotation.x = -1.25;
+    add(tail, B(0.065, 0.065, 0.09), LIGHT, 0, 0.17, 0.05);
+  } else {
+    add(tail, B(0.05, 0.05, 0.14), COAT, 0, 0.04, -0.05).rotation.x = -0.8;
+    add(tail, B(0.052, 0.052, 0.06), DARK, 0, 0.1, -0.1);
+  }
   compact(root);
   let excited = 0;
   return {
@@ -259,8 +272,8 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
 
   // ---- residents by their doors (they turn to watch you go by)
   {
-    const step = Math.max(1, Math.floor(W.addresses.length / 12));
-    for (let i = 3, n = 0; i < W.addresses.length && n < 12; i += step, n++) {
+    const step = Math.max(1, Math.floor(W.addresses.length / (12 * K)));
+    for (let i = 3, n = 0; i < W.addresses.length && n < 12 * K; i += step, n++) {
       const a = W.addresses[i];
       if (a.landmark) continue;
       const ch = createCharacter(villager(i * 7919 + 13));
@@ -280,8 +293,8 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   // (and the special guests: `own` means they only say their own lines, `hi` is how they say hello,
   // and `fixed` keeps them facing their spot, turning only their head)
   W.npcs.forEach((s, i) => {
-    const dog = s.kind === "dog";
-    const ch = dog ? makeDog() : createCharacter({ ...villager(9000 + i * 977), ...s.look });
+    const dog = s.kind === "dog" || s.kind === "doge";
+    const ch = dog ? makeDog(s.kind === "doge" ? SHIBA : PUP) : createCharacter({ ...villager(9000 + i * 977), ...s.look });
     const up = s.d.clone().normalize();
     ch.root.position.copy(up).multiplyScalar(R + s.y);
     world.add(ch.root);
@@ -296,7 +309,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   });
 
   // ---- people out for a walk along the sidewalks
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < Math.round(14 * K); i++) {
     const ri = Math.floor(rng() * ROADS.length);
     const ch = createCharacter(villager(5000 + i * 131));
     world.add(ch.root);
@@ -311,7 +324,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
 
   // ---- cats sitting about in front gardens
   const cats = [];
-  for (let i = 0, n = 0; i < W.addresses.length * 2 && n < 7; i += 3) {
+  for (let i = 0, n = 0; i < W.addresses.length * 2 && n < 7 * K; i += 3) {
     const a = W.addresses[(i * 7 + 2) % W.addresses.length];
     if (a.landmark) continue;
     const q = W.frameAt(a.dir, a.spin);
@@ -331,7 +344,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   }
 
   // ---- birds: little flocks pecking at the edges of the streets
-  const FLOCKS = 9, PER = 5, N = FLOCKS * PER;
+  const FLOCKS = Math.round(9 * K), PER = 5, N = FLOCKS * PER;
   const birdMat = toon(0xffffff, { vertexColors: true });
   const wingMat = toon(0xffffff, { side: THREE.DoubleSide });
   const birdsMesh = new THREE.InstancedMesh(birdGeometry(), birdMat, N);
@@ -425,7 +438,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     .map(([w, s]) => new THREE.SpriteMaterial({ map: flutterTex(w, s), transparent: true, alphaTest: 0.3 }));
   const glowMat = new THREE.SpriteMaterial({ map: glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
   const flyers = [];
-  for (let n = 0, tries = 0; n < 36 && tries < 4000; tries++) {
+  for (let n = 0, tries = 0; n < 36 * K && tries < 4000 * K; tries++) {
     const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
     if (nearestRoad(d) < ROAD_HW + WALK + 1.2 || blocked(d, 0.6)) continue;
     const t1 = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0.2, 1, 0.4)).normalize(), t2 = new THREE.Vector3().crossVectors(d, t1);

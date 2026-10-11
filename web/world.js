@@ -8,7 +8,10 @@ import { buildBiomes } from "./biomes.js";
 import { WATER } from "./water.js";
 import { createDust } from "./fx.js";
 
-export const R = 24;
+export const R = 34;
+/// How much more ground there is than the planet was first designed for (radius 24): counts of things
+/// scattered about (people, parks, birds, golden stamps) scale with it so the bigger town isn't empty.
+export const K = (R / 24) ** 2;
 export const UP = new THREE.Vector3(0, 1, 0);
 export const ROAD_HW = 1.5; // asphalt half-width
 export const WALK = 0.9; // sidewalk width
@@ -106,6 +109,24 @@ function part(g, geo, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
   return m;
 }
 const box = (g, w, h, d, color, x, y, z, rx, ry, rz) => part(g, new THREE.BoxGeometry(w, h, d), color, x, y, z, rx, ry, rz);
+/// Neon: unlit, so it shines the same at any hour (and stands out at night). Baked into its own batch.
+const neonCache = new Map();
+const neonMat = (color) => {
+  if (!neonCache.has(color)) {
+    const m = new THREE.MeshBasicMaterial({ color });
+    m.userData.neon = true;
+    neonCache.set(color, m);
+  }
+  return neonCache.get(color);
+};
+function glow(g, geo, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+  const m = new THREE.Mesh(geo, neonMat(color));
+  m.position.set(x, y, z);
+  m.rotation.set(rx, ry, rz);
+  g.add(m);
+  return m;
+}
+const NEON = [0xff3ea5, 0x2de2e6, 0xb967ff, 0xffd23f, 0x5bff9a];
 
 export function texFromCanvas(c) {
   const t = new THREE.CanvasTexture(c);
@@ -277,6 +298,54 @@ function shop(spec) {
   return { g, doorX: 0, h: h + 0.3, vend: true };
 }
 
+// Words for the neon district's hanging signs (generic, nobody's brand).
+const SIGNS = ["NEON", "RAMEN", "POST24", "ARCADE", "HOTEL", "CYBER", "DATA", "SYNTH", "NOODLE", "ラーメン", "ネオン", "郵便", "カラオケ"];
+/// A tower for the neon district: dark and tall, banded with neon, with a glowing sign hanging off it.
+function tower(spec) {
+  const g = new THREE.Group(), extras = new THREE.Group();
+  const { w, d } = spec, floors = spec.floors, fh = 1.15, h = floors * fh + 0.6;
+  const neon = pick(NEON), neon2 = pick(NEON);
+  box(g, w, h, d, pick([0x2b2f45, 0x332a44, 0x24343f, 0x3a3346, 0x2a2a35]), 0, h / 2, 0);
+  for (let f = 1; f < floors; f++) {
+    glow(g, new THREE.BoxGeometry(w + 0.04, 0.06, 0.06), f % 2 ? neon : neon2, 0, f * fh + 0.3, d / 2 + 0.03);
+    for (let i = 0; i < 3; i++) box(g, w * 0.22, fh * 0.5, 0.06, rng() < 0.6 ? C.glass : 0x1d2433, (i - 1) * w * 0.3, f * fh + 0.3 + fh * 0.5, d / 2 + 0.02);
+  }
+  for (const s of [-1, 1]) glow(g, new THREE.BoxGeometry(0.07, h, 0.07), neon, s * (w / 2 + 0.01), h / 2, d / 2 + 0.01);
+  // Ground floor: a glass front under a glowing strip, and a door.
+  box(g, w * 0.55, 1.0, 0.06, C.glass, w * 0.12, 0.75, d / 2 + 0.02);
+  glow(g, new THREE.BoxGeometry(w * 0.9, 0.08, 0.45), neon2, 0, 1.45, d / 2 + 0.23);
+  box(g, 0.8, 1.6, 0.08, 0x15151c, -w * 0.33, 0.8, d / 2 + 0.03);
+  // Roof: an aerial with a red light, and a plant room.
+  part(g, new THREE.CylinderGeometry(0.04, 0.04, 1.6, 5), 0x5a5f6e, w * 0.3, h + 0.8, -d * 0.2);
+  glow(g, new THREE.SphereGeometry(0.09, 8, 6), 0xff3b3b, w * 0.3, h + 1.62, -d * 0.2);
+  box(g, w * 0.45, 0.6, d * 0.4, 0x3d4252, -w * 0.15, h + 0.3, -d * 0.1);
+  // The sign hangs out from the front corner, readable from either way along the street.
+  const c = document.createElement("canvas");
+  c.width = 96;
+  c.height = 384;
+  const x2 = c.getContext("2d"), col = `#${neon.toString(16).padStart(6, "0")}`, chars = [...pick(SIGNS)];
+  x2.fillStyle = "#14121c";
+  x2.fillRect(0, 0, 96, 384);
+  x2.strokeStyle = col;
+  x2.lineWidth = 6;
+  x2.strokeRect(6, 6, 84, 372);
+  x2.fillStyle = col;
+  x2.textAlign = "center";
+  x2.textBaseline = "middle";
+  const fs = Math.min(60, 330 / chars.length);
+  x2.font = `700 ${fs}px Bungee, "Hiragino Sans", "Yu Gothic", "Noto Sans JP", Impact, sans-serif`;
+  chars.forEach((ch, i) => x2.fillText(ch, 48, 192 + (i - (chars.length - 1) / 2) * fs * 1.08));
+  const mat = new THREE.MeshBasicMaterial({ map: texFromCanvas(c) });
+  for (const s of [-1, 1]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 2.2), mat);
+    m.position.set(w / 2 - 0.2 + s * 0.026, Math.max(2.4, h * 0.5), d / 2 + 0.42);
+    m.rotation.y = (s * Math.PI) / 2;
+    extras.add(m);
+  }
+  box(g, 0.05, 2.3, 0.62, 0x14121c, w / 2 - 0.2, Math.max(2.4, h * 0.5), d / 2 + 0.42);
+  return { g, doorX: -w * 0.33, h: h + 1.7, extras };
+}
+
 function postOffice(spec) {
   const g = new THREE.Group();
   const { w, d } = spec, h = 3.4;
@@ -408,13 +477,14 @@ const POST_FRAG = /* glsl */ `
     float normalEdge = smoothstep(0.3, 0.5, nd);
 
     float dist = 1.0 / max(zc, 1e-4);
-    float edge = max(depthEdge, normalEdge) * mix(1.0, 0.4, smoothstep(22.0, 70.0, dist));
+    // Distances were tuned for a planet of radius 24; they grow with it.
+    float edge = max(depthEdge, normalEdge) * mix(1.0, 0.4, smoothstep(${(22 * R / 24).toFixed(1)}, ${(70 * R / 24).toFixed(1)}, dist));
 
     float raw = texture2D(tDepth, vUv).x;
     vec3 base;
     // Over the sky the colour pass is black except for additive rain streaks, which show through.
     if (raw >= 0.99999) base = sky(vUv) + texture2D(tColor, vUv).rgb;
-    else base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(30.0, 95.0, dist) * 0.45);
+    else base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45);
     gl_FragColor = vec4(mix(base, ink, edge * 0.9), 1.0);
     #include <colorspace_fragment>
   }`;
@@ -452,6 +522,7 @@ export function createWorld(canvas) {
   // About two windows in three light up at night; they're baked into their own mesh so they can glow.
   // A separate random stream, so the town's layout stays exactly the same.
   const litBatch = new Batch();
+  const neonBatch = new Batch();
   const litRng = mulberry32(4041);
   const obstacles = []; // { d, cos, kind: "circle", r } | { d, cos, kind: "rect", right, front, hw, hd }
   const addresses = []; // doors: { dir, markerDir, spin, kind }
@@ -478,7 +549,7 @@ export function createWorld(canvas) {
     g.traverse((o) => {
       if (!o.isMesh) return;
       const lit = o.material === tm(C.lamp) || (o.material === tm(C.glass) && litRng() < 0.65);
-      (lit ? litBatch : batch).add(o.geometry, o.matrixWorld, o.material.color, C.leaf.some((c) => o.material === tm(c)));
+      (o.material.userData.neon ? neonBatch : lit ? litBatch : batch).add(o.geometry, o.matrixWorld, o.material.color, C.leaf.some((c) => o.material === tm(c)));
     });
     g.traverse((o) => o.geometry?.dispose());
   }
@@ -549,13 +620,14 @@ export function createWorld(canvas) {
 
   // ---- ground
   {
-    const geo = new THREE.IcosahedronGeometry(R, 48);
+    const geo = new THREE.IcosahedronGeometry(R, Math.round(48 * R / 24));
     const pos = geo.attributes.position, col = [];
     const v = new THREE.Vector3(), c = new THREE.Color();
     const g1 = new THREE.Color(C.grass), g2 = new THREE.Color(C.grass2);
     const sand = new THREE.Color(0xeadcb4), wetSand = new THREE.Color(0xd6c497), seabed = new THREE.Color(0xc4b48c);
     const woods1 = new THREE.Color(0x5f9a52), woods2 = new THREE.Color(0x4f8946), dirt = new THREE.Color(0x9c8460);
     const concrete = new THREE.Color(0xb8bab1), dryGrass = new THREE.Color(0xa3b878);
+    const pave1 = new THREE.Color(0x3d3852), pave2 = new THREE.Color(0x34304a);
     const patch = (p) => Math.sin(p.x * 9.1 + 1.7) * Math.sin(p.y * 8.7 + 0.3) * Math.sin(p.z * 9.3 + 2.1)
       + 0.5 * Math.sin(p.x * 23.3) * Math.sin(p.y * 21.1 + 1) * Math.sin(p.z * 22.7 + 0.5);
     const m = new THREE.Vector3();
@@ -570,6 +642,7 @@ export function createWorld(canvas) {
         c.copy(h < SEA_LEVEL - 0.05 ? seabed : h < -0.04 ? wetSand : sand);
       } else if (zone === "woods") c.copy(n > 0.55 ? dirt : n > 0.1 ? woods2 : woods1);
       else if (zone === "works") c.copy(n > -0.1 ? concrete : dryGrass);
+      else if (zone === "neon") c.copy(n > 0.2 ? pave1 : pave2);
       else c.copy(n > 0.15 ? g2 : g1);
       for (let k = 0; k < 3; k++) col.push(c.r, c.g, c.b);
     }
@@ -597,7 +670,7 @@ export function createWorld(canvas) {
   const lamps = []; // where each street lamp hangs (unit vectors)
   {
     const asphalt = new THREE.Color(C.asphalt), paint = new THREE.Color(C.paint), walkC = new THREE.Color(C.walk), curbC = new THREE.Color(C.curb);
-    const SEG = 480;
+    const SEG = Math.round(480 * R / 24); // strips ~0.31 m long, whatever the planet's size
     ROADS.forEach((road, ri) => {
       let poleRun = null, lastNear = Infinity;
       for (let i = 0; i < SEG; i++) {
@@ -762,14 +835,14 @@ export function createWorld(canvas) {
   const spray = createDust(world, noNormals, 70, 0xffffff);
   const smoke = createDust(world, noNormals, 40, 0xd9d5cc);
   buildBiomes({
-    R, C, ROADS, ROAD_HW, WALK, terrain, world, noNormals, spawn, footbridge, rng: mulberry32(1357),
-    part, box, tm, toon, texFromCanvas, bake, frameAt, spinToward, offsetOnSphere, nearestRoad,
+    R, K, C, ROADS, ROAD_HW, WALK, terrain, world, noNormals, spawn, footbridge, rng: mulberry32(1357),
+    part, box, glow, NEON, tower, tm, toon, texFromCanvas, bake, frameAt, spinToward, offsetOnSphere, nearestRoad,
     addRect, addCircle, taken, clearOf, blocked, ambient,
     /// Bake a group whose parts are already placed in planet space.
     bakeAt(g) {
       g.updateMatrixWorld(true);
       g.traverse((o) => {
-        if (o.isMesh) batch.add(o.geometry, o.matrixWorld, o.material.color);
+        if (o.isMesh) (o.material.userData.neon ? neonBatch : batch).add(o.geometry, o.matrixWorld, o.material.color);
       });
       g.traverse((o) => o.geometry?.dispose());
     },
@@ -822,6 +895,8 @@ export function createWorld(canvas) {
       { f: apartment, w: [4.6, 5.4], d: [3.8, 4.2], floors: [2, 3], p: 0.28 },
       { f: shop, w: [4.2, 4.8], d: [3.6, 3.8], floors: [1, 1], p: 0.3 },
     ];
+    const TOWER = { f: tower, w: [3.6, 4.6], d: [3.4, 4.0], floors: [4, 8] };
+    const inNeon = (d) => terrain.zoneAt(d).key === "neon";
     const pickKind = () => {
       let r = rng();
       for (const k of kinds) if ((r -= k.p) <= 0) return k;
@@ -834,15 +909,20 @@ export function createWorld(canvas) {
         while (s < L) {
           const t = s / R, p = road.point(t), tan = road.tangent(t);
           const side = new THREE.Vector3().crossVectors(p, tan).normalize().multiplyScalar(sg);
-          const k = pickKind();
+          const k = inNeon(p) ? TOWER : pickKind();
           const spec = { w: range(...k.w), d: range(...k.d), floors: Math.round(range(k.floors[0], k.floors[1])) };
           const extra = k.f === shop ? 1.3 : 0; // room for vending machines
           const dir = offsetOnSphere(p, side, ROAD_HW + WALK + 0.65 + spec.d / 2);
           const r = Math.hypot(spec.w + extra, spec.d) / 2;
-          if (nearestRoad(dir, ri) > ROAD_HW + WALK + 0.3 + r && clearOf(dir, r * 0.92) && inTown(dir) && !wetNear(dir, r + 0.6)) {
+          if (nearestRoad(dir, ri) > ROAD_HW + WALK + 0.3 + r && clearOf(dir, r * 0.92) && (inTown(dir) || (k === TOWER && inNeon(dir))) && !wetNear(dir, r + 0.6)) {
             const spin = spinToward(dir, p);
             const b = k.f(spec);
             bake(b.g, dir, spin);
+            if (b.extras) {
+              b.extras.position.copy(dir).multiplyScalar(R);
+              b.extras.quaternion.copy(frameAt(dir, spin));
+              world.add(b.extras);
+            }
             addRect(dir, spin, spec.w / 2 + 0.05, spec.d / 2 + 0.6, { h: b.h, hd: spec.d / 2 + 0.1 });
             if (extra) {
               const q = frameAt(dir, spin);
@@ -880,7 +960,11 @@ export function createWorld(canvas) {
     // Straight ahead of where you start (you face along the first street), set back from the pavement.
     const road = ROADS[0];
     let best = null;
-    for (let k = 8; k <= 16 && !best; k += 0.5) {
+    // Nearest first, ahead of you before behind.
+    const ks = [];
+    for (let k = 8; k <= 40; k += 0.5) ks.push(k, -k);
+    for (const k of ks) {
+      if (best) break;
       const b = road.point(spawnSpot.t + k / R), side = new THREE.Vector3().crossVectors(b, road.tangent(spawnSpot.t + k / R)).normalize();
       for (const off of [1.6, 2.1, -1.6, -2.1]) {
         const d = offsetOnSphere(b, side, Math.sign(off) * (ROAD_HW + WALK + Math.abs(off)));
@@ -973,16 +1057,16 @@ export function createWorld(canvas) {
   {
     const lr = mulberry32(4242); // its own stream, so the rest of the town keeps its layout
     const cands = [];
-    for (let i = 0; i < 20000; i++) {
+    for (let i = 0; i < 20000 * K; i++) {
       const d = new THREE.Vector3(lr() * 2 - 1, lr() * 2 - 1, lr() * 2 - 1).normalize();
       const far = arc(d, spawnSpot.p), nr = nearestRoad(d);
-      if (far > 60 || nr < ROAD_HW + WALK + 1.7 || nr > ROAD_HW + WALK + 6) continue;
+      if (far > 60 * R / 24 || nr < ROAD_HW + WALK + 1.7 || nr > ROAD_HW + WALK + 6) continue;
       if (!inTown(d) || wetNear(d, 3) || !clearOf(d, 1.9) || blocked(d, 1.9)) continue;
       cands.push({ d, far });
     }
     cands.sort((a, b) => a.far - b.far);
     for (const c of cands) {
-      if (lots.length >= 30) break;
+      if (lots.length >= 48) break;
       if (lots.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
       const spin = faceStreet(c.d);
       lots.push({ d: c.d, spin });
@@ -994,7 +1078,7 @@ export function createWorld(canvas) {
   }
 
   // ---- parks: trees, bushes and benches fill the blocks between streets
-  for (let n = 0, placed = 0; placed < 260 && n < 9000; n++) {
+  for (let n = 0, placed = 0; placed < 260 * K && n < 9000 * K; n++) {
     const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
     if (nearestRoad(d) < ROAD_HW + WALK + 0.9 || !clearOf(d, 0.9) || !inTown(d) || wetNear(d, 1.2)) continue;
     const roll = rng();
@@ -1040,6 +1124,9 @@ export function createWorld(canvas) {
   world.add(town);
   const litWindows = litBatch.build(toon(0xffffff, { vertexColors: true, emissive: 0xffc46b, emissiveIntensity: 0 }));
   world.add(litWindows);
+  const neonLights = neonBatch.build(new THREE.MeshBasicMaterial({ vertexColors: true }));
+  neonLights.castShadow = false;
+  world.add(neonLights);
 
   // ---- grass tufts: tiny instanced blades that the ink pass turns into hatching
   {

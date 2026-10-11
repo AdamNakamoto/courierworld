@@ -236,7 +236,7 @@ function collected(s) {
   sparkle.puff(s.mesh.position, s.d, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
   hud();
   toast(stamps.found === STAMPS ? "Every golden stamp on the planet!" : `Golden stamp! ${stamps.found} of ${STAMPS}`);
-  if (stamps.found === STAMPS) say([{ name: "You", text: "That's all fifteen golden stamps. The whole planet, done!" }]);
+  if (stamps.found === STAMPS) say([{ name: "You", text: `That's all ${STAMPS} golden stamps. The whole planet, done!` }]);
 }
 
 // ---------------------------------------------------------------- envelope markers
@@ -570,7 +570,7 @@ const spawnQ = (() => {
   const q2 = new THREE.Quaternion().setFromAxisAngle(UP, Math.atan2(tan.x, -tan.z));
   return q2.multiply(q1);
 })();
-const TITLE_CAM = { pos: new THREE.Vector3(0, 6, 74), look: new THREE.Vector3(0, 0, 0) };
+const TITLE_CAM = { pos: new THREE.Vector3(0, 6, 74).multiplyScalar(R / 24), look: new THREE.Vector3(0, 0, 0) };
 // The camera you asked for (pitch, dist) and the one in use, which lifts over buildings that would
 // get in the way, or comes in closer, and eases back once the view is clear.
 let camPitch = 0.56, camDist = 8, camDodge = 0, camLift = 0; // camLift rises and falls with the courier
@@ -904,6 +904,8 @@ function nearby(p) {
   if (A.sea) out.sea = 1 - Math.min(1, Math.max(0, (arc(p, A.sea.d) - A.sea.r * R) / 16));
   if (A.falls?.length) out.falls = 1 - Math.min(1, Math.max(0, (Math.min(...A.falls.map((f) => arc(p, f))) - 2) / 16));
   if (A.works) out.works = 1 - Math.min(1, Math.max(0, (arc(p, A.works.d) - A.works.r) / 12));
+  // The neon district hums too, a little quieter.
+  if (A.neon) out.works = Math.max(out.works, 0.6 * (1 - Math.min(1, Math.max(0, (arc(p, A.neon.d) - A.neon.r) / 12))));
   return out;
 }
 
