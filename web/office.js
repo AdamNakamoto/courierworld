@@ -37,6 +37,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
+  let skinSecret = ""; // the reveal secret while the owner types it; never stored
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0, huntAmount = "", huntReward = ""; // the StampHunt contract, read every few seconds
@@ -295,6 +296,15 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         html += `<p class="note">${sealed ? "The mint is closed. The skins are revealed soon." : "The mint is over and the skins are revealed. Find more on OpenSea."}</p>`;
       }
       html += `<p class="note">Resales pay a 5% royalty to the game, enforced by the contract: marketplaces can only sell skins in trades that pay it.</p>`;
+      if (k.isOwner && sealed) {
+        html += `<div class="admin-hunt"><h4>Collection <span class="muted">you own the skins contract</span></h4>
+          <button class="pbtn wide" data-act="skinSale" ${busy ? "disabled" : ""}>${k.saleOpen ? "Close the sale" : "Open the sale"}</button>`;
+        if (!k.saleOpen) {
+          html += `<label class="field">Reveal secret<input id="skinSecret" data-act="skinSecret" type="password" autocomplete="off" spellcheck="false" placeholder="the number deploy-skins.sh printed"></label>
+            <button class="pbtn primary wide" data-act="skinReveal" ${busy ? "disabled" : ""}>Reveal the skins</button>`;
+        }
+        html += `<p class="note">Close the sale, wait about 15 seconds, then reveal: the reveal must come in a later block than the close, so nobody can mint knowing the designs. The secret is checked against the contract before anything is sent, and the reveal ends the sale for good.</p></div>`;
+      }
       if (k.mine?.length) {
         html += `<h4>Your skins <span class="muted">${k.mine.length}</span></h4><div class="couriers">`;
         for (const m of k.mine) {
@@ -349,6 +359,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     if (force || html !== lastMore) {
       lastMore = html;
       $("officeMore").innerHTML = html;
+      const sec = $("skinSecret");
+      if (sec) sec.value = skinSecret;
     }
     trade?.update(s);
   }
@@ -431,6 +443,21 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         onWearSkin(null);
         return draw(true);
       case "revealSkins": return run("Revealing the skins", () => chain.devRevealSkins());
+      case "skinSale": {
+        const open = !snap.skins.saleOpen;
+        return run(open ? "Opening the skins sale" : "Closing the skins sale", () => chain.skinsAdmin.setSaleOpen(open));
+      }
+      case "skinReveal": {
+        let secret;
+        try { secret = BigInt(skinSecret.trim()); } catch { secret = null; }
+        if (secret === null || secret < 0n) return toast("Paste the reveal secret: the number deploy-skins.sh printed.", "error");
+        return run("Revealing the skins", async () => {
+          if (!(await chain.skinsAdmin.isSecret(secret))) throw new Error("That isn't this collection's reveal secret.");
+          if (!confirm("Reveal the skins now? This ends the sale for good and fixes every skin's design.")) throw new Error("Reveal cancelled.");
+          await chain.skinsAdmin.reveal(secret);
+          skinSecret = "";
+        });
+      }
       case "fund": return run("Adding 10 play ETH", () => chain.devFund());
       case "gift": return run("Handing you 3 couriers", () => chain.devCouriers(3));
       case "warp": return run(`Skipping ${duration(Number(b.dataset.s))}`, () => chain.devWarp(Number(b.dataset.s)));
@@ -448,6 +475,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     if (e.target.dataset.act === "feeWallet") newFeeWallet = e.target.value.trim();
     if (e.target.dataset.act === "huntAmount") huntAmount = e.target.value.trim();
     if (e.target.dataset.act === "huntReward") huntReward = e.target.value.trim();
+    if (e.target.dataset.act === "skinSecret") skinSecret = e.target.value;
   });
 
   refresh();

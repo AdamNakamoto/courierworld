@@ -111,7 +111,8 @@ only after reading on-chain that the wallet on their name tag owns it (`SKINS_AD
 cd contracts
 ./script/deploy-skins.sh                          # dry run on a fork
 ./script/deploy-skins.sh --broadcast --browser    # deploy (in your own terminal: it prints the reveal secret once)
-# then: setSaleOpen(true) from the owner wallet; after the mint, reveal(secret)
+# OPEN_SALE=true opens the mint at deploy. After it: close the sale, wait ~15 s, reveal with the secret
+# (the owner sees these controls in the Post Office panel)
 cd ../multiplayer
 npx wrangler deploy --var SKINS_ADDRESS:0x…
 ```
@@ -172,7 +173,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
 
 ```bash
-cd contracts && forge test                                             # 125 tests
+cd contracts && forge test                                             # 140 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 

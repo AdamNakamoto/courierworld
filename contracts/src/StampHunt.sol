@@ -68,6 +68,8 @@ contract StampHunt is Ownable2Step, EIP712, ReentrancyGuard {
     error BadSignature();
     error NothingToClaim();
     error PoolEmpty();
+    error DailyLimitReached();
+    error ZeroLimit();
 
     constructor(
         IERC20 stamp_,
@@ -80,6 +82,7 @@ contract StampHunt is Ownable2Step, EIP712, ReentrancyGuard {
     ) Ownable(owner_) EIP712("Courier World Stamp Hunt", "1") {
         if (address(stamp_) == address(0) || address(postOffice_) == address(0) || signer_ == address(0)) revert ZeroAddress();
         if (rewardPerStamp_ == 0) revert ZeroReward();
+        if (maxStampsPerDay_ == 0) revert ZeroLimit();
         stamp = stamp_;
         postOffice = postOffice_;
         signer = signer_;
@@ -129,6 +132,8 @@ contract StampHunt is Ownable2Step, EIP712, ReentrancyGuard {
         (count, amount) = claimable(msg.sender, day, stamps);
         if (count == 0) {
             if (claimed[msg.sender][day] >= (stamps > maxStampsPerDay ? maxStampsPerDay : stamps)) revert NothingToClaim();
+            // The day's limit is spent (a deposit wouldn't help), or else the pool is short.
+            if (dailyLimit != 0 && (dailyLimit > paidFor[day] ? dailyLimit - paidFor[day] : 0) < rewardPerStamp) revert DailyLimitReached();
             revert PoolEmpty();
         }
         claimed[msg.sender][day] += count;
@@ -167,7 +172,9 @@ contract StampHunt is Ownable2Step, EIP712, ReentrancyGuard {
         emit RewardSet(rewardPerStamp_);
     }
 
+    /// @notice `maxStampsPerDay` must be at least 1 (pause the hunt by withdrawing the pool); `dailyLimit` 0 means none.
     function setLimits(uint16 maxStampsPerDay_, uint256 dailyLimit_) external onlyOwner {
+        if (maxStampsPerDay_ == 0) revert ZeroLimit();
         maxStampsPerDay = maxStampsPerDay_;
         dailyLimit = dailyLimit_;
         emit LimitsSet(maxStampsPerDay_, dailyLimit_);

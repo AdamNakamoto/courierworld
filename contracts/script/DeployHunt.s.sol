@@ -18,19 +18,29 @@ contract DeployHunt is Script {
         address stamp = vm.envAddress("STAMP");
         address office = vm.envAddress("OFFICE");
         address signer = vm.envAddress("HUNT_SIGNER");
+        uint256 reward = vm.envOr("HUNT_REWARD", uint256(10e18));
+        uint256 maxPerDay = vm.envOr("HUNT_MAX_PER_DAY", uint256(24));
+        uint256 dailyLimit = vm.envOr("HUNT_DAILY_LIMIT", uint256(10_000e18));
+        // The token and post office are immutable in the hunt: check they're the game's real pair.
+        require(office.code.length > 0, "OFFICE has no code");
+        require(IGameOffice(office).stamp() == stamp, "OFFICE is not STAMP's post office");
+        require(maxPerDay > 0 && maxPerDay <= type(uint16).max, "HUNT_MAX_PER_DAY must be 1 to 65535");
+
         vm.startBroadcast();
         address owner = vm.envOr("HUNT_OWNER", msg.sender);
-        hunt = new StampHunt(
-            IERC20(stamp),
-            IPostOfficeOffices(office),
-            signer,
-            owner,
-            vm.envOr("HUNT_REWARD", uint256(10e18)),
-            uint16(vm.envOr("HUNT_MAX_PER_DAY", uint256(24))),
-            vm.envOr("HUNT_DAILY_LIMIT", uint256(10_000e18))
-        );
+        hunt = new StampHunt(IERC20(stamp), IPostOfficeOffices(office), signer, owner, reward, uint16(maxPerDay), dailyLimit);
         vm.stopBroadcast();
         console2.log("StampHunt", address(hunt));
         console2.log("HuntOwner", owner);
+        console2.log("Stamp", stamp);
+        console2.log("Office", office);
+        console2.log("Signer", signer);
+        console2.log("RewardPerStamp", reward);
+        console2.log("MaxStampsPerDay", maxPerDay);
+        console2.log("DailyLimit", dailyLimit);
     }
+}
+
+interface IGameOffice {
+    function stamp() external view returns (address);
 }

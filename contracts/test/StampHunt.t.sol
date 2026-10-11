@@ -6,6 +6,7 @@ import {StampToken} from "../src/StampToken.sol";
 import {PostOffice} from "../src/PostOffice.sol";
 import {StampHunt, IPostOfficeOffices} from "../src/StampHunt.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {DeployHunt} from "../script/DeployHunt.s.sol";
 
 /// The golden stamp hunt, against the real post office.
 contract StampHuntTest is CourierFixture {
@@ -146,6 +147,89 @@ contract StampHuntTest is CourierFixture {
         assertEq(_claim(bob, day, 4), 10e18);
         vm.warp(block.timestamp + 1 days);
         assertEq(_claim(bob, hunt.today(), 4), 40e18);
+    }
+
+    /// Audit 25e6a0b3 #2: a cap of 0 would silently stop every payout, so it can't be set.
+    function test_MaxPerDayCantBeZero() public {
+        vm.expectRevert(StampHunt.ZeroLimit.selector);
+        new StampHunt(stamp, IPostOfficeOffices(address(office)), signer, owner, REWARD, 0, 0);
+        vm.prank(owner);
+        vm.expectRevert(StampHunt.ZeroLimit.selector);
+        hunt.setLimits(0, 0);
+    }
+
+    /// Audit 25e6a0b3 #4: a claim stopped by the day's limit says so, not that the pool is empty.
+    function test_DailyLimitRevertNamesTheLimit() public {
+        vm.prank(owner);
+        hunt.setLimits(24, 50e18);
+        vm.prank(bob);
+        office.openOffice{value: OFFICE}(address(0));
+        uint32 day = hunt.today();
+        assertEq(_claim(alice, day, 5), 50e18);
+        vm.expectRevert(StampHunt.DailyLimitReached.selector);
+        this.claimAs(bob, day, 4);
+        assertEq(hunt.pool(), 950e18);
+    }
+
+    function test_DailyLimitNotAMultipleOfTheReward() public {
+        vm.prank(owner);
+        hunt.setLimits(24, 25e18);
+        uint32 day = hunt.today();
+        assertEq(_claim(alice, day, 3), 20e18); // two stamps fit in 25
+        vm.expectRevert(StampHunt.DailyLimitReached.selector);
+        this.claimAs(alice, day, 3);
+        assertEq(hunt.claimed(alice, day), 2);
+    }
+
+    function test_LoweringTheCapBelowWhatWasClaimed() public {
+        uint32 day = hunt.today();
+        _claim(alice, day, 6);
+        vm.prank(owner);
+        hunt.setLimits(4, 0);
+        vm.expectRevert(StampHunt.NothingToClaim.selector);
+        this.claimAs(alice, day, 8);
+    }
+
+    /// A voucher works up to its deadline second, and for its own day after midnight UTC.
+    function test_ClaimAtTheDeadlineAndAfterTheDayRolls() public {
+        uint32 day = hunt.today();
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _voucher(alice, day, 2, deadline);
+        vm.warp(deadline);
+        vm.prank(alice);
+        assertEq(hunt.claim(day, 2, deadline, sig), 20e18);
+        // The next UTC day: yesterday's finds still pay, with a fresh voucher.
+        vm.warp((uint256(day) + 1) * 1 days);
+        assertEq(hunt.today(), day + 1);
+        assertEq(_claim(alice, day, 3), 10e18);
+    }
+
+    /// Audit 25e6a0b3 #2: the deploy script refuses settings it would otherwise truncate or mismatch.
+    function test_DeployScriptRefusesBadSettings() public {
+        vm.setEnv("STAMP", vm.toString(address(stamp)));
+        vm.setEnv("OFFICE", vm.toString(address(office)));
+        vm.setEnv("HUNT_SIGNER", vm.toString(signer));
+        vm.setEnv("HUNT_OWNER", vm.toString(owner));
+        DeployHunt script = new DeployHunt();
+
+        vm.setEnv("HUNT_MAX_PER_DAY", "70000");
+        vm.expectRevert(bytes("HUNT_MAX_PER_DAY must be 1 to 65535"));
+        script.run();
+        vm.setEnv("HUNT_MAX_PER_DAY", "0");
+        vm.expectRevert(bytes("HUNT_MAX_PER_DAY must be 1 to 65535"));
+        script.run();
+
+        vm.setEnv("HUNT_MAX_PER_DAY", "24");
+        vm.setEnv("STAMP", vm.toString(address(office)));
+        vm.setEnv("OFFICE", vm.toString(address(stamp)));
+        vm.expectRevert();
+        script.run();
+
+        vm.setEnv("STAMP", vm.toString(address(stamp)));
+        vm.setEnv("OFFICE", vm.toString(address(office)));
+        StampHunt h = script.run();
+        assertEq(h.maxStampsPerDay(), 24);
+        assertEq(address(h.stamp()), address(stamp));
     }
 
     function test_OwnerControls() public {

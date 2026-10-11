@@ -33,6 +33,12 @@ const ERROR_TEXT = {
   PermitFailed: "The wallet signature didn't work. Try again.",
   TransferFailed: "A token transfer failed. Check your balance.",
   PriceLimitAlreadyExceeded: "The pool doesn't hold any IMD to pay for sells right now.",
+  SaleStillOpen: "Close the sale first, then reveal.",
+  RevealTooSoon: "The sale was closed moments ago: wait about 15 seconds, then reveal.",
+  BadSecret: "That isn't this collection's reveal secret.",
+  ZeroPrice: "The price can't be zero.",
+  DailyLimitReached: "Today's golden stamp payouts have run out. Your stamps stay claimable tomorrow.",
+  PoolEmpty: "The golden stamp pool is empty right now. Check back soon.",
 };
 
 // Uniswap v4 wraps a hook's revert; the reason inside is what the player needs.
@@ -176,10 +182,10 @@ export async function connectChain() {
       local: dep.local, explorer: dep.explorer, devAccounts: !browserWallet, browserWallet,
     };
     if (C.skins) {
-      const [minted, price, saleOpen, seed] = await Promise.all([
-        read(C.skins, "totalMinted"), read(C.skins, "price"), read(C.skins, "saleOpen"), read(C.skins, "seed"),
+      const [minted, price, saleOpen, seed, owner] = await Promise.all([
+        read(C.skins, "totalMinted"), read(C.skins, "price"), read(C.skins, "saleOpen"), read(C.skins, "seed"), read(C.skins, "owner"),
       ]);
-      s.skins = { minted: Number(minted), price, saleOpen, seed, address: C.skins.address, mine: null };
+      s.skins = { minted: Number(minted), price, saleOpen, seed, address: C.skins.address, mine: null, isOwner: !!account && same(owner, account) };
       if (account) {
         const ids = (await read(C.skins, "tokensOfOwner", [account])).map(Number);
         // A skin's design never changes once revealed, so it's read once.
@@ -486,6 +492,15 @@ export async function connectChain() {
     },
     mint: (s, n) => send(C.nft, "mint", [BigInt(n)], s.price * BigInt(n)),
     mintSkins: (s, n) => send(C.skins, "mint", [BigInt(n)], s.skins.price * BigInt(n)),
+    /// The skins contract's owner: open or close the sale, and reveal once it has been closed for a block.
+    skinsAdmin: C.skins ? {
+      setSaleOpen: (open) => send(C.skins, "setSaleOpen", [open]),
+      /// True if `secret` (a number, as deploy-skins.sh printed it) is the one committed at deploy.
+      async isSecret(secret) {
+        return keccak256(encodeAbiParameters([{ type: "uint256" }], [secret])) === (await read(C.skins, "seedCommit"));
+      },
+      reveal: (secret) => send(C.skins, "reveal", [secret]),
+    } : null,
     openOffice: (s, ref) => send(C.office, "openOffice", [ref], s.officePrice),
     assign: (id) => send(C.office, "assign", [BigInt(id)]),
     unassign: (id) => send(C.office, "unassign", [BigInt(id)]),
@@ -518,6 +533,8 @@ export async function connectChain() {
     },
     /// Local chain only: reveal the skins with the dev secret, as the owner (the reveal also ends their sale).
     async devRevealSkins() {
+      if (await read(C.skins, "saleOpen")) await send(C.skins, "setSaleOpen", [false], undefined, accounts[0], devWallet);
+      await test.mine({ blocks: 1 }); // the reveal must come in a later block than the close
       await send(C.skins, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
     },
     /// Local chain only: move `n` couriers from the dev players to the logged-in wallet.

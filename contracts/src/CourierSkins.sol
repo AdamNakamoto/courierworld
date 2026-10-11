@@ -47,6 +47,8 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
 
     uint256 public price;
     bool public saleOpen;
+    /// @notice The block the sale was last closed in; the reveal must come in a later one.
+    uint256 public saleClosedAt;
     uint256 public totalMinted;
     address public treasury;
 
@@ -67,6 +69,8 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     event ImagesFrozen();
     /// @notice ERC-7572: marketplaces re-read contractURI when they see this.
     event ContractURIUpdated();
+    /// @notice ERC-4906: marketplaces re-read these tokens' metadata.
+    event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     error SaleClosed();
     error BadQuantity();
@@ -74,6 +78,9 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     error WrongPayment();
     error NotRevealed();
     error AlreadyRevealed();
+    error SaleStillOpen();
+    error RevealTooSoon();
+    error ZeroPrice();
     error BadSecret();
     error ZeroAddress();
     error NotAContract();
@@ -90,6 +97,7 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         string memory imageBase_
     ) ERC721("Courier Skins", "CSKIN") Ownable(owner_) {
         if (treasury_ == address(0)) revert ZeroAddress();
+        if (price_ == 0) revert ZeroPrice();
         treasury = treasury_;
         price = price_;
         seedCommit = seedCommit_;
@@ -108,24 +116,26 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         for (uint256 i = 0; i < quantity; i++) {
             _mint(msg.sender, ++totalMinted);
         }
-        // Paid straight to the treasury: this contract never holds ETH.
-        Address.sendValue(payable(treasury), msg.value);
+        // Paid straight to the treasury, with anything ever forced in here: this contract never holds ETH.
+        Address.sendValue(payable(treasury), address(this).balance);
     }
 
     // ---------------------------------------------------------------- reveal
 
-    /// @notice End the sale for good and fix every skin's design. The committed secret is mixed with a recent
-    ///         blockhash, so the owner can't pre-compute the designs either.
+    /// @notice Fix every skin's design, and end the sale for good. The committed secret is mixed with the
+    ///         previous block's hash, and the sale must have been closed in an earlier block than this one: that
+    ///         hash didn't exist yet while anyone could mint, so nobody (the owner included) could mint knowing a
+    ///         design. On Robinhood Chain, an Arbitrum chain, `block.number` follows the parent chain, so "an
+    ///         earlier block" means waiting for the next parent-chain block (about 12 seconds) after closing.
     function reveal(uint256 secret) external onlyOwner {
         if (seed != 0) revert AlreadyRevealed();
+        if (saleOpen) revert SaleStillOpen();
+        if (block.number <= saleClosedAt) revert RevealTooSoon();
         if (keccak256(abi.encode(secret)) != seedCommit) revert BadSecret();
-        if (saleOpen) {
-            saleOpen = false;
-            emit SaleOpen(false);
-        }
         uint256 s = uint256(keccak256(abi.encode(secret, blockhash(block.number - 1))));
         seed = s == 0 ? 1 : s;
         emit Revealed(seed);
+        if (totalMinted != 0) emit BatchMetadataUpdate(1, totalMinted);
     }
 
     /// @notice The design a skin turned out to be: an index into the list in web/skins.js (0 Night Rider ... 15
@@ -149,7 +159,7 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     }
 
     /// @dev Card `slot` of the unshuffled deck, dealt in design order.
-    function _designAt(uint256 slot) private pure returns (uint256 design) {
+    function _designAt(uint256 slot) internal pure returns (uint256 design) {
         uint256 end;
         for (design = 0; design < DESIGNS; design++) {
             end += supplyOf(design);
@@ -160,7 +170,7 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
 
     /// @dev A keyed shuffle of 0..998: a 4-round Feistel network on 10 bits (a permutation of 0..1023), repeated
     ///      until it lands inside the deck. Different inputs always give different outputs.
-    function _shuffle(uint256 x) private view returns (uint256) {
+    function _shuffle(uint256 x) internal view returns (uint256) {
         uint256 s = seed;
         do {
             uint256 l = x >> 5;
@@ -323,10 +333,13 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     function setSaleOpen(bool open) external onlyOwner {
         if (seed != 0) revert AlreadyRevealed();
         saleOpen = open;
+        if (!open) saleClosedAt = block.number;
         emit SaleOpen(open);
     }
 
+    /// @notice Never free: every skin is paid for.
     function setPrice(uint256 price_) external onlyOwner {
+        if (price_ == 0) revert ZeroPrice();
         price = price_;
         emit PriceSet(price_);
     }
@@ -345,6 +358,7 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         imageBase = imageBase_;
         emit ImageBaseSet(imageBase_);
         emit ContractURIUpdated();
+        if (totalMinted != 0) emit BatchMetadataUpdate(1, totalMinted);
     }
 
     /// @notice Point the collection's metadata somewhere else (a JSON URL), or back to the built-in one ("").
@@ -365,6 +379,7 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC2981) returns (bool) {
-        return interfaceId == type(ICreatorToken).interfaceId || super.supportsInterface(interfaceId);
+        return interfaceId == type(ICreatorToken).interfaceId || interfaceId == bytes4(0x49064906) // ERC-4906
+            || super.supportsInterface(interfaceId);
     }
 }

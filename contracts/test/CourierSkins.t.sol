@@ -24,6 +24,28 @@ contract StrictValidator {
     }
 }
 
+/// Exposes the shuffle for any seed.
+contract ShuffleHarness is CourierSkins {
+    constructor(address validator, uint256 seed_) CourierSkins(msg.sender, msg.sender, 1, bytes32(0), validator, "") {
+        seed = seed_ == 0 ? 1 : seed_;
+    }
+
+    function shuffle(uint256 x) external view returns (uint256) {
+        return _shuffle(x);
+    }
+
+    function designAt(uint256 slot) external pure returns (uint256) {
+        return _designAt(slot);
+    }
+}
+
+/// Puts ETH into an address without calling it (SELFDESTRUCT in the creating transaction).
+contract ForceSend {
+    constructor(address payable to) payable {
+        selfdestruct(to);
+    }
+}
+
 contract CourierSkinsTest is Test {
     CourierSkins skins;
     StrictValidator validator;
@@ -51,8 +73,11 @@ contract CourierSkinsTest is Test {
         skins.mint{value: PRICE * n}(n);
     }
 
+    /// Close the sale, wait a block, reveal: the order the contract requires.
     function _reveal() internal {
-        vm.roll(block.number + 5);
+        vm.prank(owner);
+        skins.setSaleOpen(false);
+        vm.roll(block.number + 1);
         vm.prank(owner);
         skins.reveal(SECRET);
     }
@@ -99,6 +124,9 @@ contract CourierSkinsTest is Test {
         vm.expectRevert(CourierSkins.NotRevealed.selector);
         skins.designOf(1);
         vm.prank(owner);
+        skins.setSaleOpen(false);
+        vm.roll(block.number + 1);
+        vm.prank(owner);
         vm.expectRevert(CourierSkins.BadSecret.selector);
         skins.reveal(1);
         vm.prank(alice);
@@ -113,6 +141,47 @@ contract CourierSkinsTest is Test {
         skins.reveal(SECRET);
         vm.expectRevert(CourierSkins.AlreadyRevealed.selector);
         skins.setSaleOpen(true);
+        vm.stopPrank();
+    }
+
+    /// Audit 25e6a0b3 #1: the reveal's entropy must not exist while anyone can still mint.
+    function test_RevealNeedsTheSaleClosedInAnEarlierBlock() public {
+        _mint(alice, 2);
+        uint256 b = block.number + 3; // explicit numbers: via-IR may reuse one read of block.number
+        vm.roll(b);
+        vm.startPrank(owner);
+        vm.expectRevert(CourierSkins.SaleStillOpen.selector);
+        skins.reveal(SECRET);
+        skins.setSaleOpen(false);
+        assertEq(skins.saleClosedAt(), b);
+        vm.expectRevert(CourierSkins.RevealTooSoon.selector);
+        skins.reveal(SECRET);
+        // Reopening and closing again moves the reveal to after the new close.
+        vm.roll(b + 1);
+        skins.setSaleOpen(true);
+        skins.setSaleOpen(false);
+        assertEq(skins.saleClosedAt(), b + 1);
+        vm.expectRevert(CourierSkins.RevealTooSoon.selector);
+        skins.reveal(SECRET);
+        vm.roll(b + 2);
+        skins.reveal(SECRET);
+        vm.stopPrank();
+        assertTrue(skins.seed() != 0);
+    }
+
+    /// The audit's proof: the owner computes the seed from the secret and the current block, mints the next
+    /// ten, and reveals in the same block. The reveal now refuses, so the prediction is worthless.
+    function test_OwnerCantMintKnowingTheDesigns() public {
+        _mint(alice, 5);
+        vm.roll(block.number + 10);
+        vm.deal(owner, 1 ether);
+        vm.startPrank(owner);
+        skins.mint{value: PRICE * 10}(10);
+        vm.expectRevert(CourierSkins.SaleStillOpen.selector);
+        skins.reveal(SECRET);
+        skins.setSaleOpen(false);
+        vm.expectRevert(CourierSkins.RevealTooSoon.selector);
+        skins.reveal(SECRET);
         vm.stopPrank();
     }
 
@@ -150,8 +219,29 @@ contract CourierSkinsTest is Test {
         vm.prank(alice);
         s.mint{value: PRICE * 10}(10);
         vm.prank(owner);
+        s.setSaleOpen(false);
+        vm.roll(block.number + 1);
+        vm.prank(owner);
         s.reveal(secret);
         for (uint256 id = 1; id <= 10; id++) assertLt(s.designOf(id), 16);
+    }
+
+    /// For any seed, the shuffle sends 0..998 to 0..998 with no two the same, so every design is dealt
+    /// exactly its supply over the full deck.
+    /// forge-config: default.fuzz.runs = 48
+    function testFuzz_ShuffleIsABijection(uint256 seed) public {
+        ShuffleHarness h = new ShuffleHarness(address(validator), seed);
+        uint256[4] memory seen; // a 999-bit set
+        uint256[16] memory count;
+        for (uint256 x = 0; x < 999; x++) {
+            uint256 y = h.shuffle(x);
+            assertLt(y, 999);
+            uint256 bit = 1 << (y & 255);
+            assertEq(seen[y >> 8] & bit, 0, "two inputs share a slot");
+            seen[y >> 8] |= bit;
+            count[h.designAt(y)]++;
+        }
+        for (uint256 d = 0; d < 16; d++) assertEq(count[d], h.supplyOf(d));
     }
 
     // ---------------------------------------------------------------- metadata
@@ -167,6 +257,23 @@ contract CourierSkinsTest is Test {
         assertTrue(_has(json, string.concat('"name":"', skins.designName(d), " #1")));
         assertTrue(_has(json, string.concat('"value":"', skins.rarityOf(d), '"')));
         assertTrue(_has(json, '"trait_type":"Type"'));
+    }
+
+    /// Audit 25e6a0b3 #3: the reveal and an image move tell marketplaces to re-read every token (ERC-4906).
+    function test_RevealAndImageMovesRefreshMarketplaces() public {
+        _mint(alice, 3);
+        assertTrue(skins.supportsInterface(0x49064906));
+        vm.prank(owner);
+        skins.setSaleOpen(false);
+        vm.roll(block.number + 1);
+        vm.expectEmit(address(skins));
+        emit CourierSkins.BatchMetadataUpdate(1, 3);
+        vm.prank(owner);
+        skins.reveal(SECRET);
+        vm.expectEmit(address(skins));
+        emit CourierSkins.BatchMetadataUpdate(1, 3);
+        vm.prank(owner);
+        skins.setImageBase("ipfs://new/");
     }
 
     function test_DesignTable() public view {
@@ -227,6 +334,27 @@ contract CourierSkinsTest is Test {
 
     // ---------------------------------------------------------------- royalty
 
+    /// Audit 25e6a0b3 #5: never free, for the owner or anyone.
+    function test_PriceCantBeZero() public {
+        vm.prank(owner);
+        vm.expectRevert(CourierSkins.ZeroPrice.selector);
+        skins.setPrice(0);
+        vm.expectRevert(CourierSkins.ZeroPrice.selector);
+        new CourierSkins(owner, treasury, 0, bytes32(0), address(validator), "");
+        vm.prank(alice);
+        vm.expectRevert(CourierSkins.WrongPayment.selector);
+        skins.mint{value: 0}(1);
+    }
+
+    /// Audit 25e6a0b3 #6: ETH forced in without a call leaves with the next mint.
+    function test_ForcedEthGoesToTheTreasury() public {
+        new ForceSend{value: 1 ether}(payable(address(skins)));
+        assertEq(address(skins).balance, 1 ether);
+        _mint(alice, 1);
+        assertEq(address(skins).balance, 0);
+        assertEq(treasury.balance, 1 ether + PRICE);
+    }
+
     function test_RoyaltyIsFivePercentToTheTreasury() public {
         _mint(alice, 1);
         (address to, uint256 amount) = skins.royaltyInfo(1, 1 ether);
@@ -275,6 +403,18 @@ contract CourierSkinsTest is Test {
         validator.authorize(market, true);
         vm.prank(market);
         skins.transferFrom(alice, bob, 1);
+        assertEq(skins.ownerOf(1), bob);
+    }
+
+    function test_SafeTransfersWithDataAreCheckedToo() public {
+        _mint(alice, 1);
+        vm.prank(alice);
+        skins.setApprovalForAll(market, true);
+        vm.prank(market);
+        vm.expectRevert(StrictValidator.UnauthorizedTransfer.selector);
+        skins.safeTransferFrom(alice, bob, 1, "sale");
+        vm.prank(alice);
+        skins.safeTransferFrom(alice, bob, 1, "gift");
         assertEq(skins.ownerOf(1), bob);
     }
 
@@ -376,6 +516,28 @@ contract CourierSkinsTest is Test {
     }
 }
 
+/// The registry's side of OpenSea's fee-checked sales, called by the SignedZone around a transfer.
+interface IAuthorizer {
+    function beforeAuthorizedTransfer(address token, uint256 tokenId) external;
+    function afterAuthorizedTransfer(address token, uint256 tokenId) external;
+}
+
+/// Stand-in for the SignedZone's calls around a sale.
+contract ZoneFlow {
+    function sell(address registry, address token, address market, address from, address to, uint256 id) external {
+        IAuthorizer(registry).beforeAuthorizedTransfer(token, id);
+        MarketMove(market).move(token, from, to, id);
+        IAuthorizer(registry).afterAuthorizedTransfer(token, id);
+    }
+}
+
+/// Stand-in for the marketplace moving the sold token.
+contract MarketMove {
+    function move(address token, address from, address to, uint256 id) external {
+        IERC721(token).transferFrom(from, to, id);
+    }
+}
+
 /// @notice Against OpenSea's real creator fee enforcement registry on Robinhood Chain.
 ///   forge test --match-contract CourierSkinsForkTest --fork-url robinhood
 /// Skipped when not forked.
@@ -383,6 +545,7 @@ contract CourierSkinsForkTest is Test {
     address constant REGISTRY = 0xA000027A9B2802E1ddf7000061001e5c005A0000; // StrictAuthorizedTransferSecurityRegistry
     address constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395; // Seaport 1.6
     bytes4 constant UNAUTHORIZED = 0x1de5204e; // StrictAuthorizedTransferSecurityRegistry__UnauthorizedTransfer()
+    address constant SIGNED_ZONE = 0x000056F7000000EcE9003ca63978907a00FFD100; // OpenSea's SignedZone
 
     CourierSkins skins;
     address owner = makeAddr("owner");
@@ -404,6 +567,38 @@ contract CourierSkinsForkTest is Test {
         vm.prank(alice);
         skins.transferFrom(alice, bob, 1);
         assertEq(skins.ownerOf(1), bob);
+    }
+
+    /// A real OpenSea sale, as one transaction like Seaport runs it: the SignedZone (which checks the order pays
+    /// the creator fee) authorizes the token on the live registry, the approved marketplace moves it, and the
+    /// zone clears the flag. The registry keeps the flag in transient storage, so it only lives inside that
+    /// transaction; the zone and Seaport addresses get stand-in code that makes exactly those calls.
+    function test_Fork_SaleAuthorizedByOpenSeaGoesThrough() public {
+        if (block.chainid != 4663) return;
+        vm.etch(SIGNED_ZONE, address(new ZoneFlow()).code);
+        vm.etch(SEAPORT, address(new MarketMove()).code);
+        vm.prank(alice);
+        skins.setApprovalForAll(SEAPORT, true);
+        ZoneFlow(SIGNED_ZONE).sell(REGISTRY, address(skins), SEAPORT, alice, bob, 2);
+        assertEq(skins.ownerOf(2), bob);
+        // Without the zone, the same marketplace is refused.
+        vm.prank(bob);
+        skins.setApprovalForAll(SEAPORT, true);
+        vm.prank(SEAPORT);
+        vm.expectRevert(UNAUTHORIZED);
+        skins.transferFrom(bob, alice, 2);
+    }
+
+    /// Only an authorizer on the collection's list (OpenSea's zone on the default list) can authorize.
+    function test_Fork_StrangersCantAuthorize() public {
+        if (block.chainid != 4663) return;
+        vm.etch(SEAPORT, address(new MarketMove()).code);
+        ZoneFlow stranger = new ZoneFlow();
+        vm.prank(alice);
+        skins.setApprovalForAll(SEAPORT, true);
+        vm.expectRevert();
+        stranger.sell(REGISTRY, address(skins), SEAPORT, alice, bob, 1);
+        assertEq(skins.ownerOf(1), alice);
     }
 
     /// Seaport, or any approved operator, can't move a skin outside OpenSea's fee-checked flow.

@@ -217,17 +217,21 @@ owner renounced). This round adds two separate contracts that only read from it.
 999 cosmetic NFTs to wear in the game: 16 designs in `web/skins.js`. They change how a player looks and never
 touch $STAMP, the post office or the couriers.
 
-- **Mint:** blind, for ETH (`price`, 0.004 at launch), up to 10 per transaction, paid straight to the treasury in
-  the same call; the contract never holds ETH. Token IDs run 1 to 999.
-- **Reveal:** `seedCommit = keccak256(abi.encode(secret))` is fixed at deploy. `reveal(secret)` (owner, once) ends
-  the sale for good and sets `seed = keccak256(abi.encode(secret, blockhash(block.number - 1)))`, never 0.
+- **Mint:** blind, for ETH (`price`, 0.004 at launch, never 0), up to 10 per transaction. Each mint sends the
+  contract's whole balance to the treasury in the same call, so it never holds ETH. Token IDs run 1 to 999.
+- **Reveal:** `seedCommit = keccak256(abi.encode(secret))` is fixed at deploy. `setSaleOpen(false)` records
+  `saleClosedAt = block.number`. `reveal(secret)` (owner, once) needs the sale closed and `block.number >
+  saleClosedAt`, then sets `seed = keccak256(abi.encode(secret, blockhash(block.number - 1)))`, never 0: that hash
+  didn't exist while anyone could mint. The reveal ends the sale for good (`setSaleOpen` reverts after it). On
+  Robinhood Chain `block.number` follows the parent chain, so the reveal waits for the next parent-chain block.
 - **Designs:** `designOf(id) = _designAt(_shuffle(id - 1))`. `_shuffle` is a 4-round Feistel network on 10 bits
   keyed by `seed` (a permutation of 0..1023), repeated until it lands below 999 (cycle-walking), so it is a
   permutation of 0..998. `_designAt` deals that slot from a 999-card deck in design order: five designs of 120,
   four of 60, two of 40, two of 20, three of 13. A full mint therefore gives each design exactly its supply.
 - **Metadata:** `tokenURI` and `contractURI` (ERC-7572) are JSON built on-chain; only the pictures are fetched,
   from `imageBase`, which the owner can change until `freezeImages`. `setContractURI` can replace the collection
-  JSON (or restore the built-in one with "").
+  JSON (or restore the built-in one with ""). The reveal and `setImageBase` emit ERC-4906
+  `BatchMetadataUpdate(1, totalMinted)` so marketplaces re-read every token.
 - **Royalty, enforced:** ERC-2981 at a fixed 5% (`ROYALTY_BPS`) to the treasury; `setTreasury` moves mint payments
   and the royalty together and can't change the rate. ERC721-C: `_update` calls the transfer validator's
   `validateTransfer(msg.sender, from, to, tokenId)` (a view) on every transfer between two non-zero addresses;
@@ -235,9 +239,9 @@ touch $STAMP, the post office or the couriers.
   (`0xA000027A9B2802E1ddf7000061001e5c005A0000`, live on Robinhood Chain): it allows a holder moving their own token
   (`caller == from`) and any other caller only inside OpenSea's SignedZone flow, which checks the creator fee is
   paid. `setTransferValidator` (owner) only takes a contract, so enforcement can move but never be switched off.
-- **Owner powers** (two-step ownership): open or close the sale (never after the reveal), `setPrice`, `reveal`,
-  `setTreasury`, `setImageBase` until frozen, `freezeImages`, `setContractURI`, `setTransferValidator`.
-  `renounceOwnership` only works once revealed and the images are frozen. The owner can't mint for free, change
+- **Owner powers** (two-step ownership): open or close the sale (never after the reveal), `setPrice` (never 0),
+  `reveal`, `setTreasury`, `setImageBase` until frozen, `freezeImages`, `setContractURI`, `setTransferValidator`.
+  `renounceOwnership` only works once revealed and the images are frozen. The owner can't make skins free, change
   the royalty rate, hold or redirect a holder's ETH, or move anyone's skins.
 
 ### The golden stamp hunt (`StampHunt.sol`)
@@ -252,9 +256,11 @@ owner fills with `deposit` (anyone may deposit). It never mints.
   `block.timestamp / 1 days`), for a caller without an open post office (`PostOffice.offices(msg.sender).open`)
   or a signature not from `signer` over the caller's own address. It pays for `min(stamps, maxStampsPerDay)`
   minus what that wallet was already paid for that day, cut down to what the pool holds and what is left of
-  `dailyLimit` for that day (0 = no limit); the rest stays claimable with a later voucher. `nonReentrant`.
+  `dailyLimit` for that day (0 = no limit); the rest stays claimable with a later voucher. `nonReentrant`. A claim
+  that pays nothing says why: `NothingToClaim`, `DailyLimitReached` or `PoolEmpty`.
 - **Owner powers** (two-step ownership): `withdraw` any amount of the pool, `setSigner`, `setReward`,
-  `setLimits`. Deploy settings: reward 10 $STAMP, 24 stamps per wallet per day, 10,000 $STAMP per day in all.
+  `setLimits` (`maxStampsPerDay` at least 1). Deploy settings: reward 10 $STAMP, 24 stamps per wallet per day,
+  10,000 $STAMP per day in all; `DeployHunt` refuses a cap outside 1-65535 and a post office that isn't $STAMP's.
 
 ### Scope
 
@@ -275,9 +281,9 @@ forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.dr
 
 1. **Skins supply and payment:** at most 999 tokens, only through `mint` with exactly `price × quantity` while the
    sale is open; the payment reaches the treasury in the same call; nothing is ever left in the contract.
-2. **Fair reveal:** before `reveal` nobody, minter or owner, can know or influence any token's design; after it,
-   designs never change; `_shuffle` is a bijection on 0..998, so no two tokens share a deck slot and no design
-   ever exceeds its supply, whatever the seed.
+2. **Fair reveal:** nobody, minter or owner, can mint knowing any token's design: the reveal's block hash can't
+   exist while the sale is open; after the reveal, designs never change; `_shuffle` is a bijection on 0..998, so
+   no two tokens share a deck slot and no design ever exceeds its supply, whatever the seed.
 3. **Royalty can't be skipped by contract:** no path moves a skin between two non-zero addresses without calling
    the validator (`transferFrom`, both `safeTransferFrom`s, anything else reaching `_update`); the validator can't
    be set to zero or a non-contract; the royalty rate can't change from 5%; a holder can always move their own skin
@@ -296,8 +302,11 @@ forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.dr
   validator can follow OpenSea if it moves to a new registry.
 - Holders moving skins between wallets pay no royalty (a private deal can skip it); only marketplace sales are
   enforced.
-- **Reveal timing**, as for the couriers: the owner chooses when to reveal and could wait for a blockhash it likes;
-  minters can't predict designs. If the secret is lost the skins stay sealed for good.
+- **Reveal timing**, as for the couriers: after closing the sale the owner chooses when to reveal and could wait
+  for a block hash it likes, which re-rolls every design at once (it can no longer mint after seeing one). On an
+  Arbitrum chain the block hash is pseudo-random, not a secure source. If the secret is lost the skins stay
+  sealed for good.
+- The owner can mint during the sale like anyone, at the full price, which goes to its own treasury.
 - If the mint doesn't sell out, the unminted deck slots are random, so a design can end with fewer than its supply.
 - There is no per-wallet mint limit, only 10 per transaction.
 - `imageBase` is owner-set text placed in the JSON as is; the owner is trusted to set a plain URL. Pictures live on
@@ -306,3 +315,17 @@ forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.dr
   office, up to the per-wallet and daily limits, until the owner calls `setSigner`. The owner can withdraw the pool
   at any time (it is the owner's $STAMP, never the players'). A reward change applies to stamps not yet claimed.
 - `tokensOfOwner` loops over every token ID; it is meant for off-chain reads.
+
+## 10. Resolved: IMD Swarm audit 25e6a0b3 (on commit 2cf3432)
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 1 | Medium: `reveal` could run while the sale was open, so its seed was computable before it landed and the owner (or anyone seeing the pending reveal) could mint IDs with known designs; on Arbitrum the entropy is shared by every L2 block of one L1 block | `setSaleOpen(false)` records `saleClosedAt`; `reveal` reverts `SaleStillOpen` while the sale is open and `RevealTooSoon` until `block.number > saleClosedAt`, and no longer closes the sale itself. `test_OwnerCantMintKnowingTheDesigns` (the audit's proof: mint and reveal in one block is refused), `test_RevealNeedsTheSaleClosedInAnEarlierBlock` (reopening moves the reveal after the new close). |
+| 2 | Low: `DeployHunt` truncated `HUNT_MAX_PER_DAY` to uint16 and checked nothing; a cap of 0 silently stopped every payout | `StampHunt` reverts `ZeroLimit` on a cap of 0 in the constructor and `setLimits`. `DeployHunt` requires a cap of 1-65535, that `OFFICE` has code and that its `stamp()` is `STAMP`, and logs every setting. `test_MaxPerDayCantBeZero`, `test_DeployScriptRefusesBadSettings`. |
+| 3 | Low: the reveal and `setImageBase` changed every token's metadata with no ERC-4906 event | Both emit `BatchMetadataUpdate(1, totalMinted)`; `supportsInterface(0x49064906)` is true. `test_RevealAndImageMovesRefreshMarketplaces`. |
+| 4 | Info: a claim stopped by the day's limit reverted `PoolEmpty` | New `DailyLimitReached`, chosen when the day's limit, not the pool, is what's short. `test_DailyLimitRevertNamesTheLimit`, `test_DailyLimitNotAMultipleOfTheReward`. |
+| 5 | Info: `setPrice(0)` made every mint free | `setPrice` and the constructor revert `ZeroPrice` on 0; the owner's full-price mints paying its own treasury are documented in section 9. `test_PriceCantBeZero`. |
+| 6 | Info: ETH forced into the contract was stuck | `mint` forwards the whole balance to the treasury. `test_ForcedEthGoesToTheTreasury`. |
+| 7 | Info: test gaps | Added: reveal in the mint's block (finding 1); the shuffle checked as a bijection with exact design counts for 48 fuzzed seeds (`testFuzz_ShuffleIsABijection`); `safeTransferFrom` with data through the validator; a cap lowered below what was claimed; a claim at its deadline second and after the UTC day rolls; a daily limit that isn't a multiple of the reward. On a Robinhood Chain fork, a sale authorized the way OpenSea runs it (the SignedZone authorizes the token on the live registry, the approved marketplace transfers it and the flag is cleared, all in one transaction) goes through, and a stranger can't authorize (`test_Fork_SaleAuthorizedByOpenSeaGoesThrough`, `test_Fork_StrangersCantAuthorize`). |
+
+140 tests, plus 4 against OpenSea's live registry on a Robinhood Chain fork (`--match-contract CourierSkinsForkTest`).
