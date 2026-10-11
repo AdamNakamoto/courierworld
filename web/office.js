@@ -1,6 +1,7 @@
 // The Post Office panel: open an office, mint couriers, put them on duty, train
 // them, collect $STAMP. Re-rendered every second from the chain snapshot.
-import { formatEther, isAddress } from "https://esm.sh/viem@2";
+import { formatEther, isAddress, parseEther } from "https://esm.sh/viem@2";
+import { huntDay, HUNT_STAMPS } from "./hunt-pick.js";
 import { courier, SUPPLY } from "./traits.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
@@ -25,12 +26,14 @@ function duration(secs) {
   return h ? `${h}h ${m}m` : `${m}m ${secs % 60}s`;
 }
 
-export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
+/// `hunt`: the golden stamp hunt's side in the game ({ state(), signIn(), voucher() }), when it's running.
+export function createOffice(chain, { onPlayAs, onSnapshot, toast, hunt = null }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, refreshing = false;
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
+  let huntInfo = null, huntAt = 0, huntAmount = "", huntReward = ""; // the StampHunt contract, read every few seconds
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
@@ -64,6 +67,10 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
           admin = (await chain.admin.isAdmin(snap.account)) ? await chain.admin.stats() : null;
         }
       } else if (!snap.account) admin = adminFor = null;
+      if (chain.hunt && hunt && !panel.hidden && Date.now() - huntAt > 5000) {
+        huntAt = Date.now();
+        huntInfo = await chain.hunt.info(huntDay());
+      }
       draw();
     } catch (e) {
       console.error(e);
@@ -173,6 +180,33 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
           : `<p class="note">Your post office is HQ. It doesn't get bigger than this.</p>`}
         ${o.referrer !== ZERO ? `<p class="note">2.5% of what you collect goes to ${short(o.referrer)}, who invited you.</p>` : ""}
       </section>`;
+    }
+
+    // ---- the golden stamp hunt
+    if (s.game && chain.hunt && hunt && huntInfo) {
+      // The room's view of you counts only if it's for the wallet logged in now.
+      const h = huntInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
+      const found = st?.found.length ?? 0, toClaim = Math.max(0, Math.min(found, h.maxPerDay) - h.claimed);
+      const afford = h.reward ? Number(h.pool / h.reward) : 0, pay = BigInt(Math.min(toClaim, afford)) * h.reward;
+      html += `<section class="hunt"><h3>Golden stamp hunt <span class="muted">${fmt(h.reward, 0)} $STAMP each</span></h3>
+        <div class="kv"><span>Found today</span><b>${st ? `${found}/${HUNT_STAMPS}` : "–"}</b></div>
+        <div class="kv"><span>Claimed today</span><b>${h.claimed}</b></div>
+        <div class="kv"><span>Left in the pool</span><b>${fmt(h.pool, 0)} $STAMP</b></div>`;
+      if (!s.account) html += `<p class="note">Log in, open a post office and sign in to earn $STAMP for the golden stamps you find.</p>`;
+      else if (!s.office?.open) html += `<p class="note">Open a post office to redeem golden stamps for $STAMP.</p>`;
+      else if (!st?.wallet) html += `<button class="pbtn primary wide" data-act="huntSignIn" ${busy ? "disabled" : ""}>Sign in to hunt</button>
+        <p class="note">One signature proves this wallet is yours. It costs nothing and can't move anything. Stamps you find after signing in count toward $STAMP.</p>`;
+      else if (toClaim) html += `<button class="pbtn primary wide" data-act="huntClaim" ${!pay || busy ? "disabled" : ""}>${pay ? `Claim ${fmt(pay, 0)} $STAMP` : "The pool is empty: check back soon"}</button>`;
+      else html += `<p class="note">${found >= HUNT_STAMPS ? "You found every stamp today!" : "Find more golden stamps: they're hidden all over the planet."} New spots every day at 00:00 UTC.</p>`;
+      if (h.isOwner) {
+        html += `<div class="admin-hunt"><h4>Pool <span class="muted">you run the hunt</span></h4>
+          <label class="field">$STAMP to add or take out<input data-act="huntAmount" value="${huntAmount}" inputmode="decimal" placeholder="e.g. 5000"></label>
+          <div class="row2"><button class="pbtn" data-act="huntDeposit" ${busy ? "disabled" : ""}>Deposit</button><button class="pbtn" data-act="huntWithdraw" ${busy ? "disabled" : ""}>Withdraw</button></div>
+          <label class="field">Reward per stamp<input data-act="huntReward" value="${huntReward}" inputmode="decimal" placeholder="${fmt(h.reward, 0)}"></label>
+          <button class="pbtn wide" data-act="huntSetReward" ${busy ? "disabled" : ""}>Change the reward</button>
+          <p class="note">Paid out today: ${fmt(h.paidToday, 0)} $STAMP. Each wallet is paid for up to ${h.maxPerDay} stamps a day.</p></div>`;
+      }
+      html += `</section>`;
     }
 
     // ---- the leaderboard
@@ -312,6 +346,36 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
           adminAt = 0;
         });
       }
+      case "huntSignIn": return run("Signing in to the hunt", async () => {
+        await hunt.signIn();
+        huntAt = 0;
+      });
+      case "huntClaim": return run("Claiming golden stamps", async () => {
+        await chain.hunt.claim(await hunt.voucher());
+        huntAt = 0;
+      });
+      case "huntDeposit":
+      case "huntWithdraw": {
+        let amount;
+        try { amount = parseEther(huntAmount || "0"); } catch { amount = 0n; }
+        if (amount <= 0n) return toast("Enter how much $STAMP.", "error");
+        const deposit = b.dataset.act === "huntDeposit";
+        return run(deposit ? "Adding $STAMP to the pool" : "Taking $STAMP out of the pool", async () => {
+          await (deposit ? chain.hunt.deposit(amount) : chain.hunt.withdraw(amount));
+          huntAmount = "";
+          huntAt = 0;
+        });
+      }
+      case "huntSetReward": {
+        let wei;
+        try { wei = parseEther(huntReward || "0"); } catch { wei = 0n; }
+        if (wei <= 0n) return toast("Enter the new reward per stamp.", "error");
+        return run("Changing the reward", async () => {
+          await chain.hunt.setReward(wei);
+          huntReward = "";
+          huntAt = 0;
+        });
+      }
       case "upgrade": return run("Upgrading the post office", () => chain.upgrade(snap));
       case "assign": return run(`Courier #${id} heading out`, () => chain.assign(id));
       case "unassign": return run(`Courier #${id} coming back`, () => chain.unassign(id));
@@ -335,6 +399,8 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
   panel.addEventListener("input", (e) => {
     if (e.target.dataset.act === "invite") invite = e.target.value.trim();
     if (e.target.dataset.act === "feeWallet") newFeeWallet = e.target.value.trim();
+    if (e.target.dataset.act === "huntAmount") huntAmount = e.target.value.trim();
+    if (e.target.dataset.act === "huntReward") huntReward = e.target.value.trim();
   });
 
   refresh();
@@ -347,6 +413,11 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
       draw(true);
     },
     get snap() { return snap; },
+    /// The hunt changed (signed in, a find, a new day): redraw.
+    huntChanged() {
+      huntAt = 0;
+      draw(true);
+    },
     setBoard(b) {
       board = b;
       draw();

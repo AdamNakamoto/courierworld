@@ -4,6 +4,7 @@
 // and waving as they do. Positions are just for show: nothing here is on-chain.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
+import { authMessage } from "./hunt-pick.js";
 
 /// What you can show the players around you: an emoji, or an emoji and a few words. It pops up
 /// over your head (keys 1-9 and 0, or the emote buttons). The order matters: the room sends the index.
@@ -170,15 +171,18 @@ function orient(obj, up, forward) {
 }
 
 /// `url`: the room's WebSocket address. `makeRider(look, ride)` builds a courier (the same as yours),
-/// `dispose(group)` frees one,
+/// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count)` and `onNope(spot, why)` hear
+/// from the golden stamp hunt,
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
 /// (null while not connected).
-export function createNet(W, { url, makeRider, dispose, tier = () => null, onCount = () => {} }) {
+export function createNet(W, { url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {} }) {
   const players = new Map(); // id -> { hello, root, rider, tag, pos, fwd, target, h, air, spd, swim, wave }
   const anchor = new THREE.Object3D(); // where you are on the planet, for your own emotes
   W.world.add(anchor);
   const emotes = createEmotes(W.world, W.noNormals);
   let ws = null, me = null, started = false, retry = 1, sendIn = 0, pingIn = 0, last = null;
+  let code = null, voucherWait = null; // the room's sign-in code for this connection; a pending voucher request
+  const grabs = []; // stamps picked up this frame: sent right after where you are, so the room checks the spot
 
   const count = () => onCount(ws?.readyState === 1 && me ? players.size + 1 : null);
   const send = (m) => {
@@ -250,7 +254,25 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
     switch (m[0]) {
       case "welcome":
         for (const [id, hello, s] of m[2]) add(id, hello, s);
+        code = m[3] ?? null;
+        onHunt(null); // a new connection: sign in again to hunt
         break;
+      case "hunt":
+        onHunt(m[1]);
+        return;
+      case "found":
+        onFound(m[1], m[2], m[3]);
+        return;
+      case "voucher":
+        voucherWait?.resolve(m[1]);
+        voucherWait = null;
+        return;
+      case "nope":
+        if (m[1] === -1 && voucherWait) {
+          voucherWait.reject(new Error(m[2]));
+          voucherWait = null;
+        } else onNope(m[1], m[2]);
+        return;
       case "join":
         add(m[1], m[2], null);
         break;
@@ -307,16 +329,17 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
           pingIn = 20;
         }
         // Send where you are while it's changing (and once more when you stop).
-        if (state && (sendIn -= dt) <= 0) {
+        if (state && ((sendIn -= dt) <= 0 || grabs.length)) {
           const moved = !last || arc(state.p, last.p) > 0.02 || state.f.dot(last.f) < 0.995 || Math.abs(state.h - last.h) > 0.03 ||
             Math.abs(state.spd - last.spd) > 0.05 || Math.abs(state.swim - last.swim) > 0.1 || (state.air > 0) !== (last.air > 0);
-          if (moved) {
+          if (moved || grabs.length) {
             const r = (v, k = 1e4) => Math.round(v * k) / k;
             send(["s", r(state.p.x, 1e5), r(state.p.y, 1e5), r(state.p.z, 1e5), r(state.f.x, 1e3), r(state.f.y, 1e3), r(state.f.z, 1e3),
               r(state.h, 1e3), r(state.air, 1e3), r(state.spd, 1e2), r(state.swim, 1e2)]);
             last = { p: state.p.clone(), f: state.f.clone(), h: state.h, spd: state.spd, swim: state.swim, air: state.air };
             sendIn = SEND_EVERY;
           }
+          while (grabs.length) send(["grab", grabs.shift()]);
         }
       }
       // Everyone else eases toward where they last said they were.
@@ -349,6 +372,29 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
         p.wave = Math.max(0, p.wave - dt);
         p.rider.ch.setWave(p.wave > 0 ? Math.min(1, p.wave * 3, (1.6 - p.wave) * 6) : 0);
       }
+    },
+    /// The golden stamp hunt: sign in with `wallet`, signing the room's message with `sign(message)`.
+    async huntSignIn(wallet, sign) {
+      if (!code || ws?.readyState !== 1) throw new Error("Not connected to the other players yet. Try again in a moment.");
+      const signature = await sign(authMessage(wallet, code));
+      send(["auth", wallet, signature]);
+    },
+    huntState: () => send(["hunt"]),
+    /// You just picked up the stamp at `spot`: ask the room to count it.
+    grab: (spot) => grabs.push(spot),
+    /// A signed voucher for today's finds, to claim with.
+    voucher() {
+      if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
+      return new Promise((resolve, reject) => {
+        voucherWait = { resolve, reject };
+        send(["voucher"]);
+        setTimeout(() => {
+          if (voucherWait?.resolve === resolve) {
+            voucherWait = null;
+            reject(new Error("The server didn't answer. Try again."));
+          }
+        }, 10_000);
+      });
     },
     /// Redraw the name tags (after the leaderboard changes, so tiers stay current).
     retag() {

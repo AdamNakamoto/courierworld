@@ -48,6 +48,12 @@ if [ -f "$GAME" ]; then
       abis: {stamp: \$stampAbi, nft: \$nftAbi, office: \$officeAbi, renderer: \$rendererAbi,
              hook: \$hookAbi, router: \$routerAbi, ethRouter: \$ethRouterAbi}
     }" > "$OUT"
+  # The golden stamp hunt, once it's deployed (its address added to deployments/robinhood.json as "hunt").
+  HUNT=$(jq -r '.hunt // empty' "$GAME")
+  if [ -n "$HUNT" ]; then
+    tmp=$(mktemp)
+    jq --arg hunt "$HUNT" --argjson huntAbi "$(abi StampHunt)" '.contracts.hunt = $hunt | .abis.hunt = $huntAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else
   jq -n \

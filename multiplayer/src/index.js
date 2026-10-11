@@ -2,8 +2,14 @@
 // are (their courier's look and ride, and a name), then sends where they are a few times a second
 // while moving. The room passes that on to the players near them, and now and then to everyone
 // else, so the far side of the planet still knows who's about. Waves and preset phrases go to the
-// players nearby. Nothing here touches the chain: it's all just for show.
+// players nearby. It also runs the golden stamp hunt: a hunter signs in with their wallet, the room
+// checks each find against where they've actually been, and signs vouchers the StampHunt contract
+// pays $STAMP for. Positions and emotes are just for show; only the vouchers touch the chain.
 import { DurableObject } from "cloudflare:workers";
+import { verifyMessage, isAddress, getAddress } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import SPOTS from "../../web/hunt-spots.json";
+import { HUNT_STAMPS, huntDay, pickSpots, authMessage } from "../../web/hunt-pick.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -21,6 +27,16 @@ const ENUMS = {
 };
 const COLOURS = ["skin", "hair", "shirt", "accent", "bottoms", "socks", "shoes"];
 const RIDES = ["foot", "skate", "bike", "moped", "plane"];
+
+// The hunt: how close (in metres, and in height) a hunter's last reported position must be to a stamp
+// for the find to count, the fastest anyone moves (paper plane, running: ~13 m/s; this allows lag),
+// and how long a voucher lasts.
+const REACH = 3.2, REACH_UP = 1.6, TOP_SPEED = 22, VOUCHER_SECS = 3600;
+const spotDir = SPOTS.map((p) => {
+  const l = Math.hypot(p.x, p.y, p.z);
+  return [p.x / l, p.y / l, p.z / l];
+});
+const arcBetween = (a, b) => R * Math.acos(Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
 
 const colour = (v) => (Number.isInteger(v) && v >= 0 && v <= 0xffffff) || (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v));
 const send = (ws, m) => {
@@ -85,7 +101,7 @@ export class Planet extends DurableObject {
     if (this.ctx.getWebSockets().length >= MAX_PLAYERS) return new Response("The planet is full", { status: 503 });
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
-    const a = { id: crypto.randomUUID().slice(0, 8), hello: null, s: null, n: 0 };
+    const a = { id: crypto.randomUUID().slice(0, 8), hello: null, s: null, n: 0, code: crypto.randomUUID().replace(/-/g, "").slice(0, 16) };
     server.serializeAttachment(a);
     this.seen.set(server, a);
     return new Response(null, { status: 101, webSocket: client });
@@ -113,7 +129,7 @@ export class Planet extends DurableObject {
       a.hello = hello;
       ws.serializeAttachment(a);
       if (first) {
-        send(ws, ["welcome", a.id, this.others(ws).map((o) => [this.info(o).id, this.info(o).hello, this.info(o).s])]);
+        send(ws, ["welcome", a.id, this.others(ws).map((o) => [this.info(o).id, this.info(o).hello, this.info(o).s]), a.code]);
         this.broadcast(ws, ["join", a.id, hello]);
       } else {
         this.broadcast(ws, ["look", a.id, hello]); // they switched couriers
@@ -125,6 +141,14 @@ export class Planet extends DurableObject {
     if (m[0] === "s") {
       const s = cleanState(m);
       if (!s) return;
+      // Faster than anyone can travel (a teleport, a script): count a strike; three, and this session's
+      // finds stop counting.
+      if (a.s && a.sAt) {
+        const secs = (now - a.sAt) / 1000;
+        if (secs > 0.12 && arcBetween(a.s, s) / secs > TOP_SPEED) a.strikes = (a.strikes ?? 0) + 1;
+      }
+      a.firstAt ??= now;
+      a.sAt = now;
       a.s = s;
       a.n = (a.n + 1) % FAR_EVERY;
       ws.serializeAttachment(a);
@@ -138,6 +162,72 @@ export class Planet extends DurableObject {
     if (m[0] === "say") {
       const i = m[1];
       if (Number.isInteger(i) && i >= -1 && i < PHRASES) this.broadcast(ws, ["say", a.id, i], a.s);
+      return;
+    }
+    if (m[0] === "auth" || m[0] === "hunt" || m[0] === "grab" || m[0] === "voucher") return this.hunt(ws, a, m, now);
+  }
+
+  // ---------------------------------------------------------------- the golden stamp hunt
+
+  /// Today's finds for a wallet (kept in storage, so they survive the room sleeping).
+  async finds(day, wallet) {
+    this.found ??= new Map();
+    const key = `hunt:${day}:${wallet}`;
+    if (!this.found.has(key)) this.found.set(key, new Set((await this.ctx.storage.get(key)) ?? []));
+    return { key, set: this.found.get(key) };
+  }
+
+  async hunt(ws, a, m, now) {
+    const on = !!(this.env.HUNT_KEY && this.env.HUNT_ADDRESS);
+    const day = huntDay(now);
+    const state = async () => ["hunt", { on, day, wallet: a.wallet ?? null, found: a.wallet ? [...(await this.finds(day, a.wallet)).set] : [] }];
+
+    if (m[0] === "auth") {
+      // ["auth", wallet, signature]: they signed authMessage(wallet, the code we sent at welcome).
+      const [, wallet, signature] = m;
+      if (typeof wallet !== "string" || !isAddress(wallet) || typeof signature !== "string" || signature.length > 200) return;
+      let ok = false;
+      try {
+        // The message carries the address as the game wrote it (wallets often report it in lower case).
+        ok = await verifyMessage({ address: wallet, message: authMessage(wallet, a.code), signature });
+      } catch {}
+      if (!ok) return send(ws, ["nope", -1, "That signature didn't check out. Try signing in again."]);
+      a.wallet = getAddress(wallet);
+      ws.serializeAttachment(a);
+      return send(ws, await state());
+    }
+    if (m[0] === "hunt") return send(ws, await state());
+    if (!a.wallet) return send(ws, ["nope", -1, "Sign in with your wallet to hunt for $STAMP."]);
+
+    if (m[0] === "grab") {
+      // ["grab", spot]: they say they've just picked up the stamp at that spot. Check they were there.
+      const i = m[1];
+      const nope = (why) => send(ws, ["nope", i, why]);
+      if (!Number.isInteger(i) || !pickSpots(day, SPOTS.length).includes(i)) return nope("That stamp isn't out today.");
+      const { key, set } = await this.finds(day, a.wallet);
+      if (set.has(i)) return send(ws, ["found", day, i, set.size]);
+      if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement, so finds aren't counting this session. Reload to try again.");
+      if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000) return nope("Keep exploring a moment, then try again.");
+      const p = SPOTS[i], far = arcBetween(a.s, spotDir[i]), up = Math.abs(a.s[6] + 0.85 - p.h);
+      if (far > REACH || up > REACH_UP) return nope("You weren't close enough to that stamp.");
+      set.add(i);
+      await this.ctx.storage.put(key, [...set]);
+      return send(ws, ["found", day, i, set.size]);
+    }
+    if (m[0] === "voucher") {
+      // ["voucher"]: a signed note of today's finds, for the StampHunt contract.
+      if (!on) return send(ws, ["nope", -1, "The stamp hunt isn't open yet."]);
+      const { set } = await this.finds(day, a.wallet);
+      if (!set.size) return send(ws, ["nope", -1, "Find a golden stamp first."]);
+      const stamps = Math.min(set.size, HUNT_STAMPS), deadline = Math.floor(now / 1000) + VOUCHER_SECS;
+      const signer = privateKeyToAccount(this.env.HUNT_KEY);
+      const signature = await signer.signTypedData({
+        domain: { name: "Courier World Stamp Hunt", version: "1", chainId: Number(this.env.HUNT_CHAIN_ID ?? 4663), verifyingContract: this.env.HUNT_ADDRESS },
+        types: { Finds: [{ name: "player", type: "address" }, { name: "day", type: "uint32" }, { name: "stamps", type: "uint16" }, { name: "deadline", type: "uint64" }] },
+        primaryType: "Finds",
+        message: { player: a.wallet, day, stamps, deadline: BigInt(deadline) },
+      });
+      return send(ws, ["voucher", { day, stamps, deadline, signature }]);
     }
   }
 

@@ -189,6 +189,20 @@ const net = createNet(W, {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
   },
+  // The golden stamp hunt: the room's view of you (signed in? what you've found today).
+  onHunt(state) {
+    huntState = state;
+    if (state?.wallet) stamps.setFound(state.day, state.found);
+    office?.huntChanged();
+    hud();
+  },
+  onFound(day, spot, count) {
+    if (huntState && huntState.day === day && !huntState.found.includes(spot)) huntState.found.push(spot);
+    office?.huntChanged();
+  },
+  onNope(spot, why) {
+    toast(why, "error");
+  },
   onCount(n) {
     $("online").hidden = n === null;
     if (n !== null) $("onlineN").textContent = n.toLocaleString();
@@ -243,13 +257,22 @@ $("chatBtn").addEventListener("click", () => {
   $("chatBtn").setAttribute("aria-expanded", String(!$("phrases").hidden));
 });
 
-const stamps = createStamps(W);
+// Every spot a golden stamp can be out at (the multiplayer server reads the same file).
+const HUNT_SPOTS = await fetch("./hunt-spots.json").then((r) => r.json());
+const stamps = createStamps(W, HUNT_SPOTS);
+let huntState = null, huntHinted = false;
 const sparkle = createDust(world, W.noNormals, 24, 0xffd75e);
 function collected(s) {
   sounds.collect();
   sparkle.puff(s.mesh.position, s.d, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
   hud();
   toast(stamps.found === STAMPS ? "Every golden stamp on the planet!" : `Golden stamp! ${stamps.found} of ${STAMPS}`);
+  // Signed-in hunters have the room count it (and pay $STAMP for it); everyone else gets a hint, once.
+  if (huntState?.wallet) net.grab(s.id);
+  else if (chainRef?.hunt && !huntHinted) {
+    huntHinted = true;
+    setTimeout(() => toast("Golden stamps can earn $STAMP: open the Post Office panel (P) and sign in to hunt."), 1800);
+  }
   if (stamps.found === STAMPS) say([{ name: "You", text: `That's all ${STAMPS} golden stamps. The whole planet, done!` }]);
 }
 
@@ -1032,6 +1055,7 @@ const chainReady = connectChain()
       await chain.resume().catch(() => false);
       if (chain.account) $("begin").textContent = "Begin";
       chain.onAccountChange(() => {
+        huntState = null; // a different wallet signs in afresh
         office?.refresh();
         if (mode === "play") introduce();
         if (board) district.update(board.list, chain.account);
@@ -1040,6 +1064,13 @@ const chainReady = connectChain()
     $("officeBtn").hidden = false;
     office = createOffice(chain, {
       toast,
+      hunt: chain.hunt ? {
+        state: () => huntState,
+        async signIn() {
+          await net.huntSignIn(chain.account, (message) => chain.hunt.sign(message));
+        },
+        voucher: () => net.voucher(),
+      } : null,
       onSnapshot: autoAvatar,
       onPlayAs(c) {
         playAs(c, chain.account);

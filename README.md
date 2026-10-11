@@ -70,6 +70,27 @@ npx wrangler dev          # a local room on :8787; open the game with ?mp=ws://1
 npx wrangler deploy       # the live room, at wss://courier-world-mp.courier-world-mp.workers.dev/ws
 ```
 
+## The golden stamp hunt
+
+Golden stamps move every day: 24 of the spots in `web/hunt-spots.json` are out each UTC day
+(`web/hunt-pick.js` picks them, the same way in the game and on the server). Anyone can collect
+them for fun. A player with a post office can also sign in with their wallet (one signature, no
+transaction): the multiplayer room then checks each find against where they've actually been, and
+signs a voucher for the day's finds. `StampHunt.sol` pays it in $STAMP from a pool its owner fills
+(it never mints), up to a set number of stamps per wallet per day and a daily total. The owner tops
+the pool up, takes $STAMP out and changes the reward from the admin part of the Post Office panel.
+
+```bash
+cd contracts
+STAMP=0x… OFFICE=0x… HUNT_SIGNER=0x… forge script script/DeployHunt.s.sol --rpc-url robinhood --broadcast --browser
+cd ../multiplayer
+npx wrangler secret put HUNT_KEY          # the voucher key (its address is HUNT_SIGNER)
+npx wrangler deploy --var HUNT_ADDRESS:0x…
+```
+
+Then add `"hunt": "0x…"` to `contracts/deployments/robinhood.json` and run `script/export-web.sh`.
+`./dev.sh` deploys a local hunt and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs it too.
+
 ## On Robinhood Chain
 
 Without `web/chain.json` the site loads `web/deployments/robinhood.json`. Players log in

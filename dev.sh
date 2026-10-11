@@ -81,6 +81,20 @@ NFT=$(addr CourierNFT)
 RENDERER=$(addr Renderer)
 [ -n "$NFT" ] || { echo "$OUT"; exit 1; }
 
+deploy_hunt() { # the golden stamp hunt, with a throwaway voucher key for the local multiplayer server
+  [ -n "$(addr PostOffice)" ] || return 0
+  local game="$OUT" key signer
+  # (newer cast wraps the result in {data: ...})
+  key=$(cast wallet new --json | jq -r '(.data? // .) | if type == "array" then .[0] else . end | .private_key')
+  signer=$(cast wallet address "$key")
+  STAMP=$(addr StampToken) OFFICE=$(addr PostOffice) HUNT_SIGNER=$signer HUNT_OWNER=${ACCOUNTS[1]} deploy script/DeployHunt.s.sol
+  HUNT=$(addr StampHunt)
+  OUT="$game"
+  # `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this local hunt.
+  printf 'HUNT_KEY=%s\nHUNT_ADDRESS=%s\nHUNT_CHAIN_ID=%s\n' "$key" "$HUNT" "$(cast chain-id --rpc-url "$RPC")" > multiplayer/.dev.vars
+}
+deploy_hunt
+
 NAME=Anvil
 [ "$FORK" = 1 ] && NAME="Robinhood Chain (fork)"
 if [ "$WALLET" = 1 ]; then
@@ -99,6 +113,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
     stage=game
     contracts=$(echo "$contracts" | jq --arg stamp "$(addr StampToken)" --arg office "$office" '. + {stamp: $stamp, office: $office}')
     abis=$(echo "$abis" | jq --argjson stamp "$(abi StampToken)" --argjson office "$(abi PostOffice)" '. + {stamp: $stamp, office: $office}')
+    if [ -n "$HUNT" ]; then
+      contracts=$(echo "$contracts" | jq --arg hunt "$HUNT" '. + {hunt: $hunt}')
+      abis=$(echo "$abis" | jq --argjson hunt "$(abi StampHunt)" '. + {hunt: $hunt}')
+    fi
     if [ "$FORK" = 1 ]; then
       # Robinhood Chain addresses, as in contracts/script/export-web.sh.
       contracts=$(echo "$contracts" | jq --arg hook "$(addr StampHook)" --arg router "$(addr Router)" --arg ethRouter "$(addr EthRouter)" \
@@ -137,6 +155,7 @@ if [ "$STAGED" = 1 ]; then
   read -r -p "Press Enter to reveal the couriers and launch the game... " _
   export NFT RENDERER
   deploy script/DeployFork.s.sol --sig "runGame()"
+  deploy_hunt
   write_chain_json
   echo "Stage 2: the game is live. Reload the page."
   wait "$WEB_PID"

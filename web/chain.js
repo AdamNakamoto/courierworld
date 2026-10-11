@@ -107,6 +107,7 @@ export async function connectChain() {
     nft: { address: dep.contracts.nft, abi: withErrors(dep.abis.nft) },
     stamp: game ? { address: dep.contracts.stamp, abi: withErrors(dep.abis.stamp) } : null,
     office: game ? { address: dep.contracts.office, abi: withErrors(dep.abis.office) } : null,
+    hunt: dep.contracts.hunt ? { address: dep.contracts.hunt, abi: withErrors(dep.abis.hunt) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -407,8 +408,34 @@ export async function connectChain() {
     return send(r, plain, [S, amountIn, minOut, deadline]);
   }
 
+  // ---------------------------------------------------------------- the golden stamp hunt
+  // The StampHunt contract pays $STAMP, from a pool its owner fills, for golden stamps the multiplayer
+  // server has checked. Only wallets with a post office can claim.
+  const hunt = C.hunt ? {
+    async info(day) {
+      const [pool, reward, maxPerDay, owner, claimed, paidToday] = await Promise.all([
+        read(C.hunt, "pool"), read(C.hunt, "rewardPerStamp"), read(C.hunt, "maxStampsPerDay"), read(C.hunt, "owner"),
+        account ? read(C.hunt, "claimed", [account, day]) : 0, read(C.hunt, "paidFor", [day]),
+      ]);
+      return { pool, reward, maxPerDay: Number(maxPerDay), owner, claimed: Number(claimed), paidToday, isOwner: !!account && same(owner, account) };
+    },
+    /// Sign the hunt's sign-in message with the logged-in wallet (proves it's theirs; no transaction).
+    sign: (message) => wallet.signMessage({ account, message }),
+    /// Redeem a voucher from the multiplayer server.
+    claim: (v) => send(C.hunt, "claim", [v.day, v.stamps, BigInt(v.deadline), v.signature]),
+    /// Owner: top up the pool (approving the $STAMP first if needed), take some back out, change the reward.
+    async deposit(amount) {
+      if ((await read(C.stamp, "allowance", [account, C.hunt.address])) < amount) await send(C.stamp, "approve", [C.hunt.address, amount]);
+      await send(C.hunt, "deposit", [amount]);
+    },
+    withdraw: (amount) => send(C.hunt, "withdraw", [account, amount]),
+    setReward: (wei) => send(C.hunt, "setReward", [wei]),
+    stampBalance: () => (account ? read(C.stamp, "balanceOf", [account]) : 0n),
+  } : null;
+
   return {
     local: dep.local,
+    hunt,
     browserWallet,
     chainName: chain.name,
     snapshot,
