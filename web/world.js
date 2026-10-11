@@ -493,7 +493,7 @@ const POST_FRAG = /* glsl */ `
 
 export function createWorld(canvas) {
   const gl = new THREE.WebGLRenderer({ canvas, antialias: false });
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let dpr = Math.min(window.devicePixelRatio || 1, 2); // capped lower by the graphics settings
   gl.setPixelRatio(dpr);
   gl.shadowMap.enabled = true;
   gl.shadowMap.type = THREE.PCFShadowMap;
@@ -1129,9 +1129,10 @@ export function createWorld(canvas) {
   world.add(neonLights);
 
   // ---- grass tufts: tiny instanced blades that the ink pass turns into hatching
+  let tuftsMesh = null;
   {
     const N = 6000;
-    const tufts = new THREE.InstancedMesh(new THREE.ConeGeometry(0.05, 0.24, 3), toon(C.tuft), N);
+    const tufts = (tuftsMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(0.05, 0.24, 3), toon(C.tuft), N));
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), e = new THREE.Euler();
     let n = 0;
     for (let tries = 0; n < N && tries < N * 4; tries++) {
@@ -1353,6 +1354,20 @@ export function createWorld(canvas) {
     /// Draw at this fraction (0.5..1) of the screen's full resolution.
     setQuality(q) {
       quality = q;
+      resize();
+    },
+    /// Graphics settings: shadows ("high", "low" or "off"), grass tufts on or off, and the most screen
+    /// pixels per CSS pixel to draw (1 is cheapest; up to 2 on sharp screens).
+    setGraphics({ shadows = "high", tufts = true, maxDpr = 2 } = {}) {
+      const size = shadows === "low" ? 1024 : 2048;
+      if (sun.shadow.mapSize.x !== size) {
+        sun.shadow.mapSize.set(size, size);
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+      }
+      sun.castShadow = shadows !== "off";
+      if (tuftsMesh) tuftsMesh.visible = tufts;
+      dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
       resize();
     },
     /// Cut a see-through path from the camera to this point (world space), or pass null to stop.

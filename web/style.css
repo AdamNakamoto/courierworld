@@ -175,6 +175,21 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .music-btn.off { opacity: .55; text-decoration: line-through; }
 .sounds-btn { top: 110px; display: grid; place-items: center; padding: 0; }
 .chat-btn { top: 158px; font-size: 18px; padding: 0; }
+.set-btn { top: 206px; font-size: 22px; padding: 0; }
+.full-btn { top: 254px; display: grid; place-items: center; padding: 0; }
+.full-btn.on { background: var(--yellow); }
+.settings { position: absolute; top: 200px; right: 64px; width: 250px; padding: 10px 12px 12px; transform: rotate(-.5deg); }
+.settings h3 { margin: 8px 0 5px; font: 400 13px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; }
+.settings h3:first-child { margin-top: 0; }
+.settings .seg { display: flex; gap: 4px; }
+.settings .seg button {
+  flex: 1; font: 400 12px/1 Bungee, Impact, sans-serif; letter-spacing: .02em; color: var(--ink); background: #fff;
+  border: 2px solid var(--ink); border-radius: 3px; padding: 8px 2px; cursor: pointer;
+}
+.settings .seg button.on { background: var(--yellow); }
+.settings .note { margin: 6px 0 0; font-size: 14px; line-height: 1.2; color: var(--muted); }
+.fps { position: absolute; top: 62px; left: 150px; padding: 3px 10px; font: 700 14px ui-monospace, Menlo, monospace; transform: rotate(-.6deg); }
+@media (max-width: 640px) { .fps { top: 110px; left: auto; right: 64px; } .settings { right: 60px; width: min(250px, calc(100vw - 80px)); } }
 .phrases { position: absolute; top: 152px; right: 64px; display: grid; grid-template-columns: repeat(2, auto); gap: 6px; padding: 8px; transform: rotate(-.6deg); }
 .phrases button {
   font: 400 13px/1 Bungee, Impact, sans-serif; letter-spacing: .03em; color: var(--ink); background: #fff; border: 2px solid var(--ink);

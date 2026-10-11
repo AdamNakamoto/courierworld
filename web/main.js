@@ -399,6 +399,10 @@ addEventListener("keydown", (e) => {
     if (!e.repeat) jump();
     return;
   }
+  if (e.key.toLowerCase() === "f" && mode !== "title" && canFullscreen) {
+    if (!e.repeat) toggleFullscreen();
+    return;
+  }
   if (/^[0-9]$/.test(e.key) && mode === "play" && !dialog) {
     if (!e.repeat) emote(e.key === "0" ? 9 : Number(e.key) - 1);
     return;
@@ -699,7 +703,7 @@ const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 // back up once there's room again.
 let quality = 1, slowFor = 0, fastFor = 0, avgFrame = 1 / 60;
 function adapt(raw) {
-  if (raw > 0.25) return; // a hitch or a hidden tab, not a trend
+  if (settings.gfx !== "auto" || raw > 0.25) return; // fixed by the player; or a hitch or a hidden tab, not a trend
   avgFrame += (raw - avgFrame) * 0.05;
   if (avgFrame > 1 / 48) [slowFor, fastFor] = [slowFor + raw, 0];
   else if (avgFrame < 1 / 57) [slowFor, fastFor] = [0, fastFor + raw];
@@ -714,6 +718,72 @@ function adapt(raw) {
     W.setQuality(quality);
     fastFor = 0;
   }
+}
+
+// ---------------------------------------------------------------- settings: graphics, frame rate, fullscreen
+
+// Graphics presets. Auto starts high and lowers the resolution when frames run slow (and raises it
+// again when there's room); the others hold still.
+const GFX = {
+  auto: { quality: 1, maxDpr: 2, shadows: "high", tufts: true },
+  high: { quality: 1, maxDpr: 2, shadows: "high", tufts: true },
+  medium: { quality: 0.85, maxDpr: 1.5, shadows: "low", tufts: true },
+  low: { quality: 0.65, maxDpr: 1, shadows: "off", tufts: false },
+};
+const settings = { gfx: "auto", fps: 0, showFps: false }; // fps: 0 is as fast as the screen refreshes
+try { Object.assign(settings, JSON.parse(localStorage.getItem("courier:settings")) ?? {}); } catch {}
+if (!GFX[settings.gfx]) settings.gfx = "auto";
+function applySettings() {
+  const g = GFX[settings.gfx];
+  quality = g.quality;
+  W.setQuality(quality);
+  W.setGraphics(g);
+  $("fps").hidden = !settings.showFps;
+  for (const b of $("settings").querySelectorAll("button[data-k]")) b.classList.toggle("on", String(settings[b.dataset.k]) === b.dataset.v);
+  try { localStorage.setItem("courier:settings", JSON.stringify(settings)); } catch {}
+}
+$("settings").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-k]");
+  if (!b) return;
+  const { k, v } = b.dataset;
+  settings[k] = k === "gfx" ? v : k === "fps" ? Number(v) : v === "true";
+  applySettings();
+});
+$("setBtn").addEventListener("click", () => {
+  $("settings").hidden = !$("settings").hidden;
+  $("setBtn").setAttribute("aria-expanded", String(!$("settings").hidden));
+});
+// Fullscreen, where the browser allows it (iPhones don't, for pages): the button, or F.
+const fsEl = () => document.fullscreenElement ?? document.webkitFullscreenElement;
+const canFullscreen = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+function toggleFullscreen() {
+  if (fsEl()) (document.exitFullscreen ?? document.webkitExitFullscreen).call(document);
+  else {
+    const el = document.documentElement;
+    (el.requestFullscreen ?? el.webkitRequestFullscreen)?.call(el)?.catch?.(() => {});
+  }
+}
+$("fullBtn").hidden = !canFullscreen;
+$("fullBtn").addEventListener("click", toggleFullscreen);
+for (const ev of ["fullscreenchange", "webkitfullscreenchange"]) {
+  document.addEventListener(ev, () => {
+    $("fullBtn").classList.toggle("on", !!fsEl());
+    $("fullBtn").title = fsEl() ? "Exit fullscreen (F)" : "Fullscreen (F)";
+  });
+}
+// The frame rate limit, and the counter.
+let lastFrame = 0, fpsFrames = 0, fpsSince = performance.now();
+function tick(now) {
+  if (settings.fps && now - lastFrame < 1000 / settings.fps - 2) {
+    requestAnimationFrame(tick);
+    return;
+  }
+  lastFrame = now;
+  if (settings.showFps && ++fpsFrames && now - fpsSince > 500) {
+    $("fps").textContent = `${Math.round((fpsFrames * 1000) / (now - fpsSince))} FPS`;
+    [fpsFrames, fpsSince] = [0, now];
+  }
+  frame();
 }
 
 function frame() {
@@ -895,7 +965,7 @@ function frame() {
   camera.lookAt(camLook);
   W.setCutaway(mode === "play" ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
   W.render(t);
-  requestAnimationFrame(frame);
+  requestAnimationFrame(tick);
 }
 
 /// The name of the place you're in, shown big for a few seconds when you arrive (once you've been
@@ -988,6 +1058,7 @@ $("officeBtn").addEventListener("click", () => office?.show($("office").hidden))
 $("officeClose").addEventListener("click", () => office?.show(false));
 
 hud();
+applySettings();
 titleCount();
 setInterval(titleCount, 30_000);
-requestAnimationFrame(frame);
+requestAnimationFrame(tick);
