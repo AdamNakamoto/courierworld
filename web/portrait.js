@@ -87,14 +87,17 @@ function setup(w, h) {
 const FRAMING = {
   foot: { d: 3.0, y: 0.84 }, skate: { d: 3.2, y: 0.9 }, bike: { d: 4.1, y: 0.8 },
   moped: { d: 4.1, y: 0.82 }, plane: { d: 5.6, y: 1.0 },
+  scooter: { d: 3.6, y: 0.9 }, hoverboard: { d: 3.6, y: 1.0 }, neonbike: { d: 4.4, y: 0.78 }, supercar: { d: 5.4, y: 0.6 },
 };
+const BLOB = { plane: 2.6, supercar: 2.4, neonbike: 1.9, hoverboard: 1.3 };
 
-/// Render courier `c` (from traits.courier): just the 3D art, w×h pixels.
-function renderArt(c, w, h) {
+/// Render courier `c` (from traits.courier): just the 3D art, w×h pixels. `rideColour` paints the ride
+/// (skins), otherwise it takes the courier's accent.
+function renderArt(c, w, h, rideColour = null, headroom = false) {
   const k = setup(w, h);
   const subject = new THREE.Group();
   const ch = createCharacter(c.params);
-  const ride = c.ride.key === "foot" ? null : createRide(c.ride.key, c.params.accent);
+  const ride = c.ride.key === "foot" ? null : createRide(c.ride.key, rideColour ?? c.params.accent);
   if (ride) {
     subject.add(ride.group);
     ch.root.position.set(0, ride.mount.y, ride.mount.z);
@@ -105,9 +108,10 @@ function renderArt(c, w, h) {
   ch.update(0.001, 0, 0.6);
   subject.rotation.y = -0.55;
   k.scene.add(subject);
-  k.blob.scale.setScalar(ride ? (c.ride.key === "plane" ? 2.6 : 1.7) : 0.9);
+  k.blob.scale.setScalar(ride ? BLOB[c.ride.key] ?? 1.7 : 0.9);
 
-  const f = FRAMING[c.ride.key];
+  // Skins wear tall hats (a chef's, a crown, a helmet): frame them with more room above.
+  const f = headroom && c.ride.key === "foot" ? { d: 3.55, y: 1.0 } : FRAMING[c.ride.key];
   k.camera.position.set(0, f.y + 0.4, f.d);
   k.camera.lookAt(0, f.y, 0);
   const bg = new THREE.Color(c.background);
@@ -129,7 +133,7 @@ function renderArt(c, w, h) {
   subject.traverse((o) => {
     if (o.isMesh) {
       o.geometry.dispose();
-      o.material.dispose();
+      if (!o.material.userData?.shared) o.material.dispose();
     }
   });
   return k.canvas;
@@ -201,5 +205,74 @@ export async function renderStamp(c, size = 512) {
   g.lineWidth = 5 * u;
   g.strokeText(c.ride.rarity.toUpperCase(), vx, vy + 34 * u);
   g.fillText(c.ride.rarity.toUpperCase(), vx, vy + 34 * u);
+  return out;
+}
+
+/// A perforated stamp on envelope paper, drawn into a new canvas; returns { out, g, u, p, A }, the art
+/// window's corner p and side A.
+function stampBase(size) {
+  const out = document.createElement("canvas");
+  out.width = out.height = size;
+  const g = out.getContext("2d");
+  const u = size / 512;
+  g.fillStyle = "#e9e1cf";
+  g.fillRect(0, 0, size, size);
+  const m = 34 * u, W = size - 2 * m, r = 9 * u, step = 26 * u;
+  g.save();
+  g.shadowColor = "rgba(40,48,51,0.35)";
+  g.shadowOffsetX = 5 * u;
+  g.shadowOffsetY = 6 * u;
+  g.fillStyle = "#fbf8ef";
+  g.fillRect(m, m, W, W);
+  g.restore();
+  g.globalCompositeOperation = "destination-out";
+  for (let x = m; x <= m + W + 0.5; x += step) for (const y of [m, m + W]) { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
+  for (let y = m; y <= m + W + 0.5; y += step) for (const x of [m, m + W]) { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
+  g.globalCompositeOperation = "destination-over";
+  g.fillStyle = "#e9e1cf";
+  g.fillRect(0, 0, size, size);
+  g.globalCompositeOperation = "source-over";
+  return { out, g, u, p: m + 24 * u, A: W - 48 * u };
+}
+
+/// A skin's stamp: the skin worn (or ridden) by a courier, its name on the label and its rarity in the
+/// corner. `skin`: { no, name, rarity, params, ride, rideColour, background }.
+export async function renderSkinStamp(skin, size = 512) {
+  await document.fonts.load(`${Math.round(size * 0.06)}px Bungee`);
+  const { out, g, u, p, A } = stampBase(size);
+  const labelH = 54 * u, artH = A - labelH;
+  const art = renderArt({ params: skin.params, ride: { key: skin.ride ?? "foot" }, background: skin.background }, Math.round(A), Math.round(artH), skin.rideColour, true);
+  g.drawImage(art, p, p, A, artH);
+  g.lineWidth = 4 * u;
+  g.strokeStyle = "#283033";
+  g.strokeRect(p, p, A, A);
+  g.beginPath(); g.moveTo(p, p + artH); g.lineTo(p + A, p + artH); g.stroke();
+  g.fillStyle = "#fbf8ef";
+  g.fillRect(p + 2 * u, p + artH + 2 * u, A - 4 * u, labelH - 4 * u);
+  g.fillStyle = "#283033";
+  g.textBaseline = "middle";
+  g.textAlign = "left";
+  g.font = `${Math.round(26 * u)}px Bungee`;
+  g.fillText("SKIN", p + 14 * u, p + artH + labelH / 2 + 2 * u);
+  g.textAlign = "right";
+  let fs = 22;
+  g.font = `${Math.round(fs * u)}px Bungee`;
+  while (g.measureText(skin.name.toUpperCase()).width > A - 120 * u && fs > 12) g.font = `${Math.round(--fs * u)}px Bungee`;
+  g.fillText(skin.name.toUpperCase(), p + A - 14 * u, p + artH + labelH / 2 + 2 * u);
+  const vx = p + A - 16 * u, vy = p + 16 * u;
+  g.font = `${Math.round(15 * u)}px Bungee`;
+  g.textAlign = "right";
+  g.textBaseline = "top";
+  g.lineWidth = 6 * u;
+  g.strokeStyle = "#fbf8ef";
+  g.fillStyle = RARITY_INK[skin.rarity];
+  g.strokeText(skin.rarity.toUpperCase(), vx, vy);
+  g.fillText(skin.rarity.toUpperCase(), vx, vy);
+  if (skin.no) {
+    g.font = `${Math.round(12 * u)}px Bungee`;
+    g.fillStyle = "#283033";
+    g.strokeText(`No.${String(skin.no).padStart(3, "0")} of 999`, vx, vy + 22 * u);
+    g.fillText(`No.${String(skin.no).padStart(3, "0")} of 999`, vx, vy + 22 * u);
+  }
   return out;
 }

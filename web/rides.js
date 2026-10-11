@@ -28,6 +28,17 @@ function rod(add, parent, a, b, r, color) {
   return m;
 }
 
+/// A chunky wheel turning about x (cars, motorbikes, scooters), at (x, y, z).
+function fatWheel(add, parent, r, width, x, y, z, hub = 0xd9d8d2) {
+  const w = new THREE.Group();
+  w.position.set(x, y, z);
+  parent.add(w);
+  add(w, new THREE.CylinderGeometry(r, r, width, 16).rotateZ(Math.PI / 2), 0x2b3134);
+  add(w, new THREE.CylinderGeometry(r * 0.55, r * 0.55, width + 0.01, 12).rotateZ(Math.PI / 2), hub);
+  add(w, new THREE.BoxGeometry(width + 0.02, r * 0.9, 0.04), 0x5a5f6e);
+  return w;
+}
+
 function wheel(add, parent, r, tube, z, y, color = 0x2b3134, hub = 0xd9d8d2) {
   const w = new THREE.Group();
   w.position.set(0, y, z);
@@ -50,7 +61,70 @@ export function createRide(key, accent = 0x2f8088) {
   let mount = { y: 0, z: 0, pose: "walk", pedal: false, speed: 1 };
   let float = null;
 
-  if (key === "skate") {
+  const lit = (c, k = 0.9) => ({ emissive: c, emissiveIntensity: k });
+  if (key === "scooter") {
+    // A kick scooter with a glowing strip under the deck.
+    add(group, new THREE.BoxGeometry(0.17, 0.045, 0.66), accent, 0, 0.11, 0);
+    add(group, new THREE.BoxGeometry(0.13, 0.02, 0.56), 0x2de2e6, 0, 0.08, 0, lit(0x2de2e6));
+    wheels.push(fatWheel(add, group, 0.07, 0.05, 0, 0.07, -0.32), fatWheel(add, group, 0.07, 0.05, 0, 0.07, 0.34));
+    const P = (x, y, z) => new THREE.Vector3(x, y, z);
+    rod(add, group, P(0, 0.12, 0.34), P(0, 0.98, 0.26), 0.024, 0xd9d8d2);
+    add(group, new THREE.BoxGeometry(0.5, 0.035, 0.035), 0x3b4145, 0, 0.99, 0.26);
+    for (const x of [-0.24, 0.24]) add(group, new THREE.CylinderGeometry(0.025, 0.025, 0.09, 8).rotateZ(Math.PI / 2), accent, x, 0.99, 0.26);
+    add(group, new THREE.SphereGeometry(0.04, 8, 6), 0xfff2b0, 0, 0.86, 0.3, lit(0xfff2b0, 0.6));
+    mount = { y: 0.13, z: -0.05, pose: "stand", pedal: false, speed: 1.5 };
+  } else if (key === "hoverboard") {
+    // A board that floats on two glowing thrusters.
+    float = new THREE.Group();
+    float.userData.base = 0.24;
+    group.add(float);
+    add(float, new THREE.BoxGeometry(0.36, 0.06, 0.7), accent, 0, 0, 0);
+    for (const z of [-0.35, 0.35]) add(float, new THREE.CylinderGeometry(0.18, 0.18, 0.06, 16, 1, false, z > 0 ? -Math.PI / 2 : Math.PI / 2, Math.PI), accent, 0, 0, z);
+    add(float, new THREE.BoxGeometry(0.3, 0.012, 0.9), 0x1b1c1f, 0, 0.036, 0);
+    for (const z of [-0.3, 0.3]) {
+      add(float, new THREE.CylinderGeometry(0.09, 0.11, 0.06, 14), 0x3b4145, 0, -0.05, z);
+      add(float, new THREE.CylinderGeometry(0.075, 0.075, 0.02, 14), 0x5ff3ff, 0, -0.085, z, lit(0x5ff3ff));
+    }
+    float.position.y = 0.24;
+    mount = { y: 0.27, z: 0, pose: "stand", pedal: false, speed: 2.0, floats: true };
+  } else if (key === "neonbike") {
+    // A motorbike striped with neon.
+    wheels.push(fatWheel(add, group, 0.25, 0.12, 0, 0.25, -0.58), fatWheel(add, group, 0.25, 0.12, 0, 0.25, 0.6));
+    const tank = add(group, new THREE.CapsuleGeometry(0.16, 0.36, 4, 12), accent, 0, 0.62, 0.12);
+    tank.rotation.x = Math.PI / 2 - 0.15;
+    add(group, new THREE.BoxGeometry(0.24, 0.1, 0.5), 0x1b1c1f, 0, 0.68, -0.28);
+    add(group, new THREE.BoxGeometry(0.28, 0.2, 0.42), accent, 0, 0.5, -0.5).rotation.x = 0.25;
+    add(group, new THREE.BoxGeometry(0.22, 0.24, 0.5), 0x3b4145, 0, 0.36, -0.02);
+    for (const x of [-0.13, 0.13]) add(group, new THREE.BoxGeometry(0.02, 0.04, 0.72), 0xff3ea5, x, 0.6, -0.05, lit(0xff3ea5));
+    const P = (x, y, z) => new THREE.Vector3(x, y, z);
+    for (const x of [-0.08, 0.08]) rod(add, group, P(x, 0.25, 0.6), P(x, 0.86, 0.42), 0.025, 0xd9d8d2);
+    add(group, new THREE.BoxGeometry(0.6, 0.035, 0.035), 0x3b4145, 0, 0.9, 0.4);
+    add(group, new THREE.CylinderGeometry(0.08, 0.08, 0.06, 12).rotateX(Math.PI / 2), 0xfff2b0, 0, 0.78, 0.55, lit(0xfff2b0, 0.7));
+    rod(add, group, P(0.15, 0.3, -0.1), P(0.17, 0.42, -0.7), 0.035, 0x8d9790);
+    add(group, new THREE.BoxGeometry(0.2, 0.05, 0.03), 0xff3b3b, 0, 0.6, -0.72, lit(0xff3b3b));
+    mount = { y: -0.06, z: -0.22, pose: "sit", pedal: false, speed: 2.3 };
+  } else if (key === "supercar") {
+    // A low wedge of a sports car with an open cockpit, a spoiler and underglow.
+    const side = new THREE.Shape();
+    [[-1.0, 0.14], [1.05, 0.14], [1.12, 0.2], [0.95, 0.27], [0.2, 0.42], [-0.3, 0.47], [-0.75, 0.45], [-1.0, 0.41]]
+      .forEach(([z, y], i) => (i ? side.lineTo(z, y) : side.moveTo(z, y)));
+    const body = new THREE.ExtrudeGeometry(side, { depth: 1.04, bevelEnabled: true, bevelSize: 0.03, bevelThickness: 0.03, bevelSegments: 2 });
+    body.rotateY(-Math.PI / 2).translate(0.52, 0, 0);
+    add(group, body, accent);
+    add(group, new THREE.BoxGeometry(0.96, 0.3, 0.025), 0x8db8c6, 0, 0.56, 0.14).rotation.x = -0.6; // windscreen
+    add(group, new THREE.BoxGeometry(0.62, 0.1, 0.5), 0x1b1c1f, 0, 0.47, -0.3);
+    for (const x of [-0.42, 0.42]) add(group, new THREE.BoxGeometry(0.05, 0.2, 0.05), 0x1b1c1f, x, 0.55, -0.88);
+    add(group, new THREE.BoxGeometry(1.14, 0.04, 0.24), 0x1b1c1f, 0, 0.66, -0.9);
+    for (const sx of [-1, 1]) {
+      add(group, new THREE.BoxGeometry(0.03, 0.12, 0.36), 0x1b1c1f, sx * 0.565, 0.28, -0.38);
+      add(group, new THREE.BoxGeometry(0.2, 0.035, 0.05), 0xfff2b0, sx * 0.33, 0.23, 1.02, lit(0xfff2b0, 0.8)).rotation.y = -sx * 0.25;
+    }
+    add(group, new THREE.BoxGeometry(0.86, 0.04, 0.03), 0xff3b3b, 0, 0.36, -1.02, lit(0xff3b3b));
+    add(group, new THREE.BoxGeometry(0.86, 0.02, 1.7), 0x5ff3ff, 0, 0.1, 0, lit(0x5ff3ff));
+    const hub = accent === 0xe8b93a ? 0x3b4145 : 0xe8b93a;
+    for (const [x, z] of [[-0.53, 0.62], [0.53, 0.62], [-0.53, -0.62], [0.53, -0.62]]) wheels.push(fatWheel(add, group, 0.17, 0.14, x, 0.17, z, hub));
+    mount = { y: -0.44, z: -0.32, pose: "sit", pedal: false, speed: 2.5 };
+  } else if (key === "skate") {
     add(group, new THREE.BoxGeometry(0.26, 0.035, 0.86), accent, 0, 0.1, 0);
     for (const z of [-0.43, 0.43]) {
       const kick = add(group, new THREE.BoxGeometry(0.26, 0.035, 0.12), accent, 0, 0.13, z * 1.08);
@@ -124,14 +198,14 @@ export function createRide(key, accent = 0x2f8088) {
     add(float, new THREE.BoxGeometry(0.02, 0.01, 2.4), 0xd8d2c2, 0, 0.025, 0.25);
     const stamp = add(float, new THREE.BoxGeometry(0.28, 0.01, 0.34), accent, 0.55, 0.075, -0.55);
     stamp.rotation.z = -0.1;
-    float.position.y = 0.55;
+    float.position.y = float.userData.base = 0.55;
     mount = { y: 0.6, z: -0.2, pose: "stand", pedal: false, speed: 2.2, floats: true };
   }
 
   function update(dt, speed, t) {
     for (const w of wheels) w.rotation.x += dt * speed * (key === "bike" ? 9 : 14);
     if (float) {
-      float.position.y = 0.55 + Math.sin(t * 1.8) * 0.08;
+      float.position.y = float.userData.base + Math.sin(t * 1.8) * 0.08;
       float.rotation.z = Math.sin(t * 1.1) * 0.06;
     }
   }

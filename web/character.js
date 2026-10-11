@@ -373,6 +373,14 @@ export function createCharacter(p) {
     add(k, new THREE.SphereGeometry(0.065, 12, 9), p.shoes, 0, -0.33, -0.015).scale.set(0.95, 0.72, 1);
   }
 
+  if (p.overalls) {
+    // A bib on the chest with straps over the shoulders.
+    add(chest, new THREE.BoxGeometry(0.2, 0.17, 0.02), p.overalls, 0, -0.02, 0.122).rotation.x = -0.05;
+    for (const s of [-1, 1]) {
+      add(chest, new THREE.BoxGeometry(0.035, 0.2, 0.02), p.overalls, s * 0.075, 0.13, 0.1).rotation.x = -0.4;
+      add(chest, new THREE.SphereGeometry(0.016, 6, 4), 0xe2c46a, s * 0.075, 0.06, 0.135);
+    }
+  }
   if (p.tie) {
     // An open jacket: a white shirt front in a V, and a long tie.
     const v = new THREE.Shape();
@@ -390,7 +398,20 @@ export function createCharacter(p) {
 
   // ---- head
   const eyes = [], tails = []; // tails: swinging hair pieces
-  if (p.head === "frog") {
+  if (p.head === "robot") {
+    // A robot: a rounded metal head with a screen for a face, two glowing eyes and an aerial.
+    add(head, rb(0.38, 0.32, 0.34, 0.06), p.skin, 0, 0.17, 0);
+    add(head, rb(0.3, 0.2, 0.04, 0.03), 0x1b1f2a, 0, 0.17, 0.165);
+    for (const s of [-1, 1]) {
+      const e = add(head, new THREE.CapsuleGeometry(0.022, 0.035, 4, 8), 0x5ff3ff, s * 0.065, 0.18, 0.19, { emissive: 0x5ff3ff, emissiveIntensity: 0.9 });
+      e.scale.set(1, 1, 0.4);
+      eyes.push(e);
+      add(head, new THREE.CylinderGeometry(0.05, 0.05, 0.05, 12), 0x8d9790, s * 0.2, 0.17, 0).rotation.z = Math.PI / 2;
+    }
+    add(head, new THREE.BoxGeometry(0.1, 0.012, 0.01), 0x5ff3ff, 0, 0.115, 0.186, { emissive: 0x5ff3ff, emissiveIntensity: 0.9 });
+    add(head, new THREE.CylinderGeometry(0.012, 0.012, 0.16, 5), 0x8d9790, 0.08, 0.41, 0);
+    add(head, new THREE.SphereGeometry(0.035, 8, 6), 0xff3b3b, 0.08, 0.5, 0, { emissive: 0xff3b3b, emissiveIntensity: 0.8 });
+  } else if (p.head === "frog") {
     // A frog: a wide, flat head, big round eyes up top, a long smile and a golden swoop of hair.
     const top = add(head, new THREE.SphereGeometry(0.2, 22, 16), p.skin, 0, 0.16, 0.01);
     top.scale.set(1.22, 0.8, 1.02);
@@ -526,6 +547,71 @@ export function createCharacter(p) {
         add(head, new THREE.BoxGeometry(0.03, 0.08, 0.36), 0xe8b93a, 0, 0.36, -0.01);
         break;
       }
+      case "chef": {
+        // A tall, puffy chef's hat.
+        add(head, new THREE.CylinderGeometry(0.17, 0.18, 0.16, 18), 0xfbf8ef, 0, 0.36, -0.01);
+        add(head, new THREE.SphereGeometry(0.2, 16, 10), 0xfbf8ef, 0, 0.53, -0.01).scale.set(1, 0.72, 1);
+        break;
+      }
+      case "tricorn": {
+        // A pirate's three-cornered hat with a gold trim.
+        add(head, new THREE.CylinderGeometry(0.3, 0.3, 0.04, 3), 0x2a2228, 0, 0.32, 0).rotation.y = Math.PI;
+        add(head, new THREE.CylinderGeometry(0.15, 0.19, 0.16, 16), 0x2a2228, 0, 0.4, -0.01);
+        add(head, new THREE.TorusGeometry(0.19, 0.012, 4, 3), 0xe2c46a, 0, 0.34, 0).rotation.set(Math.PI / 2, 0, Math.PI / 2);
+        break;
+      }
+      case "straw": {
+        // A wide straw sun hat with a ribbon.
+        add(head, new THREE.CylinderGeometry(0.34, 0.34, 0.025, 24), 0xe3c77a, 0, 0.3, 0);
+        add(head, new THREE.CylinderGeometry(0.16, 0.19, 0.14, 18), 0xe3c77a, 0, 0.38, -0.01);
+        add(head, new THREE.CylinderGeometry(0.192, 0.192, 0.04, 18), p.accent, 0, 0.34, -0.01);
+        break;
+      }
+      case "hachimaki": {
+        // A white headband knotted at the back, a red sun on the front.
+        const band = add(head, new THREE.TorusGeometry(0.198, 0.022, 6, 24), 0xfbf8ef, 0, 0.255, 0);
+        band.rotation.x = Math.PI / 2 - 0.2;
+        add(head, new THREE.CylinderGeometry(0.03, 0.03, 0.02, 12), 0xd9534a, 0, 0.285, 0.19).rotation.x = Math.PI / 2 - 0.2;
+        for (const s of [-1, 1]) add(head, new THREE.BoxGeometry(0.04, 0.14, 0.012), 0xfbf8ef, s * 0.03, 0.17, -0.2).rotation.z = s * 0.35;
+        break;
+      }
+      case "hood": {
+        // A ninja's hood: covers everything but a band across the eyes, with the tails of its knot.
+        add(head, new THREE.SphereGeometry(0.21, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.42), p.accent, 0, 0.17, 0);
+        add(head, new THREE.SphereGeometry(0.21, 20, 10, 0, Math.PI * 2, Math.PI * 0.6, Math.PI * 0.4), p.accent, 0, 0.17, 0);
+        add(head, new THREE.SphereGeometry(0.205, 16, 6, Math.PI * 0.8, Math.PI * 1.4, Math.PI * 0.4, Math.PI * 0.21), p.accent, 0, 0.17, 0);
+        for (const s of [-1, 1]) add(head, new THREE.BoxGeometry(0.05, 0.2, 0.014), 0xd9534a, s * 0.03, 0.13, -0.21).rotation.z = s * 0.3;
+        break;
+      }
+      case "helmet": {
+        // An astronaut's helmet: a glass bubble (kept apart, so it can be see-through) on a white collar.
+        const glass = add(head, new THREE.SphereGeometry(0.29, 22, 16), 0xbfe6ff, 0, 0.17, 0.0);
+        glass.material = new THREE.MeshBasicMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0.28, depthWrite: false });
+        glass.castShadow = false;
+        const ring = add(head, new THREE.TorusGeometry(0.2, 0.05, 8, 24), 0xe9ecef, 0, -0.06, 0);
+        ring.rotation.x = Math.PI / 2;
+        break;
+      }
+      case "visor": {
+        // A glowing visor wrapped across the eyes.
+        const v = add(head, new THREE.CylinderGeometry(0.2, 0.2, 0.06, 24, 1, true, -1.1, 2.2), p.accent, 0, 0.175, 0.005, { emissive: p.accent, emissiveIntensity: 0.9 });
+        v.material.side = THREE.DoubleSide;
+        add(head, new THREE.TorusGeometry(0.2, 0.012, 4, 24), 0x1b1c1f, 0, 0.175, 0).rotation.x = Math.PI / 2;
+        break;
+      }
+      case "crown": {
+        // A little gold crown, worn at a slight tilt.
+        const crown = new THREE.Group();
+        crown.position.set(0.02, 0.36, 0);
+        crown.rotation.z = -0.12;
+        head.add(crown);
+        add(crown, new THREE.CylinderGeometry(0.13, 0.13, 0.08, 16, 1, true), 0xf2c94c, 0, 0, 0, { emissive: 0x6b4a00, emissiveIntensity: 0.5 }).material.side = THREE.DoubleSide;
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          add(crown, new THREE.ConeGeometry(0.035, 0.08, 4), 0xf2c94c, Math.cos(a) * 0.12, 0.08, Math.sin(a) * 0.12, { emissive: 0x6b4a00, emissiveIntensity: 0.5 });
+        }
+        break;
+      }
       case "goggles": {
         const strapG = add(head, new THREE.TorusGeometry(0.2, 0.018, 6, 24), 0x6c5446, 0, 0.27, 0);
         strapG.rotation.x = Math.PI / 2 - 0.25;
@@ -549,6 +635,11 @@ export function createCharacter(p) {
       }
     }
 
+    if (p.eyepatch) {
+      add(head, new THREE.CylinderGeometry(0.04, 0.04, 0.012, 14), 0x1b1c1f, -0.068, 0.17, 0.182).rotation.x = Math.PI / 2;
+      const strap = add(head, new THREE.TorusGeometry(0.195, 0.008, 4, 28), 0x1b1c1f, 0, 0.2, 0);
+      strap.rotation.set(Math.PI / 2 - 0.35, 0.15, 0.3);
+    }
     if (p.glasses === "shades") {
       // Black sunglasses that wrap round a little, with gold hinges.
       for (const s of [-1, 1]) {
@@ -694,5 +785,16 @@ export function createCharacter(p) {
   }
 
   compact(root, new Set(eyes));
+  if (p.finish === "holo") {
+    // A hologram: everything see-through cyan.
+    // It still writes depth, so the ink pass outlines it.
+    const holo = new THREE.MeshBasicMaterial({ color: 0x7ff8ff, transparent: true, opacity: 0.62 });
+    root.traverse((o) => {
+      if (o.isMesh) {
+        o.material = holo;
+        o.castShadow = false;
+      }
+    });
+  }
   return { root, body, head, update, setPose, setWave, setSwim };
 }
