@@ -167,7 +167,8 @@ async function refreshBoard(chain) {
       boardTiers = tiers;
       net.retag();
     }
-    $("live").textContent = `📮 ${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open`;
+    const earned = Number(board.totalEarned / 10n ** 18n);
+    $("live").textContent = `📮 ${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open · ${earned.toLocaleString()} $STAMP earned`;
     $("live").hidden = false;
   } catch (e) {
     console.warn(e);

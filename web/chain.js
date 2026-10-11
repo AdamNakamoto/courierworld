@@ -260,18 +260,20 @@ export async function connectChain() {
   // internet provider blocks that, through the site's own relay (/api/logs). What's been read is kept in
   // the browser, so later visits only read the new blocks.
   const OPENED = parseAbiItem("event OfficeOpened(address indexed owner, address indexed referrer)");
+  const CLAIMED = parseAbiItem("event Claimed(address indexed owner, uint256 amount, address indexed referrer, uint256 referralAmount)");
   const logSources = dep.local ? [pub] : [
     dep.logsRpcUrl && createPublicClient({ chain, transport: http(dep.logsRpcUrl, { timeout: 5000, retryCount: 0 }) }),
     dep.logsRelay && createPublicClient({ chain, transport: http(new URL(dep.logsRelay, location.href).href, { timeout: 20000 }) }),
   ].filter(Boolean);
-  const boardKey = game ? `courier:offices:${dep.chainId}:${C.office.address.toLowerCase()}` : null;
+  const boardKey = game ? `courier:offices2:${dep.chainId}:${C.office.address.toLowerCase()}` : null;
   let board = null, boardSource = 0;
   // Start from whichever source worked last time (the relay, where the official RPC is blocked).
   try { boardSource = Math.min(logSources.length - 1, Math.max(0, Number(localStorage.getItem("courier:logSource")) || 0)); } catch {}
   async function scanOffices() {
     if (!board) {
       try { board = JSON.parse(localStorage.getItem(boardKey)); } catch {}
-      if (!board?.owners) board = { from: String(dep.officeBlock ?? 0), owners: [] };
+      // owners: every office; claimed: what each has claimed so far (before the referral cut), in wei.
+      if (!board?.owners || !board.claimed) board = { from: String(dep.officeBlock ?? 0), owners: [], claimed: {} };
     }
     for (; boardSource < logSources.length; boardSource++) {
       const src = logSources[boardSource];
@@ -279,9 +281,17 @@ export async function connectChain() {
         const latest = await src.getBlockNumber();
         let from = BigInt(board.from);
         while (from <= latest) {
-          const to = from + 200_000n > latest ? latest : from + 200_000n;
-          const logs = await src.getLogs({ address: C.office.address, event: OPENED, fromBlock: from, toBlock: to });
-          for (const l of logs) if (!board.owners.includes(l.args.owner)) board.owners.push(l.args.owner);
+          // The official RPC answers a two-event query for at most 100,000 blocks at a time.
+          const to = from + 90_000n > latest ? latest : from + 90_000n;
+          const logs = await src.getLogs({ address: C.office.address, events: [OPENED, CLAIMED], fromBlock: from, toBlock: to });
+          for (const l of logs) {
+            const o = l.args.owner;
+            if (l.eventName === "OfficeOpened") {
+              if (!board.owners.includes(o)) board.owners.push(o);
+            } else {
+              board.claimed[o] = String(BigInt(board.claimed[o] ?? 0) + l.args.amount + l.args.referralAmount);
+            }
+          }
           from = to + 1n;
           board.from = String(from);
         }
@@ -289,7 +299,7 @@ export async function connectChain() {
           localStorage.setItem(boardKey, JSON.stringify(board));
           localStorage.setItem("courier:logSource", String(boardSource));
         } catch {}
-        return board.owners;
+        return board;
       } catch (e) {
         console.warn("office history: trying the next source", e?.shortMessage ?? e);
       }
@@ -297,14 +307,21 @@ export async function connectChain() {
     boardSource = 0; // try them all again next time
     throw new Error("Couldn't read the post office history right now.");
   }
-  /// Every post office, strongest first: { count, totalPower, list: [{ owner, tier, onDuty, power }] }.
+  /// Every post office, strongest first: { count, totalPower, totalEarned, list: [{ owner, tier, onDuty, power,
+  /// claimed, waiting, earned }] }. `earned` is all the $STAMP an office has made: claimed plus waiting to be claimed.
   async function leaderboard() {
     if (!game) return null;
-    const owners = await scanOffices();
-    const rows = await Promise.all(owners.map((o) => read(C.office, "offices", [o])));
-    const list = owners.map((owner, i) => ({ owner, tier: Number(rows[i][1]), onDuty: Number(rows[i][2]), power: rows[i][6] }))
-      .sort((a, b) => (b.power === a.power ? b.tier - a.tier : b.power > a.power ? 1 : -1));
-    return { count: list.length, totalPower: list.reduce((s, x) => s + x.power, 0n), list };
+    const { owners, claimed } = await scanOffices();
+    const [rows, waiting] = await Promise.all([
+      Promise.all(owners.map((o) => read(C.office, "offices", [o]))),
+      Promise.all(owners.map((o) => read(C.office, "pendingRewards", [o]))),
+    ]);
+    const list = owners.map((owner, i) => {
+      const got = BigInt(claimed[owner] ?? 0);
+      return { owner, tier: Number(rows[i][1]), onDuty: Number(rows[i][2]), power: rows[i][6], claimed: got, waiting: waiting[i], earned: got + waiting[i] };
+    }).sort((a, b) => (b.power === a.power ? b.tier - a.tier : b.power > a.power ? 1 : -1));
+    const sum = (k) => list.reduce((s, x) => s + x[k], 0n);
+    return { count: list.length, totalPower: sum("power"), totalEarned: sum("earned"), list };
   }
 
   // ---------------------------------------------------------------- admin

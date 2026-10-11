@@ -14,6 +14,8 @@ const BLOCKS_PER_DAY = 86_400_000n / 1_100n;
 
 const fmt = (wei, d = 2) => Number(formatEther(wei)).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+/// $STAMP in a few characters: 950, 12.3K, 1.23M.
+const compact = (wei) => new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: Number(formatEther(wei)) >= 1e6 ? 2 : 1 }).format(Number(formatEther(wei)));
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const powerAt = (base, level) => Math.floor((base * (100 + 12 * (level - 1))) / 100);
 
@@ -176,6 +178,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
     // ---- the leaderboard
     if (s.game) {
       html += `<section><h3>Leaderboard <span class="muted">${board ? `${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open` : "loading…"}</span></h3>`;
+      if (board?.count) html += `<p class="earned-all"><b>${fmt(board.totalEarned, 0)}</b> $STAMP earned by all players so far</p>`;
       if (board?.count) {
         const me = s.account?.toLowerCase();
         const row = (o, i) => {
@@ -183,11 +186,12 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast }) {
           const mine = me && o.owner.toLowerCase() === me;
           return `<li class="${mine ? "me" : ""}"><span class="rk">${i + 1}</span>
             <a href="${s.explorer ? `${s.explorer}/address/${o.owner}` : "#"}" target="_blank" rel="noopener">${mine ? "You" : short(o.owner)}</a>
-            <span class="tr">${TIER_NAMES[o.tier] ?? `Tier ${o.tier + 1}`}</span><span class="pw">${Number(o.power).toLocaleString()}</span><span class="sh">${share.toFixed(1)}%</span></li>`;
+            <span class="tr">${TIER_NAMES[o.tier] ?? `Tier ${o.tier + 1}`}</span><span class="pw">${Number(o.power).toLocaleString()}</span>
+            <span class="er" title="${fmt(o.earned)} $STAMP earned: ${fmt(o.claimed)} claimed, ${fmt(o.waiting)} waiting">${compact(o.earned)}</span><span class="sh">${share.toFixed(1)}%</span></li>`;
         };
         const mineAt = me ? board.list.findIndex((o) => o.owner.toLowerCase() === me) : -1;
-        html += `<ol class="board">${board.list.slice(0, 10).map(row).join("")}${mineAt >= 10 ? `<li class="gap">…</li>${row(board.list[mineAt], mineAt)}` : ""}</ol>
-          <p class="note">Ranked by delivery power. The strongest offices stand on the lots by the main post office, with a gold, silver or bronze star for the top three.</p>`;
+        html += `<ol class="board"><li class="hd"><span></span><span>Office</span><span></span><span>Power</span><span>Earned</span><span>Share</span></li>${board.list.slice(0, 10).map(row).join("")}${mineAt >= 10 ? `<li class="gap">…</li>${row(board.list[mineAt], mineAt)}` : ""}</ol>
+          <p class="note">Ranked by delivery power. Earned is all the $STAMP an office has made, claimed or waiting to be claimed (hover for the split). The strongest offices stand on the lots by the main post office, with a gold, silver or bronze star for the top three.</p>`;
       } else if (board) {
         html += `<p class="note">No post offices yet. Open the first one and take the best lot in town.</p>`;
       }
