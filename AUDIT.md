@@ -206,3 +206,103 @@ two stages. 86 tests in all.
 | 5 | Info: the one-shot `setGame` took any address | It reverts `NotThisGame` unless the address is a contract whose `couriers()` is this collection. `test_SetGameOnlyTakesThisCollectionsPostOffice`. |
 
 95 tests, plus 4 against a Robinhood Chain fork (`--match-contract "StampHookForkTest|LaunchStagesForkTest"`).
+
+## 9. New since launch: Courier Skins and the golden stamp hunt
+
+The game above is live on Robinhood Chain and unchanged (addresses in `contracts/deployments/robinhood.json`; every
+owner renounced). This round adds two separate contracts that only read from it. Neither is deployed yet.
+
+### Courier Skins (`CourierSkins.sol`)
+
+999 cosmetic NFTs to wear in the game: 16 designs in `web/skins.js`. They change how a player looks and never
+touch $STAMP, the post office or the couriers.
+
+- **Mint:** blind, for ETH (`price`, 0.004 at launch), up to 10 per transaction, paid straight to the treasury in
+  the same call; the contract never holds ETH. Token IDs run 1 to 999.
+- **Reveal:** `seedCommit = keccak256(abi.encode(secret))` is fixed at deploy. `reveal(secret)` (owner, once) ends
+  the sale for good and sets `seed = keccak256(abi.encode(secret, blockhash(block.number - 1)))`, never 0.
+- **Designs:** `designOf(id) = _designAt(_shuffle(id - 1))`. `_shuffle` is a 4-round Feistel network on 10 bits
+  keyed by `seed` (a permutation of 0..1023), repeated until it lands below 999 (cycle-walking), so it is a
+  permutation of 0..998. `_designAt` deals that slot from a 999-card deck in design order: five designs of 120,
+  four of 60, two of 40, two of 20, three of 13. A full mint therefore gives each design exactly its supply.
+- **Metadata:** `tokenURI` and `contractURI` (ERC-7572) are JSON built on-chain; only the pictures are fetched,
+  from `imageBase`, which the owner can change until `freezeImages`. `setContractURI` can replace the collection
+  JSON (or restore the built-in one with "").
+- **Royalty, enforced:** ERC-2981 at a fixed 5% (`ROYALTY_BPS`) to the treasury; `setTreasury` moves mint payments
+  and the royalty together and can't change the rate. ERC721-C: `_update` calls the transfer validator's
+  `validateTransfer(msg.sender, from, to, tokenId)` (a view) on every transfer between two non-zero addresses;
+  mints skip it and there is no burn. The validator at launch is OpenSea's `StrictAuthorizedTransferSecurityRegistry`
+  (`0xA000027A9B2802E1ddf7000061001e5c005A0000`, live on Robinhood Chain): it allows a holder moving their own token
+  (`caller == from`) and any other caller only inside OpenSea's SignedZone flow, which checks the creator fee is
+  paid. `setTransferValidator` (owner) only takes a contract, so enforcement can move but never be switched off.
+- **Owner powers** (two-step ownership): open or close the sale (never after the reveal), `setPrice`, `reveal`,
+  `setTreasury`, `setImageBase` until frozen, `freezeImages`, `setContractURI`, `setTransferValidator`.
+  `renounceOwnership` only works once revealed and the images are frozen. The owner can't mint for free, change
+  the royalty rate, hold or redirect a holder's ETH, or move anyone's skins.
+
+### The golden stamp hunt (`StampHunt.sol`)
+
+Golden stamps are hidden round the planet, 24 new spots every UTC day. The multiplayer server (a Cloudflare
+Worker, `multiplayer/src/index.js`, out of scope) checks each find against the player's reported path and signs an
+EIP-712 voucher `Finds(player, day, stamps, deadline)` (domain "Courier World Stamp Hunt", version "1"): the
+day's total finds so far, valid for an hour. `StampHunt` pays `rewardPerStamp` $STAMP per stamp from a pool the
+owner fills with `deposit` (anyone may deposit). It never mints.
+
+- `claim(day, stamps, deadline, signature)`: reverts after `deadline`, for a future `day` (`today()` =
+  `block.timestamp / 1 days`), for a caller without an open post office (`PostOffice.offices(msg.sender).open`)
+  or a signature not from `signer` over the caller's own address. It pays for `min(stamps, maxStampsPerDay)`
+  minus what that wallet was already paid for that day, cut down to what the pool holds and what is left of
+  `dailyLimit` for that day (0 = no limit); the rest stays claimable with a later voucher. `nonReentrant`.
+- **Owner powers** (two-step ownership): `withdraw` any amount of the pool, `setSigner`, `setReward`,
+  `setLimits`. Deploy settings: reward 10 $STAMP, 24 stamps per wallet per day, 10,000 $STAMP per day in all.
+
+### Scope
+
+| File | Role |
+| --- | --- |
+| `contracts/src/CourierSkins.sol` | Skins: mint, commit-reveal shuffle, on-chain metadata, enforced royalty, admin |
+| `contracts/src/StampHunt.sol` | Hunt rewards: vouchers, limits, the pool |
+| `contracts/script/DeploySkins.s.sol`, `contracts/script/DeployHunt.s.sol` | Deploy settings |
+
+Out of scope: `contracts/script/DevTransferValidator.sol` (local chains only), `web/`, `multiplayer/`.
+
+```bash
+cd contracts && git submodule update --init --recursive && forge test --match-contract "CourierSkinsTest|StampHuntTest"
+forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.drpc.org   # OpenSea's real registry
+```
+
+### Guarantees to check
+
+1. **Skins supply and payment:** at most 999 tokens, only through `mint` with exactly `price × quantity` while the
+   sale is open; the payment reaches the treasury in the same call; nothing is ever left in the contract.
+2. **Fair reveal:** before `reveal` nobody, minter or owner, can know or influence any token's design; after it,
+   designs never change; `_shuffle` is a bijection on 0..998, so no two tokens share a deck slot and no design
+   ever exceeds its supply, whatever the seed.
+3. **Royalty can't be skipped by contract:** no path moves a skin between two non-zero addresses without calling
+   the validator (`transferFrom`, both `safeTransferFrom`s, anything else reaching `_update`); the validator can't
+   be set to zero or a non-contract; the royalty rate can't change from 5%; a holder can always move their own skin
+   with the launch registry.
+4. **Metadata:** `tokenURI` and `contractURI` always return valid base64 JSON for existing tokens; `designOf` and
+   `tokenURI` agree.
+5. **Hunt payouts:** only vouchers signed by `signer` for `msg.sender` pay; a voucher can't be reused for more than
+   its count; one wallet is never paid for more than `maxStampsPerDay` stamps in a day; one day's payouts never
+   exceed `dailyLimit` when it is set; a claim never pays more than the pool holds; only wallets with an open post
+   office are paid; the contract can't mint $STAMP or touch anyone's tokens but its own pool.
+
+### Known and accepted
+
+- **The validator is trusted.** The owner (or OpenSea, which controls the registry) could set or change rules
+  that block marketplace sales, or every transfer. That is how ERC721-C works; the owner keeps ownership so the
+  validator can follow OpenSea if it moves to a new registry.
+- Holders moving skins between wallets pay no royalty (a private deal can skip it); only marketplace sales are
+  enforced.
+- **Reveal timing**, as for the couriers: the owner chooses when to reveal and could wait for a blockhash it likes;
+  minters can't predict designs. If the secret is lost the skins stay sealed for good.
+- If the mint doesn't sell out, the unminted deck slots are random, so a design can end with fewer than its supply.
+- There is no per-wallet mint limit, only 10 per transaction.
+- `imageBase` is owner-set text placed in the JSON as is; the owner is trusted to set a plain URL. Pictures live on
+  the game's website until moved (to IPFS, say) and frozen.
+- **The hunt trusts its server.** Whoever holds the signer key can sign vouchers for any wallet with a post
+  office, up to the per-wallet and daily limits, until the owner calls `setSigner`. The owner can withdraw the pool
+  at any time (it is the owner's $STAMP, never the players'). A reward change applies to stamps not yet claimed.
+- `tokensOfOwner` loops over every token ID; it is meant for off-chain reads.
