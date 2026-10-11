@@ -10,3 +10,7 @@ class_name = "Planet"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Planet"]
+
+# Courier Skins on Robinhood Chain: a player is shown in a skin only if this contract says they own it.
+[vars]
+SKINS_ADDRESS = "0x19716dAaDE3F2979aAA4f69cc04e2A5c00e7D23e"
