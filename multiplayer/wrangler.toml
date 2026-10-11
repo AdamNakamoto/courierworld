@@ -1,0 +1,12 @@
+# Courier World multiplayer: a Worker in front of one Durable Object that holds the planet's room.
+name = "courier-world-mp"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+[[durable_objects.bindings]]
+name = "PLANET"
+class_name = "Planet"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Planet"]

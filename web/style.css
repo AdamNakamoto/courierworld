@@ -150,6 +150,7 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   body { font-size: 18px; }
   #compass { top: 64px; font-size: 17px; }
   .help { display: none; }
+  .online { top: 110px; }
   #dialog { bottom: 16px; padding: 22px 54px 14px 18px; }
   #dtext { font-size: 19px; }
 }
@@ -168,6 +169,16 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 }
 .music-btn.off { opacity: .55; text-decoration: line-through; }
 .sounds-btn { top: 110px; display: grid; place-items: center; padding: 0; }
+.chat-btn { top: 158px; font-size: 18px; padding: 0; }
+.phrases { position: absolute; top: 152px; right: 64px; display: grid; grid-template-columns: repeat(2, auto); gap: 6px; padding: 8px; transform: rotate(-.6deg); }
+.phrases button {
+  font: 400 13px/1 Bungee, Impact, sans-serif; letter-spacing: .03em; color: var(--ink); background: #fff; border: 2px solid var(--ink);
+  border-radius: 3px; padding: 7px 10px; cursor: pointer; text-align: left; white-space: nowrap;
+}
+.phrases button:hover { background: var(--yellow); }
+.phrases kbd { font: 700 11px ui-monospace, Menlo, monospace; opacity: .55; margin-right: 6px; }
+.online { position: absolute; top: 62px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(.8deg); }
+.online b { font-size: 20px; }
 .sounds-btn.off svg path:last-child { opacity: 0; }
 .office-btn kbd { font: inherit; font-size: 11px; border: 2px solid var(--ink); border-radius: 3px; padding: 1px 4px; margin-left: 6px; background: var(--paper); }
 .office {

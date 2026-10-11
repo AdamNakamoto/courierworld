@@ -55,6 +55,21 @@ The launch as it will happen: only the couriers exist at first, with the mint op
 with your wallet; then press Enter in the terminal to reveal them and launch the game, and
 reload the page.
 
+## Multiplayer
+
+Other players walk the planet with you: `multiplayer/` is a Cloudflare Worker with one Durable
+Object holding the planet's room. Each player says who they are (their courier's look and ride,
+and their wallet if logged in), then sends where they are while moving; the room passes it on to
+the players near them, plus waves and the preset phrases (keys 1-8). Nothing in it touches the
+chain. `GET /count` tells the title screen how many are playing.
+
+```bash
+cd multiplayer
+npm install
+npx wrangler dev          # a local room on :8787; open the game with ?mp=ws://127.0.0.1:8787/ws
+npx wrangler deploy       # the live room, at wss://courier-world-mp.courier-world-mp.workers.dev/ws
+```
+
 ## On Robinhood Chain
 
 Without `web/chain.json` the site loads `web/deployments/robinhood.json`. Players log in

@@ -3,6 +3,7 @@ import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
+import { createNet, PHRASES } from "./net.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
@@ -63,7 +64,7 @@ function rider(params, rideKey = "foot") {
   }
   group.add(ch.root);
   return {
-    group, ch, ride,
+    group, ch, ride, params, rideKey,
     kind: ride ? rideKey : null,
     speed: ride ? ride.mount.speed : 1,
     /// Returns true on the frame a foot comes down.
@@ -98,6 +99,7 @@ function setPlayer(r) {
   scene.remove(prev);
   dispose(prev);
   scene.add(player.group);
+  if (mode === "play") introduce();
 }
 function playAs(c, account) {
   playingId = c.id;
@@ -152,13 +154,19 @@ function kick(opts) {
 const life = createLife(W, { onFlutter: () => sounds.flutter(), onMeow: () => sounds.meow() });
 // The players' post offices, standing on the lots near the main post office (filled from the leaderboard).
 const district = createDistrict(W);
-let board = null;
+let board = null, boardTiers = "";
 async function refreshBoard(chain) {
   try {
     board = await chain.leaderboard();
     if (!board) return;
     district.update(board.list, chain.account);
     office?.setBoard(board);
+    // Name tags show each player's tier, so redraw them when a tier changes.
+    const tiers = board.list.map((o) => `${o.owner}:${o.tier}`).join();
+    if (tiers !== boardTiers) {
+      boardTiers = tiers;
+      net.retag();
+    }
     $("live").textContent = `📮 ${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open`;
     $("live").hidden = false;
   } catch (e) {
@@ -167,6 +175,59 @@ async function refreshBoard(chain) {
 }
 
 // Golden stamps to find, and the sparkle when you do.
+// ---------------------------------------------------------------- other players
+
+// The multiplayer room (multiplayer/ in the repo, on Cloudflare). ?mp=ws://… points the game at
+// another one, such as `wrangler dev` on your own machine.
+const MP_URL = new URLSearchParams(location.search).get("mp") ?? "wss://courier-world-mp.courier-world-mp.workers.dev/ws";
+const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
+let chainRef = null;
+const net = createNet(W, {
+  url: MP_URL, makeRider: rider, dispose, say: (obj, text, h) => life.say(obj, text, h),
+  tier(addr) {
+    const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
+    return o ? TIERS[Math.min(o.tier, 4)] : null;
+  },
+  onCount(n) {
+    $("online").hidden = n === null;
+    if (n !== null) $("onlineN").textContent = n.toLocaleString();
+  },
+});
+/// Tell the room who you are: your courier, and your wallet if you're logged in.
+function introduce() {
+  net.hello(player.params, player.rideKey, chainRef?.account ?? null);
+}
+/// The facts the room passes on about you each frame, in planet space.
+function netState() {
+  const f = new THREE.Vector3(0, 0, 1).applyAxisAngle(UP, facingCamera ? 0 : Math.PI - facing).applyQuaternion(playerQ.clone().invert());
+  return { p: localPos(), f, h: bodyY, air: jumpY, spd: moveSpeed, swim: swimK };
+}
+/// How many are playing, on the title screen (from the room, every half minute).
+const countUrl = MP_URL.replace(/^ws/, "http").replace(/\/ws$/, "/count");
+async function titleCount() {
+  if (mode !== "title") return;
+  try {
+    const { online } = await (await fetch(countUrl)).json();
+    $("onlineTitle").textContent = `👥 ${online.toLocaleString()} courier${online === 1 ? "" : "s"} online`;
+    $("onlineTitle").hidden = !online;
+  } catch {}
+}
+/// The chat button: a little menu of phrases (the same as keys 1-8).
+PHRASES.forEach((text, i) => {
+  const b = document.createElement("button");
+  b.innerHTML = `<kbd>${i + 1}</kbd>${text}`;
+  b.addEventListener("click", () => {
+    net.say(i);
+    $("phrases").hidden = true;
+    $("chatBtn").setAttribute("aria-expanded", "false");
+  });
+  $("phrases").append(b);
+});
+$("chatBtn").addEventListener("click", () => {
+  $("phrases").hidden = !$("phrases").hidden;
+  $("chatBtn").setAttribute("aria-expanded", String(!$("phrases").hidden));
+});
+
 const stamps = createStamps(W);
 const sparkle = createDust(world, W.noNormals, 24, 0xffd75e);
 function collected(s) {
@@ -321,6 +382,10 @@ addEventListener("keydown", (e) => {
     if (!e.repeat) jump();
     return;
   }
+  if (/^[1-8]$/.test(e.key) && mode === "play" && !dialog) {
+    if (!e.repeat) net.say(Number(e.key) - 1);
+    return;
+  }
   keys.add(e.key.toLowerCase());
   if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault();
 });
@@ -447,6 +512,7 @@ function interact() {
   if (!who) {
     waveT = 1.6;
     life.waveBack(me);
+    net.say(-1);
     return;
   }
   // Turn to face them.
@@ -653,6 +719,7 @@ function frame() {
       mode = "play";
       playerQ.copy(spawnQ);
       $("hud").hidden = false;
+      introduce();
       fillBag();
       say(INTRO);
     }
@@ -785,6 +852,7 @@ function frame() {
   const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog });
   if (got) collected(got);
   life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
+  net.update(dt, t, mode === "play" ? netState() : null, localPos(), mode !== "play");
   waveT = Math.max(0, waveT - dt);
   player.ch.setWave(waveT > 0 ? Math.min(1, waveT * 3, (1.6 - waveT) * 6) : 0);
   if (mode !== "title") {
@@ -867,6 +935,7 @@ let office = null;
 const chainReady = connectChain()
   .then(async (chain) => {
     if (!chain) return null;
+    chainRef = chain;
     if (chain.browserWallet) {
       $("begin").textContent = "Log in & play";
       $("wallets").querySelector(".note").textContent =
@@ -875,6 +944,7 @@ const chainReady = connectChain()
       if (chain.account) $("begin").textContent = "Begin";
       chain.onAccountChange(() => {
         office?.refresh();
+        if (mode === "play") introduce();
         if (board) district.update(board.list, chain.account);
       });
     }
@@ -899,4 +969,6 @@ $("officeBtn").addEventListener("click", () => office?.show($("office").hidden))
 $("officeClose").addEventListener("click", () => office?.show(false));
 
 hud();
+titleCount();
+setInterval(titleCount, 30_000);
 requestAnimationFrame(frame);

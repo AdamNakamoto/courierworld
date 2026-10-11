@@ -78,7 +78,7 @@ function bubbleTexture(text) {
 function createBubbles(world, noNormals) {
   const cache = new Map();
   const pool = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 10; i++) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
     s.visible = false;
     s.renderOrder = 2;
