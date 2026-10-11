@@ -801,6 +801,7 @@ export function createWorld(canvas) {
         "Small planet, big ideas. I like it here.",
         "Every time someone opens a post office, the town grows a little. Have you seen the new lots?",
         "DOg PEt follows me everywhere. Well. Sits next to me everywhere.",
+        "Donal Trum is making a speech just up the street. Follow the balloons, you can't miss him.",
       ],
     });
     npcs.push({
@@ -863,9 +864,6 @@ export function createWorld(canvas) {
     });
   }
 
-  // ---- lots for the players' post offices: paved clearings facing a street, nearest the main post office
-  // first. The strongest offices on the leaderboard move in (district.js builds them); empty ones get a sign.
-  const lots = [];
   let stage = null;
   /// The spin that turns a spot to face its nearest street.
   const faceStreet = (d) => {
@@ -876,41 +874,21 @@ export function createWorld(canvas) {
     }
     return spinToward(d, d.clone().addScaledVector(near.road.axis, -d.dot(near.road.axis)).normalize());
   };
+  // ---- a little stage up the street from the post office, where Donal Trum makes speeches to anyone
+  // passing; balloons over it show above the rooftops (before the lots, so it gets this spot)
   {
-    const lr = mulberry32(4242); // its own stream, so the rest of the town keeps its layout
-    const cands = [];
-    for (let i = 0; i < 20000; i++) {
-      const d = new THREE.Vector3(lr() * 2 - 1, lr() * 2 - 1, lr() * 2 - 1).normalize();
-      const far = arc(d, spawnSpot.p), nr = nearestRoad(d);
-      if (far > 60 || nr < ROAD_HW + WALK + 1.7 || nr > ROAD_HW + WALK + 6) continue;
-      if (!inTown(d) || wetNear(d, 3) || !clearOf(d, 1.9) || blocked(d, 1.9)) continue;
-      cands.push({ d, far });
-    }
-    cands.sort((a, b) => a.far - b.far);
-    for (const c of cands) {
-      if (lots.length >= 30) break;
-      if (lots.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
-      const spin = faceStreet(c.d);
-      lots.push({ d: c.d, spin });
-      taken.push({ d: c.d, r: 2.3 });
-      const g = new THREE.Group();
-      box(g, 3.8, 0.06, 3.8, C.walk, 0, 0.03, 0);
-      bake(g, c.d, spin);
-    }
-  }
-
-  // ---- a little stage by a street, where Donal Trum makes speeches to anyone passing
-  {
-    const sr = mulberry32(777); // its own stream, so the rest of the town keeps its layout
+    // Straight ahead of where you start (you face along the first street), set back from the pavement.
+    const road = ROADS[0];
     let best = null;
-    for (let i = 0; i < 20000; i++) {
-      const d = new THREE.Vector3(sr() * 2 - 1, sr() * 2 - 1, sr() * 2 - 1).normalize();
-      const far = arc(d, spawnSpot.p);
-      if (far < 9 || far > 40) continue;
-      const nr = nearestRoad(d);
-      if (nr < ROAD_HW + WALK + 1.3 || nr > ROAD_HW + WALK + 2.8) continue;
-      if (!inTown(d) || wetNear(d, 2.5) || !clearOf(d, 2.2) || blocked(d, 2.2)) continue;
-      if (!best || Math.abs(far - 15) < Math.abs(best.far - 15)) best = { d, far };
+    for (let k = 8; k <= 16 && !best; k += 0.5) {
+      const b = road.point(spawnSpot.t + k / R), side = new THREE.Vector3().crossVectors(b, road.tangent(spawnSpot.t + k / R)).normalize();
+      for (const off of [1.6, 2.1, -1.6, -2.1]) {
+        const d = offsetOnSphere(b, side, Math.sign(off) * (ROAD_HW + WALK + Math.abs(off)));
+        if (inTown(d) && !wetNear(d, 2.5) && clearOf(d, 2.2) && !blocked(d, 2.2)) {
+          best = { d };
+          break;
+        }
+      }
     }
     if (best) {
       const d = best.d, spin = faceStreet(d), q = frameAt(d, spin);
@@ -946,10 +924,35 @@ export function createWorld(canvas) {
       addRect(at(0, 0.55), spin, 0.33, 0.23, { h: 1.1, hd: 0.23 });
       for (const s of [-1, 1]) addCircle(at(s * 1.5, -0.9), 0.08);
       taken.push({ d, r: 2.6 });
+      const balloons = new THREE.Group();
+      balloons.position.copy(d).multiplyScalar(R);
+      balloons.quaternion.copy(q);
+      world.add(balloons);
+      const bobs = [];
+      [[-1.5, RED, 5.2], [-1.15, CREAM, 4.7], [-1.75, NAVY, 4.5], [1.5, NAVY, 5.0], [1.2, RED, 4.6], [1.8, CREAM, 4.4]].forEach(([x, color, h], i) => {
+        const b = new THREE.Group();
+        b.position.set(x, 2.74, -0.9);
+        balloons.add(b);
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 12), toon(color));
+        ball.scale.set(1, 1.15, 1);
+        ball.position.y = h - 2.74;
+        ball.castShadow = true;
+        b.add(ball);
+        const str = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, h - 2.74 - 0.3, 4), toon(INK));
+        str.position.y = (h - 2.74 - 0.3) / 2;
+        b.add(str);
+        bobs.push({ b, ph: i * 1.7 });
+      });
+      animators.push((t) => {
+        for (const { b, ph } of bobs) {
+          b.rotation.z = Math.sin(t * 0.9 + ph) * 0.09;
+          b.rotation.x = Math.sin(t * 0.7 + ph * 1.3) * 0.07;
+        }
+      });
       const spot = at(0, 0.05);
       npcs.push({
         d: spot, y: terrain.surfaceAt(spot, 1.5), face: new THREE.Vector3(0, 0, 1).applyQuaternion(q), name: "Donal Trum",
-        own: true, fixed: true, hi: ["Tremendous!", "Fantastic!", "Believe me!", "Huge!"],
+        own: true, fixed: true, shout: true, hi: ["Tremendous!", "Fantastic!", "Believe me!", "Huge!"],
         look: { head: "frog", skin: 0x7bb661, hair: 0xf0c75e, shirt: NAVY, collar: 0xf4f1ea, accent: NAVY, tie: RED, sleeves: "long",
           bottoms: NAVY, bottomsStyle: "pants", socks: NAVY, shoes: 0x2b2b2e, bag: "none", height: 1.06 },
         lines: [
@@ -961,6 +964,32 @@ export function createWorld(canvas) {
         ],
       });
       stage = { d, spot };
+    }
+  }
+
+  // ---- lots for the players' post offices: paved clearings facing a street, nearest the main post office
+  // first. The strongest offices on the leaderboard move in (district.js builds them); empty ones get a sign.
+  const lots = [];
+  {
+    const lr = mulberry32(4242); // its own stream, so the rest of the town keeps its layout
+    const cands = [];
+    for (let i = 0; i < 20000; i++) {
+      const d = new THREE.Vector3(lr() * 2 - 1, lr() * 2 - 1, lr() * 2 - 1).normalize();
+      const far = arc(d, spawnSpot.p), nr = nearestRoad(d);
+      if (far > 60 || nr < ROAD_HW + WALK + 1.7 || nr > ROAD_HW + WALK + 6) continue;
+      if (!inTown(d) || wetNear(d, 3) || !clearOf(d, 1.9) || blocked(d, 1.9)) continue;
+      cands.push({ d, far });
+    }
+    cands.sort((a, b) => a.far - b.far);
+    for (const c of cands) {
+      if (lots.length >= 30) break;
+      if (lots.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
+      const spin = faceStreet(c.d);
+      lots.push({ d: c.d, spin });
+      taken.push({ d: c.d, r: 2.3 });
+      const g = new THREE.Group();
+      box(g, 3.8, 0.06, 3.8, C.walk, 0, 0.03, 0);
+      bake(g, c.d, spin);
     }
   }
 

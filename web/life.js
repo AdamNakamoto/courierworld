@@ -288,7 +288,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     const home = s.face.clone().addScaledVector(up, -s.face.dot(up)).normalize();
     orient(ch.root, up, home);
     const p = {
-      kind: "door", name: s.name, lines: s.lines, own: s.own, hi: s.hi, fixed: s.fixed, bubble: dog ? 1.0 : undefined,
+      kind: "door", name: s.name, lines: s.lines, own: s.own, hi: s.hi, fixed: s.fixed, shout: s.shout, shoutIn: 2, bubble: dog ? 1.0 : undefined,
       ch, up, home, face: home.clone(), greetIn: 0, wave: 0, talking: false, y: s.y, body: { d: up, r: dog ? 0.24 : 0.28, y: s.y },
     };
     people.push(p);
@@ -496,6 +496,12 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
         const turn = !p.fixed && (p.talking || (near && Math.abs(turnTo(p.up, p.home, toMe)) < 2.2));
         pose(p, dt, t, turn ? toMe.clone().normalize() : p.home, near ? toMe.normalize() : null);
         if (p.ch.root.visible) p.ch.update(dt, 0, t);
+      }
+      // Some guests call out to anyone in earshot, so you can find them by the bubbles.
+      if (p.shout && active && !p.talking && arc(p.up, me) < 16 && (p.shoutIn -= dt) <= 0) {
+        p.shoutIn = 4 + Math.random() * 3;
+        p.wave = 1.6;
+        bubbles.say(p.ch.root, pick(p.hi), p.bubble);
       }
       // Say hello (and wave) when you come by, now and then.
       p.greetIn -= dt;
