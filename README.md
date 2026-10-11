@@ -117,8 +117,10 @@ npx wrangler deploy --var SKINS_ADDRESS:0x…
 ```
 
 `deploy-skins.sh` runs `export-web.sh`, which adds the skins to `web/deployments/robinhood.json`.
-Then set the collection up in OpenSea Studio (creator earnings: the registry is already the transfer
-validator). `./dev.sh` deploys local skins with the sale open; "Reveal skins" in the panel reveals them.
+The collection's page on OpenSea comes from `contractURI()`: name, description (with the X link),
+`collection.png`, `banner.png` and https://courierworld.fun/ as the website. Then, in OpenSea Studio,
+add the X link (https://x.com/PlayCourierWld) to the collection's links and turn on creator earnings
+(the registry is already the transfer validator). `./dev.sh` deploys local skins with the sale open; "Reveal skins" in the panel reveals them.
 
 ## On Robinhood Chain
 
@@ -170,7 +172,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
 
 ```bash
-cd contracts && forge test                                             # 124 tests
+cd contracts && forge test                                             # 125 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 

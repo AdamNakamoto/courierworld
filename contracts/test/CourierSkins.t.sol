@@ -192,6 +192,28 @@ contract CourierSkinsTest is Test {
         assertEq(skins.imageBase(), "ipfs://abc/");
     }
 
+    function test_CollectionMetadataLinksTheGame() public {
+        string memory json = _json(skins.contractURI());
+        assertTrue(_has(json, '"name":"Courier Skins"'));
+        assertTrue(_has(json, '"external_link":"https://courierworld.fun/"'));
+        assertTrue(_has(json, "https://x.com/PlayCourierWld"));
+        assertTrue(_has(json, '"image":"https://courierworld.fun/skins/collection.png"'));
+        assertTrue(_has(json, '"banner_image":"https://courierworld.fun/skins/banner.png"'));
+
+        vm.prank(owner);
+        vm.expectEmit(address(skins));
+        emit CourierSkins.ContractURIUpdated();
+        skins.setContractURI("ipfs://collection.json");
+        assertEq(skins.contractURI(), "ipfs://collection.json");
+        vm.prank(owner);
+        skins.setContractURI("");
+        assertTrue(_has(_json(skins.contractURI()), '"external_link":"https://courierworld.fun/"'));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        skins.setContractURI("x");
+    }
+
     function test_TokensOfOwner() public {
         _mint(alice, 2);
         _mint(bob, 1);

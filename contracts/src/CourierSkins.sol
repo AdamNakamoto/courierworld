@@ -42,6 +42,9 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     /// @dev validateTransfer(address,address,address,uint256)
     bytes4 private constant VALIDATE_TRANSFER = 0xcaee23ea;
 
+    string public constant GAME_URL = "https://courierworld.fun/";
+    string public constant X_URL = "https://x.com/PlayCourierWld";
+
     uint256 public price;
     bool public saleOpen;
     uint256 public totalMinted;
@@ -53,6 +56,8 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     address public transferValidator;
     string public imageBase;
     bool public imagesFrozen;
+    /// @dev Replaces the built-in collection metadata when set (see contractURI).
+    string private customContractURI;
 
     event Revealed(uint256 seed);
     event SaleOpen(bool open);
@@ -60,6 +65,8 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     event TreasurySet(address indexed treasury);
     event ImageBaseSet(string imageBase);
     event ImagesFrozen();
+    /// @notice ERC-7572: marketplaces re-read contractURI when they see this.
+    event ContractURIUpdated();
 
     error SaleClosed();
     error BadQuantity();
@@ -249,6 +256,27 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
     }
 
+    /// @notice The collection's page on marketplaces (ERC-7572): its name, description, pictures and website.
+    function contractURI() external view returns (string memory) {
+        if (bytes(customContractURI).length != 0) return customContractURI;
+        string memory json = string.concat(
+            '{"name":"Courier Skins","description":"999 limited outfits and rides to wear in Courier World, a tiny-planet courier game on Robinhood Chain. Skins are cosmetic: everyone in the game sees yours, and they never change what you earn. Play: ',
+            GAME_URL,
+            " - X: ",
+            X_URL,
+            '","image":"',
+            imageBase,
+            'collection.png","featured_image":"',
+            imageBase,
+            'collection.png","banner_image":"',
+            imageBase,
+            'banner.png","external_link":"',
+            GAME_URL,
+            '"}'
+        );
+        return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
+    }
+
     /// @notice Every skin `owner` holds, so the game can list them without scanning event logs.
     function tokensOfOwner(address owner) external view returns (uint256[] memory ids) {
         uint256 n = balanceOf(owner);
@@ -316,6 +344,13 @@ contract CourierSkins is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         if (imagesFrozen) revert ImagesAreFrozen();
         imageBase = imageBase_;
         emit ImageBaseSet(imageBase_);
+        emit ContractURIUpdated();
+    }
+
+    /// @notice Point the collection's metadata somewhere else (a JSON URL), or back to the built-in one ("").
+    function setContractURI(string calldata uri) external onlyOwner {
+        customContractURI = uri;
+        emit ContractURIUpdated();
     }
 
     function freezeImages() external onlyOwner {
