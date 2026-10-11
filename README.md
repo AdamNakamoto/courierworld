@@ -91,6 +91,35 @@ npx wrangler deploy --var HUNT_ADDRESS:0x…
 Then add `"hunt": "0x…"` to `contracts/deployments/robinhood.json` and run `script/export-web.sh`.
 `./dev.sh` deploys a local hunt and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs it too.
 
+## Courier Skins
+
+`CourierSkins.sol`: 999 cosmetic NFTs, 16 outfits and rides (`web/skins.js`), minted blind for ETH
+(to the treasury) and revealed after the mint, commit-reveal like the couriers: each token takes a
+different card of the 999-card deck, so a sold-out mint matches every design's supply exactly. The
+metadata is on-chain; the pictures are `web/skins/*.png` (rendered by `renderSkinStamp` in
+`web/portrait.js`), under an image base the owner can move (to IPFS, say) and then freeze.
+
+The 5% royalty is enforced, not optional: every transfer goes through a transfer validator
+(ERC721-C), OpenSea's `StrictAuthorizedTransferSecurityRegistry` at launch. Holders can always move
+their own skins; a marketplace can only move them in trades OpenSea's signed zone has checked pay
+the royalty. The validator can be replaced but never removed, and the 5% can't be changed.
+
+Players wear a revealed skin from the Post Office panel. The multiplayer room shows it to others
+only after reading on-chain that the wallet on their name tag owns it (`SKINS_ADDRESS`, `SKINS_RPC`).
+
+```bash
+cd contracts
+./script/deploy-skins.sh                          # dry run on a fork
+./script/deploy-skins.sh --broadcast --browser    # deploy (in your own terminal: it prints the reveal secret once)
+# then: setSaleOpen(true) from the owner wallet; after the mint, reveal(secret)
+cd ../multiplayer
+npx wrangler deploy --var SKINS_ADDRESS:0x…
+```
+
+`deploy-skins.sh` runs `export-web.sh`, which adds the skins to `web/deployments/robinhood.json`.
+Then set the collection up in OpenSea Studio (creator earnings: the registry is already the transfer
+validator). `./dev.sh` deploys local skins with the sale open; "Reveal skins" in the panel reveals them.
+
 ## On Robinhood Chain
 
 Without `web/chain.json` the site loads `web/deployments/robinhood.json`. Players log in
@@ -137,10 +166,12 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `PostOffice.sol` | The game: offices, couriers on duty, levels, emissions, halvings, referrals; no owner, deployed only after the reveal |
 | `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner`; ownership renounced when the game launches |
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
+| `CourierSkins.sol` | 999 cosmetic skins: blind mint, commit-reveal shuffle, on-chain metadata, enforced 5% royalty (ERC721-C) |
+| `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
 
 ```bash
-cd contracts && forge test                                             # 95 tests
-forge test --match-contract "StampHookForkTest|LaunchStagesForkTest" --fork-url robinhood   # real pools; the real stage 2
+cd contracts && forge test                                             # 124 tests
+forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 
 ## Deploying to Robinhood Chain

@@ -3,6 +3,7 @@
 import { formatEther, isAddress, parseEther } from "https://esm.sh/viem@2";
 import { huntDay, HUNT_STAMPS } from "./hunt-pick.js";
 import { courier, SUPPLY } from "./traits.js";
+import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
@@ -26,11 +27,16 @@ function duration(secs) {
   return h ? `${h}h ${m}m` : `${m}m ${secs % 60}s`;
 }
 
+/// How many skins of each rarity are in the deck.
+const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + k.supply), m), {});
+
 /// `hunt`: the golden stamp hunt's side in the game ({ state(), signIn(), voucher() }), when it's running.
-export function createOffice(chain, { onPlayAs, onSnapshot, toast, hunt = null }) {
+/// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
+/// `wearing()` is the id of the skin you have on, if any.
+export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
-  let snap = null, busy = null, qty = 1, refreshing = false;
+  let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0, huntAmount = "", huntReward = ""; // the StampHunt contract, read every few seconds
@@ -274,6 +280,35 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast, hunt = null }
       html += `</div></section>`;
     }
 
+    // ---- Courier Skins: a blind mint for ETH, revealed afterwards; cosmetic only
+    if (s.skins) {
+      const k = s.skins, sealed = k.seed === 0n, worn = wearing();
+      html += `<section class="skins"><h3>Courier Skins <span class="muted">${SKIN_SUPPLY} limited outfits and rides</span></h3>
+        <div class="skin-strip">${["nightrider", "astronaut", "golden", "car-violet"].map((key) => `<img src="./skins/${key}.png" alt="">`).join("")}</div>
+        <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(k.minted / SKIN_SUPPLY) * 100}%"></div></div><span>${k.minted}/${SKIN_SUPPLY}</span></div>`;
+      if (k.saleOpen && k.minted < SKIN_SUPPLY) {
+        html += `<div class="mintrow"><button class="pbtn" data-act="skinQty" data-d="-1">−</button><b>${skinQty}</b><button class="pbtn" data-act="skinQty" data-d="1">+</button>
+          <button class="pbtn primary" data-act="mintSkins" ${!s.account || busy ? "disabled" : ""}>Mint ${skinQty} · ${fmt(k.price * BigInt(skinQty), 3)} ETH</button></div>
+          ${s.account ? "" : `<p class="note">Log in to mint.</p>`}
+          <p class="note">A blind mint: every skin's design is revealed after the mint. ${SKIN_RARITY.Common} Common, ${SKIN_RARITY.Rare} Rare and ${SKIN_RARITY.Legendary} Legendary, including 39 Moonwedge supercars. Skins are cosmetic: everyone in the game sees yours, and they never change what you earn.</p>`;
+      } else {
+        html += `<p class="note">${sealed ? "The mint is closed. The skins are revealed soon." : "The mint is over and the skins are revealed. Find more on OpenSea."}</p>`;
+      }
+      html += `<p class="note">Resales pay a 5% royalty to the game, enforced by the contract: marketplaces can only sell skins in trades that pay it.</p>`;
+      if (k.mine?.length) {
+        html += `<h4>Your skins <span class="muted">${k.mine.length}</span></h4><div class="couriers">`;
+        for (const m of k.mine) {
+          const d = m.design == null ? null : SKINS[m.design], on = worn === m.id;
+          html += `<div class="ccard ${on ? "duty" : ""}"><img src="./skins/${d ? d.key : "mystery"}.png" alt="">
+            <div class="cinfo"><b>#${m.id}</b> ${d ? `<span style="color:${RARITY_INK[d.rarity]}">${d.name}</span><span class="muted">${d.rarity} ${d.ride ? "ride" : "outfit"}</span>` : `<span class="muted">Sealed until the reveal</span>`}
+              ${on ? `<span class="tag">Wearing</span>` : ""}</div>
+            <div class="cact">${d ? `<button class="pbtn" data-act="${on ? "unwear" : "wear"}" data-id="${m.id}">${on ? "Take off" : "Wear"}</button>` : ""}</div></div>`;
+        }
+        html += `</div>`;
+      }
+      html += `<p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${k.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
+    }
+
     // ---- mint
     html += `<section><h3>Mint couriers</h3>
       <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(s.minted / SUPPLY) * 100}%"></div></div><span>${s.minted.toLocaleString()}/${SUPPLY.toLocaleString()}</span></div>`;
@@ -293,6 +328,7 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast, hunt = null }
         ${s.browserWallet && s.account ? `<button class="pbtn" data-act="fund" ${busy ? "disabled" : ""}>+10 play ETH</button>` : ""}
         ${s.browserWallet && s.account && revealed && !s.saleOpen ? `<button class="pbtn" data-act="gift" ${busy ? "disabled" : ""}>+3 couriers</button>` : ""}
         ${revealed ? "" : `<button class="pbtn" data-act="reveal" ${busy ? "disabled" : ""}>Close mint &amp; reveal</button>`}
+        ${s.skins && s.skins.seed === 0n ? `<button class="pbtn" data-act="revealSkins" ${busy ? "disabled" : ""}>Reveal skins</button>` : ""}
         <button class="pbtn" data-act="warp" data-s="3600" ${busy ? "disabled" : ""}>+1 hour</button>
         <button class="pbtn" data-act="warp" data-s="86400" ${busy ? "disabled" : ""}>+1 day</button></div></section>`;
     }
@@ -384,6 +420,17 @@ export function createOffice(chain, { onPlayAs, onSnapshot, toast, hunt = null }
       case "qty": qty = Math.min(10, Math.max(1, qty + Number(b.dataset.d))); return draw(true);
       case "mint": return run(`Minting ${qty} courier${qty > 1 ? "s" : ""}`, () => chain.mint(snap, qty));
       case "reveal": return run("Revealing the collection", () => chain.devReveal());
+      case "skinQty": skinQty = Math.min(10, Math.max(1, skinQty + Number(b.dataset.d))); return draw(true);
+      case "mintSkins": return run(`Minting ${skinQty} skin${skinQty > 1 ? "s" : ""}`, () => chain.mintSkins(snap, skinQty));
+      case "wear": {
+        const m = snap.skins?.mine?.find((x) => x.id === id);
+        if (m && m.design != null) onWearSkin(m);
+        return draw(true);
+      }
+      case "unwear":
+        onWearSkin(null);
+        return draw(true);
+      case "revealSkins": return run("Revealing the skins", () => chain.devRevealSkins());
       case "fund": return run("Adding 10 play ETH", () => chain.devFund());
       case "gift": return run("Handing you 3 couriers", () => chain.devCouriers(3));
       case "warp": return run(`Skipping ${duration(Number(b.dataset.s))}`, () => chain.devWarp(Number(b.dataset.s)));

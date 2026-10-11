@@ -89,11 +89,27 @@ deploy_hunt() { # the golden stamp hunt, with a throwaway voucher key for the lo
   signer=$(cast wallet address "$key")
   STAMP=$(addr StampToken) OFFICE=$(addr PostOffice) HUNT_SIGNER=$signer HUNT_OWNER=${ACCOUNTS[1]} deploy script/DeployHunt.s.sol
   HUNT=$(addr StampHunt)
+  HUNT_KEY=$key
   OUT="$game"
-  # `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this local hunt.
-  printf 'HUNT_KEY=%s\nHUNT_ADDRESS=%s\nHUNT_CHAIN_ID=%s\n' "$key" "$HUNT" "$(cast chain-id --rpc-url "$RPC")" > multiplayer/.dev.vars
+}
+# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this local hunt, and checks skins on this chain.
+write_dev_vars() {
+  {
+    [ -n "${HUNT:-}" ] && printf 'HUNT_KEY=%s\nHUNT_ADDRESS=%s\nHUNT_CHAIN_ID=%s\n' "$HUNT_KEY" "$HUNT" "$(cast chain-id --rpc-url "$RPC")"
+    [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
+  } > multiplayer/.dev.vars || true
 }
 deploy_hunt
+
+deploy_skins() { # Courier Skins with the sale open, revealed with this chain's throwaway secret
+  local prev="$OUT"
+  SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")") OPEN_SALE=true \
+    SKINS_PRICE=4000000000000000 SKINS_IMAGES="http://localhost:$WEB_PORT/skins/" deploy script/DeploySkins.s.sol
+  SKINS=$(addr CourierSkins)
+  OUT="$prev"
+}
+deploy_skins
+write_dev_vars
 
 NAME=Anvil
 [ "$FORK" = 1 ] && NAME="Robinhood Chain (fork)"
@@ -127,6 +143,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
         '. + {hook: $hook, router: $router, ethRouter: $ethRouter}')
     fi
   fi
+  if [ -n "$SKINS" ]; then
+    contracts=$(echo "$contracts" | jq --arg skins "$SKINS" '. + {skins: $skins}')
+    abis=$(echo "$abis" | jq --argjson skins "$(abi CourierSkins)" '. + {skins: $skins}')
+  fi
   [ "$FORK" = 1 ] && contracts=$(echo "$contracts" | jq '. + {multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11"}')
   jq -n --arg rpc "$RPC" --argjson chainId "$CHAIN_ID" --arg name "$NAME" --arg secret "$SECRET" --arg stage "$stage" \
     --argjson wallet "$([ "$WALLET" = 1 ] && echo true || echo false)" --argjson contracts "$contracts" --argjson abis "$abis" \
@@ -137,6 +157,7 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
 write_chain_json
 
 echo "CourierNFT $NFT"
+echo "Skins      $SKINS"
 echo "Chain      $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Game       http://localhost:$WEB_PORT"
 if [ "$WALLET" = 1 ]; then
@@ -156,6 +177,7 @@ if [ "$STAGED" = 1 ]; then
   export NFT RENDERER
   deploy script/DeployFork.s.sol --sig "runGame()"
   deploy_hunt
+  write_dev_vars
   write_chain_json
   echo "Stage 2: the game is live. Reload the page."
   wait "$WEB_PID"

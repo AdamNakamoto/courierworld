@@ -3,6 +3,7 @@ import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
+import { SKINS } from "./skins.js";
 import { createNet, EMOTES } from "./net.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
@@ -52,11 +53,12 @@ const INTRO = [
 
 // ---------------------------------------------------------------- characters
 
-/// A courier and (optionally) their ride, as one group facing +z.
-function rider(params, rideKey = "foot") {
+/// A courier and (optionally) their ride, as one group facing +z. The ride takes the outfit's accent
+/// colour unless `rideColour` says otherwise (the skins' scooter and supercars have their own).
+function rider(params, rideKey = "foot", rideColour = null) {
   const group = new THREE.Group();
   const ch = createCharacter(params);
-  const ride = rideKey === "foot" ? null : createRide(rideKey, params.accent);
+  const ride = rideKey === "foot" ? null : createRide(rideKey, rideColour ?? params.accent);
   if (ride) {
     group.add(ride.group);
     ch.root.position.set(0, ride.mount.y, ride.mount.z);
@@ -103,13 +105,62 @@ function setPlayer(r) {
 }
 function playAs(c, account) {
   playingId = c.id;
+  if (skinWorn) forgetSkin(account);
   setPlayer(rider(c.params, c.ride.key));
   try {
     if (account) localStorage.setItem(`courier:avatar:${account.toLowerCase()}`, String(c.id));
   } catch {}
 }
-/// After login, play as one of your couriers: last time's pick, else one on duty, else the first.
+// The Courier Skin you have on ({ id, design }), if any. Skins are cosmetic: they only change how you look.
+let skinWorn = null;
+let lastSnap = null;
+const skinKey = (account) => `courier:skin:${account.toLowerCase()}`;
+function wearSkin(m, account) {
+  skinWorn = m;
+  const k = SKINS[m.design];
+  setPlayer(rider(k.params, k.ride ?? "foot", k.rideColour));
+  try {
+    if (account) localStorage.setItem(skinKey(account), String(m.id));
+  } catch {}
+}
+function forgetSkin(account) {
+  skinWorn = null;
+  try {
+    if (account) localStorage.removeItem(skinKey(account));
+  } catch {}
+}
+/// Back to your courier (or the default look).
+function takeOffSkin(account) {
+  forgetSkin(account);
+  playingId = null;
+  setPlayer(rider(COURIER));
+  if (lastSnap) autoAvatar(lastSnap);
+}
+
+/// After login, wear the skin you had on last time if you still own it; otherwise play as one of your
+/// couriers: last time's pick, else one on duty, else the first.
 function autoAvatar(s) {
+  lastSnap = s;
+  const skins = s?.account && s.skins?.seed ? (s.skins.mine ?? []).filter((m) => m.design != null) : [];
+  if (skinWorn) {
+    if (s?.account && s.account === playingAccount && skins.some((m) => m.id === skinWorn.id)) return;
+    // Sold, or another wallet logged in.
+    skinWorn = null;
+    playingId = null;
+    setPlayer(rider(COURIER));
+  }
+  if (skins.length) {
+    let saved = null;
+    try {
+      saved = Number(localStorage.getItem(skinKey(s.account)));
+    } catch {}
+    const m = skins.find((x) => x.id === saved);
+    if (m) {
+      playingAccount = s.account;
+      wearSkin(m, s.account);
+      return;
+    }
+  }
   const owned = s?.account && s.seed !== 0n ? s.mine ?? [] : [];
   if (playingId !== null && s?.account === playingAccount && owned.some((m) => m.id === playingId)) return;
   playingAccount = s?.account ?? null;
@@ -210,7 +261,7 @@ const net = createNet(W, {
 });
 /// Tell the room who you are: your courier, and your wallet if you're logged in.
 function introduce() {
-  net.hello(player.params, player.rideKey, chainRef?.account ?? null);
+  net.hello(player.params, player.rideKey, chainRef?.account ?? null, skinWorn?.id ?? null);
 }
 /// The facts the room passes on about you each frame, in planet space.
 function netState() {
@@ -1072,6 +1123,17 @@ const chainReady = connectChain()
         voucher: () => net.voucher(),
       } : null,
       onSnapshot: autoAvatar,
+      wearing: () => skinWorn?.id ?? null,
+      onWearSkin(m) {
+        if (!m) {
+          takeOffSkin(chain.account);
+          toast("Back in your courier's clothes");
+          return;
+        }
+        playingAccount = chain.account;
+        wearSkin(m, chain.account);
+        toast(`Now wearing ${SKINS[m.design].name}`);
+      },
       onPlayAs(c) {
         playAs(c, chain.account);
         toast(`Now playing as ${c.name}, ${c.ride.name.toLowerCase()}`);

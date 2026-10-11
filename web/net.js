@@ -5,6 +5,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
 import { authMessage } from "./hunt-pick.js";
+import { SKINS } from "./skins.js";
 
 /// What you can show the players around you: an emoji, or an emoji and a few words. It pops up
 /// over your head (keys 1-9 and 0, or the emote buttons). The order matters: the room sends the index.
@@ -170,7 +171,7 @@ function orient(obj, up, forward) {
   obj.quaternion.setFromRotationMatrix(_m);
 }
 
-/// `url`: the room's WebSocket address. `makeRider(look, ride)` builds a courier (the same as yours),
+/// `url`: the room's WebSocket address. `makeRider(look, ride, rideColour)` builds a courier (the same as yours),
 /// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count)` and `onNope(spot, why)` hear
 /// from the golden stamp hunt,
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
@@ -225,7 +226,11 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
   function add(id, hello, s) {
     remove(id);
     const root = new THREE.Group();
-    const rider = makeRider(cleanLook(hello.look), RIDES.includes(hello.ride) ? hello.ride : "foot");
+    // A skin the room has checked is theirs (its design number); otherwise their courier's look.
+    const skin = Number.isInteger(hello.skin) ? SKINS[hello.skin] : null;
+    const rider = skin
+      ? makeRider(skin.params, skin.ride ?? "foot", skin.rideColour)
+      : makeRider(cleanLook(hello.look), RIDES.includes(hello.ride) ? hello.ride : "foot");
     const tag = label(hello);
     root.add(rider.group, tag);
     root.visible = false;
@@ -301,10 +306,11 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
   }
 
   return {
-    /// Who you are: your courier's look and ride, and your wallet address if logged in. Joins the
-    /// room the first time it's called; afterwards it tells everyone you've changed.
-    hello(look, ride, addr) {
-      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}) };
+    /// Who you are: your courier's look and ride, your wallet address if logged in, and the Courier Skin
+    /// you're wearing (its token id; the room shows it only if that wallet owns it). Joins the room the
+    /// first time it's called; afterwards it tells everyone you've changed.
+    hello(look, ride, addr, skinId = null) {
+      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}) };
       if (!started) {
         started = true;
         connect();

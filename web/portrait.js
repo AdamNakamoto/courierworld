@@ -236,7 +236,7 @@ function stampBase(size) {
 }
 
 /// A skin's stamp: the skin worn (or ridden) by a courier, its name on the label and its rarity in the
-/// corner. `skin`: { no, name, rarity, params, ride, rideColour, background }.
+/// corner, and how many of it there are. `skin`: { name, rarity, supply, params, ride, rideColour, background }.
 export async function renderSkinStamp(skin, size = 512) {
   await document.fonts.load(`${Math.round(size * 0.06)}px Bungee`);
   const { out, g, u, p, A } = stampBase(size);
@@ -268,11 +268,84 @@ export async function renderSkinStamp(skin, size = 512) {
   g.fillStyle = RARITY_INK[skin.rarity];
   g.strokeText(skin.rarity.toUpperCase(), vx, vy);
   g.fillText(skin.rarity.toUpperCase(), vx, vy);
-  if (skin.no) {
+  if (skin.supply) {
+    const ed = `One of ${skin.supply}`;
     g.font = `${Math.round(12 * u)}px Bungee`;
     g.fillStyle = "#283033";
-    g.strokeText(`No.${String(skin.no).padStart(3, "0")} of 999`, vx, vy + 22 * u);
-    g.fillText(`No.${String(skin.no).padStart(3, "0")} of 999`, vx, vy + 22 * u);
+    g.strokeText(ed, vx, vy + 22 * u);
+    g.fillText(ed, vx, vy + 22 * u);
   }
+  return out;
+}
+
+/// A skin before the reveal: a sealed envelope on the stamp, the same for every token.
+export async function renderSealedStamp(size = 512) {
+  await document.fonts.load(`${Math.round(size * 0.06)}px Bungee`);
+  const { out, g, u, p, A } = stampBase(size);
+  const labelH = 54 * u, artH = A - labelH;
+  // Night sky with a few stars.
+  const sky = g.createLinearGradient(0, p, 0, p + artH);
+  sky.addColorStop(0, "#1b2a3a");
+  sky.addColorStop(1, "#2c3e6b");
+  g.fillStyle = sky;
+  g.fillRect(p, p, A, artH);
+  let a = 7;
+  const rnd = () => ((a = (a * 16807) % 2147483647) / 2147483647);
+  g.fillStyle = "rgba(251,248,239,0.7)";
+  for (let i = 0; i < 40; i++) g.fillRect(p + rnd() * A, p + rnd() * artH * 0.9, 2.5 * u, 2.5 * u);
+  // The envelope, tilted a little, with a wax seal.
+  const cx = p + A / 2, cy = p + artH * 0.52, w = A * 0.62, h = w * 0.64;
+  g.save();
+  g.translate(cx, cy);
+  g.rotate(-0.08);
+  g.shadowColor = "rgba(0,0,0,0.35)";
+  g.shadowOffsetY = 8 * u;
+  g.fillStyle = "#f4ead2";
+  g.fillRect(-w / 2, -h / 2, w, h);
+  g.shadowColor = "transparent";
+  g.lineWidth = 4 * u;
+  g.strokeStyle = "#283033";
+  g.strokeRect(-w / 2, -h / 2, w, h);
+  g.beginPath();
+  g.moveTo(-w / 2, -h / 2);
+  g.lineTo(0, h * 0.08);
+  g.lineTo(w / 2, -h / 2);
+  g.moveTo(-w / 2, h / 2);
+  g.lineTo(-w * 0.12, -h * 0.02);
+  g.moveTo(w / 2, h / 2);
+  g.lineTo(w * 0.12, -h * 0.02);
+  g.stroke();
+  g.fillStyle = "#c9384a";
+  g.beginPath();
+  g.arc(0, h * 0.08, 30 * u, 0, 7);
+  g.fill();
+  g.stroke();
+  g.fillStyle = "#fbf8ef";
+  g.font = `${Math.round(34 * u)}px Bungee`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText("?", 0, h * 0.08 + 2 * u);
+  g.restore();
+  g.lineWidth = 4 * u;
+  g.strokeStyle = "#283033";
+  g.strokeRect(p, p, A, A);
+  g.beginPath(); g.moveTo(p, p + artH); g.lineTo(p + A, p + artH); g.stroke();
+  g.fillStyle = "#fbf8ef";
+  g.fillRect(p + 2 * u, p + artH + 2 * u, A - 4 * u, labelH - 4 * u);
+  g.fillStyle = "#283033";
+  g.textBaseline = "middle";
+  g.textAlign = "left";
+  g.font = `${Math.round(26 * u)}px Bungee`;
+  g.fillText("SKIN", p + 14 * u, p + artH + labelH / 2 + 2 * u);
+  g.textAlign = "right";
+  g.font = `${Math.round(22 * u)}px Bungee`;
+  g.fillText("SEALED", p + A - 14 * u, p + artH + labelH / 2 + 2 * u);
+  g.font = `${Math.round(15 * u)}px Bungee`;
+  g.textBaseline = "top";
+  g.lineWidth = 6 * u;
+  g.strokeStyle = "#283033";
+  g.fillStyle = "#fbf8ef";
+  g.strokeText("REVEALED SOON", p + A - 16 * u, p + 16 * u);
+  g.fillText("REVEALED SOON", p + A - 16 * u, p + 16 * u);
   return out;
 }

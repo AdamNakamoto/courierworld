@@ -21,9 +21,9 @@ const ERROR_TEXT = {
   CooldownActive: "The upgrade is still cooling down.",
   NothingToClaim: "No $STAMP to collect yet.",
   SaleClosed: "The mint is closed.",
-  SoldOut: "All 3,333 couriers have been minted.",
+  SoldOut: "Sold out: every one has been minted.",
   BadQuantity: "Mint between 1 and 10 at a time.",
-  NotRevealed: "Couriers are still sealed. Wait for the reveal.",
+  NotRevealed: "Still sealed. Wait for the reveal.",
   CourierOnDuty: "Take the courier off duty before trading it.",
   ERC20InsufficientBalance: "Not enough $STAMP.",
   Slippage: "The price moved past your slippage limit. Try again, or allow more slippage.",
@@ -99,7 +99,7 @@ export async function connectChain() {
   const game = !!dep.contracts.office;
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
-    ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...V4_ABI,
+    ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -108,6 +108,7 @@ export async function connectChain() {
     stamp: game ? { address: dep.contracts.stamp, abi: withErrors(dep.abis.stamp) } : null,
     office: game ? { address: dep.contracts.office, abi: withErrors(dep.abis.office) } : null,
     hunt: dep.contracts.hunt ? { address: dep.contracts.hunt, abi: withErrors(dep.abis.hunt) } : null,
+    skins: dep.contracts.skins ? { address: dep.contracts.skins, abi: withErrors(dep.abis.skins) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -165,6 +166,7 @@ export async function connectChain() {
   }
   let onAccount = null;
 
+  const skinDesigns = new Map(); // skin id -> design, after the reveal
   async function snapshot() {
     const [block, minted, price, saleOpen, seed] = await Promise.all([
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
@@ -173,6 +175,19 @@ export async function connectChain() {
       now: block.timestamp, minted: Number(minted), price, saleOpen, seed, game, tiers, account, accounts, nft: C.nft.address,
       local: dep.local, explorer: dep.explorer, devAccounts: !browserWallet, browserWallet,
     };
+    if (C.skins) {
+      const [minted, price, saleOpen, seed] = await Promise.all([
+        read(C.skins, "totalMinted"), read(C.skins, "price"), read(C.skins, "saleOpen"), read(C.skins, "seed"),
+      ]);
+      s.skins = { minted: Number(minted), price, saleOpen, seed, address: C.skins.address, mine: null };
+      if (account) {
+        const ids = (await read(C.skins, "tokensOfOwner", [account])).map(Number);
+        // A skin's design never changes once revealed, so it's read once.
+        const design = (id) => skinDesigns.get(id) ?? read(C.skins, "designOf", [BigInt(id)]).then((d) => (skinDesigns.set(id, Number(d)), Number(d)));
+        const designs = seed === 0n ? ids.map(() => null) : await Promise.all(ids.map(design));
+        s.skins.mine = ids.map((id, i) => ({ id, design: designs[i] }));
+      }
+    }
     if (game) {
       const [totalPower, rewardPerBlock, officePrice, cooldown, levelBase] = await Promise.all([
         read(C.office, "totalPower"), read(C.office, "rewardPerBlock"), read(C.office, "officePrice"),
@@ -470,6 +485,7 @@ export async function connectChain() {
       onAccount = fn;
     },
     mint: (s, n) => send(C.nft, "mint", [BigInt(n)], s.price * BigInt(n)),
+    mintSkins: (s, n) => send(C.skins, "mint", [BigInt(n)], s.skins.price * BigInt(n)),
     openOffice: (s, ref) => send(C.office, "openOffice", [ref], s.officePrice),
     assign: (id) => send(C.office, "assign", [BigInt(id)]),
     unassign: (id) => send(C.office, "unassign", [BigInt(id)]),
@@ -499,6 +515,10 @@ export async function connectChain() {
     /// Local chain only: reveal with the dev secret, as the owner (the reveal also ends the sale).
     async devReveal() {
       await send(C.nft, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
+    },
+    /// Local chain only: reveal the skins with the dev secret, as the owner (the reveal also ends their sale).
+    async devRevealSkins() {
+      await send(C.skins, "reveal", [BigInt(dep.devSecret)], undefined, accounts[0], devWallet);
     },
     /// Local chain only: move `n` couriers from the dev players to the logged-in wallet.
     async devCouriers(n) {

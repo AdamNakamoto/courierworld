@@ -4,9 +4,10 @@
 // else, so the far side of the planet still knows who's about. Waves and preset phrases go to the
 // players nearby. It also runs the golden stamp hunt: a hunter signs in with their wallet, the room
 // checks each find against where they've actually been, and signs vouchers the StampHunt contract
-// pays $STAMP for. Positions and emotes are just for show; only the vouchers touch the chain.
+// pays $STAMP for. Positions and emotes are just for show; only the vouchers touch the chain. A player
+// wearing a Courier Skin is shown in it only once the room has read on-chain that their wallet owns it.
 import { DurableObject } from "cloudflare:workers";
-import { verifyMessage, isAddress, getAddress } from "viem";
+import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import SPOTS from "../../web/hunt-spots.json";
 import { HUNT_STAMPS, huntDay, pickSpots, authMessage } from "../../web/hunt-pick.js";
@@ -27,6 +28,9 @@ const ENUMS = {
 };
 const COLOURS = ["skin", "hair", "shirt", "accent", "bottoms", "socks", "shoes"];
 const RIDES = ["foot", "skate", "bike", "moped", "plane"];
+const SKIN_SUPPLY = 999;
+const SKINS_ABI = parseAbi(["function ownerOf(uint256) view returns (address)", "function designOf(uint256) view returns (uint256)"]);
+const SKIN_CHECK_MS = 60_000; // how long a skin's owner is trusted before it's read again
 
 // The hunt: how close (in metres, and in height) a hunter's last reported position must be to a stamp
 // for the find to count, the fastest anyone moves (paper plane, running: ~13 m/s; this allows lag),
@@ -46,7 +50,8 @@ const send = (ws, m) => {
 };
 
 /// A player's hello with anything unexpected dropped: a look built only from known keys and values,
-/// a ride, and their wallet address if they're logged in (shown on their name tag; not checked).
+/// a ride, their wallet address if they're logged in (shown on their name tag; not checked), and the
+/// Courier Skin they'd like to wear (checked in `hi` before anyone sees it).
 function cleanHello(h) {
   if (!h || typeof h !== "object") return null;
   const src = h.look && typeof h.look === "object" ? h.look : {};
@@ -56,6 +61,7 @@ function cleanHello(h) {
   if (typeof src.height === "number" && src.height >= 0.85 && src.height <= 1.1) look.height = src.height;
   const out = { look, ride: RIDES.includes(h.ride) ? h.ride : "foot" };
   if (typeof h.addr === "string" && /^0x[0-9a-fA-F]{40}$/.test(h.addr)) out.addr = h.addr;
+  if (out.addr && Number.isInteger(h.skinId) && h.skinId >= 1 && h.skinId <= SKIN_SUPPLY) out.skinId = h.skinId;
   return out;
 }
 
@@ -77,6 +83,7 @@ export class Planet extends DurableObject {
     // The game's keep-alive is answered without waking the room, so a quiet planet can sleep.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.seen = new Map(); // socket -> its attachment, read once after each wake
+    this.skins = new Map(); // skin id -> { at, owner, design }
   }
 
   info(ws) {
@@ -122,20 +129,7 @@ export class Planet extends DurableObject {
     }
     if (!Array.isArray(m)) return;
 
-    if (m[0] === "hi") {
-      const hello = cleanHello(m[1]);
-      if (!hello) return;
-      const first = !a.hello;
-      a.hello = hello;
-      ws.serializeAttachment(a);
-      if (first) {
-        send(ws, ["welcome", a.id, this.others(ws).map((o) => [this.info(o).id, this.info(o).hello, this.info(o).s]), a.code]);
-        this.broadcast(ws, ["join", a.id, hello]);
-      } else {
-        this.broadcast(ws, ["look", a.id, hello]); // they switched couriers
-      }
-      return;
-    }
+    if (m[0] === "hi") return this.hi(ws, a, m[1]);
     if (!a.hello) return;
 
     if (m[0] === "s") {
@@ -168,6 +162,50 @@ export class Planet extends DurableObject {
   }
 
   // ---------------------------------------------------------------- the golden stamp hunt
+
+  /// Who they are: their look, and the Courier Skin they asked to wear if it's theirs (its design number).
+  async hi(ws, a, raw) {
+    const hello = cleanHello(raw);
+    if (!hello) return;
+    const seq = (a.hiSeq = (a.hiSeq ?? 0) + 1);
+    const id = hello.skinId;
+    delete hello.skinId;
+    // A different skin at most every two seconds, so nobody can make the room hammer the chain.
+    if (id && (id === a.skinAsked || Date.now() - (a.skinAskedAt ?? 0) > 2000)) {
+      [a.skinAsked, a.skinAskedAt] = [id, Date.now()];
+      const design = await this.skinDesign(id, a.wallet ?? hello.addr);
+      if (a.hiSeq !== seq) return; // a newer hello arrived while we were checking
+      if (design !== null) hello.skin = design;
+    }
+    const first = !a.hello;
+    a.hello = hello;
+    ws.serializeAttachment(a);
+    if (first) {
+      send(ws, ["welcome", a.id, this.others(ws).map((o) => [this.info(o).id, this.info(o).hello, this.info(o).s]), a.code]);
+      this.broadcast(ws, ["join", a.id, hello]);
+    } else {
+      this.broadcast(ws, ["look", a.id, hello]); // they switched couriers
+    }
+  }
+
+  /// A skin's design if `owner` holds it, read from the CourierSkins contract (null if not theirs, not
+  /// revealed yet, or the chain didn't answer).
+  async skinDesign(id, owner) {
+    if (!this.env.SKINS_ADDRESS || !owner) return null;
+    let c = this.skins.get(id);
+    if (!c || Date.now() - c.at > SKIN_CHECK_MS) {
+      try {
+        this.chain ??= createPublicClient({ transport: http(this.env.SKINS_RPC ?? "https://robinhood-rpc.publicnode.com") });
+        const read = (functionName) => this.chain.readContract({ address: this.env.SKINS_ADDRESS, abi: SKINS_ABI, functionName, args: [BigInt(id)] });
+        const [who, design] = await Promise.all([read("ownerOf"), read("designOf")]);
+        c = { at: Date.now(), owner: who, design: Number(design) };
+        this.skins.set(id, c);
+      } catch {
+        return null;
+      }
+    }
+    return c.owner.toLowerCase() === owner.toLowerCase() ? c.design : null;
+  }
 
   /// Today's finds for a wallet (kept in storage, so they survive the room sleeping).
   async finds(day, wallet) {
