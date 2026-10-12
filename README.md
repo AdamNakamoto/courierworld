@@ -135,7 +135,8 @@ npx wrangler deploy --var SKINS_ADDRESS:0x…
 
 ### Paying in $STAMP
 
-`SkinsStampSale.sol` sells the same skins for $STAMP (150 a skin at launch, to the treasury). Courier
+`SkinsStampSale.sol` (live at `0x6DB7DCdFDBCe63Dd1e960CB8cE676bd32c99bc6a`) sells the same skins for $STAMP (150 a
+skin at launch, to the treasury). Courier
 Skins only takes ETH, so the sale pays each skin's ETH price from a float its owner tops up (that ETH
 goes straight on to the skins treasury, so it only goes round), takes the buyer's $STAMP (one permit
 signature, or an approval), and moves the minted skins on to the buyer in the same transaction. Buyers

@@ -332,7 +332,8 @@ forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.dr
 
 ## 11. New: paying for Courier Skins in $STAMP
 
-`contracts/src/SkinsStampSale.sol` (not deployed yet). Courier Skins only takes ETH and can't be changed,
+`contracts/src/SkinsStampSale.sol`, live since 2026-10-12 at `0x6DB7DCdFDBCe63Dd1e960CB8cE676bd32c99bc6a` (source
+verified on Sourcify; deployed from `8fc1a67`, after the fixes below). Courier Skins only takes ETH and can't be changed,
 so this sale sits beside it:
 
 - `buy(quantity, maxStampCost)` / `buyWithPermit(quantity, maxStampCost, deadline, v, r, s)`: takes
