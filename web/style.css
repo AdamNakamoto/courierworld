@@ -370,3 +370,17 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   .chat.open .chat-log { max-height: min(220px, 30vh); }
   .chat .line { font-size: 14px; }
 }
+
+/* The Orb's ad card */
+.ad-panel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-.4deg); z-index: 12; width: min(380px, calc(100vw - 32px)); padding: 14px 16px 12px; }
+.ad-panel[hidden] { display: none; }
+.ad-close { position: absolute; top: 8px; right: 8px; }
+.ad-tag { margin: 0 0 8px; font: 400 11px/1 Bungee, Impact, sans-serif; letter-spacing: .05em; color: #b4443c; }
+.ad-img { display: block; width: 100%; aspect-ratio: 2; object-fit: cover; border: 2.5px solid var(--ink); border-radius: 4px; background: #0b1024; }
+.ad-panel h3 { margin: 10px 0 4px; font: 400 20px/1.15 Bungee, Impact, sans-serif; }
+.ad-text { margin: 0 0 10px; font-size: 17px; line-height: 1.25; }
+.ad-links { display: flex; gap: 8px; flex-wrap: wrap; }
+.ad-links a { text-decoration: none; }
+.ad-links a[hidden] { display: none; }
+.ad-domain { margin: 8px 0 0; font: 600 13px ui-monospace, Menlo, monospace; color: var(--muted); }
+.ad-note { margin: 8px 0 0; font-size: 14px; line-height: 1.2; color: var(--muted); }

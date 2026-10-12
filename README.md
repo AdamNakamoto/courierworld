@@ -125,6 +125,28 @@ The collection's page on OpenSea comes from `contractURI()`: name, description (
 add the X link (https://x.com/PlayCourierWld) to the collection's links and turn on creator earnings
 (the registry is already the transfer validator). `./dev.sh` deploys local skins with the sale open; "Reveal skins" in the panel reveals them.
 
+## Ads on the Orb
+
+The Orb (`web/orb.js`) is a giant LED globe near the main post office that shows paid ads. Booking is
+manual: a project DMs @PlayCourierWld, pays ETH to the treasury, and once you approve the ad you add it
+to `web/ads.json` and push. Only what's listed there shows, so nothing goes up unapproved.
+
+```json
+{ "name": "Project name", "image": "ads/project.png", "url": "https://project.site",
+  "chart": "https://dexscreener.com/robinhood/0x…", "text": "Up to 140 characters.",
+  "from": "2026-10-12", "until": "2026-10-19" }
+```
+
+- `image`: a picture in `web/ads/` (2:1, e.g. 1200x600; PNG, JPG or WebP), shown twice round the globe
+  in LED dots, and on the ad's card.
+- `url` (required) and `chart` (optional): `https://` links only. The card shows where each one leads,
+  says it's an ad, not an endorsement, and opens them in a new tab.
+- `from` / `until` (UTC): when it runs. Ads take turns, 20 seconds each, at the same moment for
+  everyone; an "Advertise on the Orb" card fills a slot each round.
+
+The globe is placed last in `world.js`, on open ground in sight of the start, and the park trees that
+would stand on its plaza are simply left out, so nothing else in the town moves for it.
+
 ## On Robinhood Chain
 
 Without `web/chain.json` the site loads `web/deployments/robinhood.json`. Players log in

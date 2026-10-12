@@ -6,6 +6,7 @@ import { createRide } from "./rides.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { createNet, EMOTES } from "./net.js";
 import { createChat } from "./chat.js";
+import { createOrbAds, domainOf } from "./orb.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
@@ -17,7 +18,9 @@ import { createStamps, STAMPS } from "./stamps.js";
 import { createDistrict } from "./district.js";
 
 const $ = (id) => document.getElementById(id);
-const W = createWorld($("c"));
+// Golden stamp spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
+const HUNT_SPOTS = await fetch("./hunt-spots.json").then((r) => r.json());
+const W = createWorld($("c"), { keepClear: HUNT_SPOTS });
 const { scene, camera, world } = W;
 
 // ---------------------------------------------------------------- words
@@ -265,6 +268,31 @@ const net = createNet(W, {
   onChatError: (why) => chatUI.error(why),
 });
 const chatUI = createChat(net, { toast, me: () => chainRef?.account ?? null });
+
+// ---------------------------------------------------------------- the Orb's ads
+
+const orbAds = W.orb ? createOrbAds(W.orb) : null;
+const orbRay = new THREE.Raycaster();
+/// The card for the ad on the Orb right now: what it is, where its links go, and that it's an ad.
+function showAd() {
+  const ad = orbAds?.current();
+  if (!ad) return;
+  $("adImg").hidden = !ad.image;
+  if (ad.image) $("adImg").src = ad.image;
+  $("adName").textContent = ad.name;
+  $("adText").textContent = ad.text ?? "";
+  const site = $("adSite"), chart = $("adChart");
+  site.href = ad.url;
+  site.textContent = ad.house ? "DM us on X ↗" : "Visit website ↗";
+  chart.hidden = !ad.chart;
+  if (ad.chart) chart.href = ad.chart;
+  $("adDomain").textContent = ad.house ? "" : `Opens ${domainOf(ad.url)}${ad.chart ? ` · chart on ${domainOf(ad.chart)}` : ""}`;
+  $("adNote").hidden = !!ad.house;
+  $("adPanel").hidden = false;
+}
+const hideAd = () => ($("adPanel").hidden = true);
+$("adClose").addEventListener("click", hideAd);
+for (const a of [$("adSite"), $("adChart")]) a.addEventListener("click", () => setTimeout(hideAd, 0));
 /// Tell the room who you are: your courier, and your wallet if you're logged in.
 function introduce() {
   net.hello(player.params, player.rideKey, chainRef?.account ?? null, skinWorn?.id ?? null);
@@ -315,7 +343,6 @@ $("chatBtn").addEventListener("click", () => {
 });
 
 // Every spot a golden stamp can be out at (the multiplayer server reads the same file).
-const HUNT_SPOTS = await fetch("./hunt-spots.json").then((r) => r.json());
 const stamps = createStamps(W, HUNT_SPOTS);
 let huntState = null, huntHinted = false;
 const sparkle = createDust(world, W.noNormals, 24, 0xffd75e);
@@ -456,6 +483,10 @@ const keys = new Set();
 const typing = (e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
 addEventListener("keydown", (e) => {
   if (typing(e)) return;
+  if (e.key === "Escape" && !$("adPanel").hidden) {
+    hideAd();
+    return;
+  }
   if (e.key.toLowerCase() === "p" && office && mode === "play") {
     office.show($("office").hidden);
     return;
@@ -501,9 +532,11 @@ addEventListener("blur", () => keys.clear());
 let pitch = 0.56, dist = 8;
 const canvas = $("c");
 let drag = null;
+let tap = null; // where and when a press began, to tell a tap from a drag
 canvas.addEventListener("pointerdown", (e) => {
   if (mode !== "play") return;
   drag = { x: e.clientX, y: e.clientY };
+  tap = { x: e.clientX, y: e.clientY, t: performance.now() };
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener("pointermove", (e) => {
@@ -513,7 +546,16 @@ canvas.addEventListener("pointermove", (e) => {
   yaw(-dx * 0.006);
   pitch = Math.min(0.95, Math.max(0.06, pitch + dy * 0.004));
 });
-canvas.addEventListener("pointerup", () => (drag = null));
+canvas.addEventListener("pointerup", (e) => {
+  drag = null;
+  // A quick tap (not a drag to look round) on the Orb opens its ad.
+  if (tap && W.orb && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
+    const r = canvas.getBoundingClientRect();
+    orbRay.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), W.camera);
+    if (orbRay.intersectObject(W.orb.mesh).length) showAd();
+  }
+  tap = null;
+});
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   dist = Math.min(12, Math.max(4.5, dist * Math.exp(e.deltaY * 0.001)));
@@ -615,6 +657,10 @@ let waveT = 0;
 function interact() {
   const me = localPos();
   const who = life.nearest(me, 2.4, bodyY);
+  if (!who && W.orb && arc(me, W.orb.d) < W.orb.reach) {
+    showAd();
+    return;
+  }
   if (!who) {
     waveT = 1.6;
     life.waveBack(me);
@@ -1043,6 +1089,7 @@ function frame() {
   const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog });
   if (got) collected(got);
   life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
+  orbAds?.update(dt);
   net.update(dt, t, mode === "play" ? netState() : null, localPos(), mode !== "play");
   waveT = Math.max(0, waveT - dt);
   player.ch.setWave(waveT > 0 ? Math.min(1, waveT * 3, (1.6 - waveT) * 6) : 0);

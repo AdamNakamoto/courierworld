@@ -1,0 +1,4 @@
+{
+  "about": "Ads on the Orb. Only what's listed here shows, so add an ad only once it's paid and approved. image: a picture in web/ads/ (2:1, e.g. 1200x600, PNG/JPG/WebP); url and chart: https links; text: up to 140 characters; from/until: when it runs (UTC).",
+  "ads": []
+}

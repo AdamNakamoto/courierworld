@@ -491,7 +491,9 @@ const POST_FRAG = /* glsl */ `
 
 // ---------------------------------------------------------------- world
 
-export function createWorld(canvas) {
+/// opts.keepClear: spots ({ x, y, z } directions) the Orb must leave outside its globe (the golden stamp
+/// spots), so they stay in sight and in reach.
+export function createWorld(canvas, { keepClear = [] } = {}) {
   const gl = new THREE.WebGLRenderer({ canvas, antialias: false });
   let dpr = Math.min(window.devicePixelRatio || 1, 2); // capped lower by the graphics settings
   gl.setPixelRatio(dpr);
@@ -1078,26 +1080,66 @@ export function createWorld(canvas) {
   }
 
   // ---- parks: trees, bushes and benches fill the blocks between streets
+  // Where the Orb will stand (it's built at the very end): the nearest open ground to the post office,
+  // chosen before the parks are planted. The park is planted exactly as before, so nothing else in the town
+  // moves; the trees, bushes and benches that land on the Orb's plaza are just left out.
+  const ORB = { foot: 4.2, ball: 3.6, lift: 3.9 }; // plaza radius, globe radius, globe centre height
+  const orbAt = (() => {
+    // Searched from where everyone starts, on the street by the post office, and only where no building
+    // stands between there and the Orb, so its screen faces the street rather than hiding behind a roof.
+    const s0 = spawn.dir;
+    const inBuilding = (p) => obstacles.some((o) => {
+      if (o.kind !== "rect" || !o.wall || o.wall.h < 3 || p.dot(o.d) < o.cos) return false;
+      const v = p.clone().sub(o.d).multiplyScalar(R);
+      return Math.abs(v.dot(o.right)) < o.hw && Math.abs(v.dot(o.front)) < o.hd;
+    });
+    const inView = (d) => {
+      for (let k = 1; k < 16; k++) {
+        const p = s0.clone().lerp(d, k / 16).normalize();
+        if (arc(p, d) > ORB.foot && inBuilding(p)) return false;
+      }
+      return true;
+    };
+    const t1 = new THREE.Vector3().crossVectors(s0, new THREE.Vector3(0.3, 1, 0.2)).normalize(), t2 = new THREE.Vector3().crossVectors(s0, t1);
+    for (let m = 10; m <= 45; m += 1) {
+      for (let i = 0; i < 60; i++) {
+        const a = (i / 60) * Math.PI * 2, sn = Math.sin(m / R);
+        const d = s0.clone().multiplyScalar(Math.cos(m / R)).addScaledVector(t1, Math.cos(a) * sn).addScaledVector(t2, Math.sin(a) * sn).normalize();
+        if (nearestRoad(d) > ROAD_HW + WALK + ORB.foot && inTown(d) && !wetNear(d, ORB.foot) && clearOf(d, ORB.foot) && !blocked(d, ORB.foot) &&
+          keepClear.every((k) => arc(d, new THREE.Vector3(k.x, k.y, k.z)) > ORB.ball + 0.3) && inView(d)) return d;
+      }
+    }
+    return null;
+  })();
+  const onOrb = (d, r) => !!orbAt && arc(d, orbAt) < ORB.foot + r;
+  const offOrb = []; // the obstacles of park props left out, removed once the park is planted
+  const plant = (g, d, spin, r) => {
+    if (onOrb(d, r)) g.traverse((o) => o.geometry?.dispose());
+    else bake(g, d, spin);
+  };
   for (let n = 0, placed = 0; placed < 260 * K && n < 9000 * K; n++) {
     const d = new THREE.Vector3(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
     if (nearestRoad(d) < ROAD_HW + WALK + 0.9 || !clearOf(d, 0.9) || !inTown(d) || wetNear(d, 1.2)) continue;
     const roll = rng();
     if (roll < 0.62) {
       const s = range(0.8, 1.2);
-      bake(tree(s), d, rng() * 6);
+      plant(tree(s), d, rng() * 6, 1.1 * s);
       addCircle(d, 0.3 * s);
+      if (onOrb(d, 1.1 * s)) offOrb.push(obstacles[obstacles.length - 1]);
       taken.push({ d, r: 1.1 * s });
     } else if (roll < 0.94) {
-      bake(bush(range(0.8, 1.3)), d, rng() * 6);
+      plant(bush(range(0.8, 1.3)), d, rng() * 6, 0.8);
       taken.push({ d, r: 0.8 });
     } else {
       const sp = rng() * 6;
-      bake(bench(), d, sp);
+      plant(bench(), d, sp, 0.9);
       addRect(d, sp, 0.75, 0.3);
+      if (onOrb(d, 0.9)) offOrb.push(obstacles[obstacles.length - 1]);
       taken.push({ d, r: 0.9 });
     }
     placed++;
   }
+  for (const o of offOrb) obstacles.splice(obstacles.indexOf(o), 1);
 
   // Pools of warm light under the street lamps, faded in at night.
   const pools = (() => {
@@ -1150,6 +1192,40 @@ export function createWorld(canvas) {
     tufts.count = n;
     tufts.receiveShadow = true;
     world.add(tufts);
+  }
+
+  // ---- the Orb: a giant LED globe near the post office, showing the ads in ads.json (orb.js paints and
+  // turns it). Built last, in a spot left open, so nothing else in the town moves for it.
+  let orb = null;
+  {
+    const { foot: FOOT, ball: BALL, lift: LIFT } = ORB;
+    const best = orbAt && { d: orbAt };
+    if (best) {
+      const d = best.d, spin = faceStreet(d), q = frameAt(d, spin);
+      const g = new THREE.Group();
+      part(g, new THREE.CylinderGeometry(FOOT, FOOT, 0.06, 40), 0xd9d2c3, 0, 0.03, 0); // the plaza
+      part(g, new THREE.CylinderGeometry(FOOT - 0.25, FOOT - 0.25, 0.08, 40), 0xc9c1b0, 0, 0.07, 0);
+      part(g, new THREE.CylinderGeometry(2.7, 3.0, 0.7, 32), 0x2b2f45, 0, 0.42, 0); // the pedestal
+      part(g, new THREE.TorusGeometry(2.86, 0.07, 6, 48), 0x5ff3ff, 0, 0.78, 0, Math.PI / 2);
+      // Its own little group (the town mesh is already built by now).
+      g.position.copy(d).multiplyScalar(R);
+      g.quaternion.copy(q);
+      world.add(g);
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL, 72, 48), new THREE.MeshBasicMaterial({ color: 0x0b1024 }));
+      mesh.position.copy(d).multiplyScalar(R).addScaledVector(d, LIFT);
+      mesh.quaternion.copy(q);
+      world.add(mesh);
+      addCircle(d, BALL - 0.3, { wall: { h: LIFT + BALL } });
+      taken.push({ d, r: FOOT + 0.4 });
+      orb = { d, spin, mesh, radius: BALL, reach: BALL + 2.6 };
+      // Grass doesn't grow through the plaza.
+      const m = new THREE.Matrix4(), p = new THREE.Vector3(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < tuftsMesh.count; i++) {
+        tuftsMesh.getMatrixAt(i, m);
+        if (arc(p.setFromMatrixPosition(m).normalize(), d) < FOOT) tuftsMesh.setMatrixAt(i, zero);
+      }
+      tuftsMesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   // ---------------------------------------------------------------- rendering
@@ -1346,6 +1422,7 @@ export function createWorld(canvas) {
     /// Lots for the players' post offices ({ d, spin }), nearest the main post office first.
     lots,
     stage,
+    orb,
     /// The lie of the land: places, ground and water heights, what you can stand on.
     terrain,
     /// People who live out in the places (beach, pier, shrine, cabin, works), golden-stamp spots up
