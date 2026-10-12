@@ -442,3 +442,6 @@ body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card 
   .photo-shoot { width: 64px; height: 64px; bottom: 28px; }
   .photo-hint { bottom: auto; top: 192px; } /* (under the bar, clear of the stick) */
 }
+
+/* Courier Skins: the $STAMP button under the ETH one. */
+.skins .stamp-mint { margin-top: 6px; background: #f2c94c; }

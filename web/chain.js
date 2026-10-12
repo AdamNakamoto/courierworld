@@ -8,6 +8,9 @@ import {
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
 
 const ERROR_TEXT = {
+  // Courier Skins for $STAMP (SkinsStampSale)
+  Closed: "Paying in $STAMP is paused right now. You can still pay in ETH.",
+  NeedsTopUp: "The $STAMP sale needs topping up. Pay in ETH for now, or try again soon.",
   AlreadyOpen: "You already run a post office.",
   NotOpen: "Open a post office first.",
   WrongPayment: "The price changed. Try again.",
@@ -105,7 +108,7 @@ export async function connectChain() {
   const game = !!dep.contracts.office;
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
-    ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...V4_ABI,
+    ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -115,6 +118,7 @@ export async function connectChain() {
     office: game ? { address: dep.contracts.office, abi: withErrors(dep.abis.office) } : null,
     hunt: dep.contracts.hunt ? { address: dep.contracts.hunt, abi: withErrors(dep.abis.hunt) } : null,
     skins: dep.contracts.skins ? { address: dep.contracts.skins, abi: withErrors(dep.abis.skins) } : null,
+    skinsStamp: dep.contracts.skinsStamp ? { address: dep.contracts.skinsStamp, abi: withErrors(dep.abis.skinsStamp) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -186,6 +190,13 @@ export async function connectChain() {
         read(C.skins, "totalMinted"), read(C.skins, "price"), read(C.skins, "saleOpen"), read(C.skins, "seed"), read(C.skins, "owner"),
       ]);
       s.skins = { minted: Number(minted), price, saleOpen, seed, address: C.skins.address, mine: null, isOwner: !!account && same(owner, account) };
+      // Paying in $STAMP: its price, whether it's open, and the ETH float that pays each skin's ETH price.
+      if (C.skinsStamp) {
+        const [stampPrice, open, float, saleOwner] = await Promise.all([
+          read(C.skinsStamp, "stampPrice"), read(C.skinsStamp, "open"), pub.getBalance({ address: C.skinsStamp.address }), read(C.skinsStamp, "owner"),
+        ]);
+        s.skins.stamp = { address: C.skinsStamp.address, price: stampPrice, open, float, isOwner: !!account && same(saleOwner, account) };
+      }
       if (account) {
         const ids = (await read(C.skins, "tokensOfOwner", [account])).map(Number);
         // A skin's design never changes once revealed, so it's read once.
@@ -494,6 +505,31 @@ export async function connectChain() {
     },
     mint: (s, n) => send(C.nft, "mint", [BigInt(n)], s.price * BigInt(n)),
     mintSkins: (s, n) => send(C.skins, "mint", [BigInt(n)], s.skins.price * BigInt(n)),
+    /// Mint with $STAMP instead: one signature (a permit) and one transaction, or an approval first for wallets
+    /// that can't sign typed data.
+    async mintSkinsWithStamp(s, n) {
+      const sale = C.skinsStamp, cost = s.skins.stamp.price * BigInt(n);
+      if ((await read(C.stamp, "allowance", [account, sale.address])) >= cost) return send(sale, "buy", [BigInt(n)]);
+      const deadline = (await pub.getBlock()).timestamp + 600n;
+      let sig = null;
+      try {
+        sig = await signPermit(sale.address, cost, deadline);
+      } catch (e) {
+        if (rejected(e)) throw e;
+      }
+      if (sig) return send(sale, "buyWithPermit", [BigInt(n), deadline, sig.v, sig.r, sig.s]);
+      await send(C.stamp, "approve", [sale.address, cost]);
+      return send(sale, "buy", [BigInt(n)]);
+    },
+    /// The $STAMP sale's owner: pause or open it, change its price, top up its ETH float.
+    skinsStampAdmin: C.skinsStamp ? {
+      setOpen: (open) => send(C.skinsStamp, "setOpen", [open]),
+      setPrice: (wei) => send(C.skinsStamp, "setStampPrice", [wei]),
+      async topUp(wei) {
+        const hash = await wallet.sendTransaction({ account, to: C.skinsStamp.address, value: wei, chain });
+        if ((await pub.waitForTransactionReceipt({ hash })).status !== "success") throw new Error("The top-up didn't go through.");
+      },
+    } : null,
     /// The skins contract's owner: open or close the sale, and reveal once it has been closed for a block.
     skinsAdmin: C.skins ? {
       setSaleOpen: (open) => send(C.skins, "setSaleOpen", [open]),

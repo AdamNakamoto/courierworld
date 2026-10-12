@@ -133,6 +133,23 @@ cd ../multiplayer
 npx wrangler deploy --var SKINS_ADDRESS:0x…
 ```
 
+### Paying in $STAMP
+
+`SkinsStampSale.sol` sells the same skins for $STAMP (150 a skin at launch, to the treasury). Courier
+Skins only takes ETH, so the sale pays each skin's ETH price from a float its owner tops up (that ETH
+goes straight on to the skins treasury, so it only goes round), takes the buyer's $STAMP (one permit
+signature, or an approval), and moves the minted skins on to the buyer in the same transaction. Same
+999, same enforced royalty; Courier Skins itself is untouched. The owner can change the $STAMP price,
+pause it, top up or withdraw the float (all in the Post Office panel too, except withdrawing).
+
+```bash
+cd contracts
+./script/deploy-skins-stamp.sh --sender 0x7221…    # dry run on a fork, as the wallet that will sign
+./script/deploy-skins-stamp.sh --broadcast --browser
+# SKINS_STAMP_PRICE and SKINS_STAMP_FLOAT (sent with the deploy) are in launch.env; top up later by
+# sending ETH to the sale
+```
+
 `deploy-skins.sh` runs `export-web.sh`, which adds the skins to `web/deployments/robinhood.json`.
 The collection's page on OpenSea comes from `contractURI()`: name, description (with the X link),
 `collection.png`, `banner.png` and https://courierworld.fun/ as the website. Then, in OpenSea Studio,
@@ -242,7 +259,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
 
 ```bash
-cd contracts && forge test                                             # 140 tests
+cd contracts && forge test                                             # 156 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 

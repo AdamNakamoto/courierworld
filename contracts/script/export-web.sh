@@ -61,6 +61,13 @@ if [ -f "$GAME" ]; then
     jq --slurpfile s "$SKINS" --argjson skinsAbi "$(abi CourierSkins)" \
       '.contracts.skins = $s[0].skins | .skinsBlock = $s[0].block | .abis.skins = $skinsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
+  # The $STAMP sale for skins, once deployed (script/deploy-skins-stamp.sh writes deployments/robinhood-skins-stamp.json).
+  SALE=deployments/robinhood-skins-stamp.json
+  if [ -f "$SALE" ]; then
+    tmp=$(mktemp)
+    jq --slurpfile s "$SALE" --argjson saleAbi "$(abi SkinsStampSale)" \
+      '.contracts.skinsStamp = $s[0].sale | .abis.skinsStamp = $saleAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else
   jq -n \

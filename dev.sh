@@ -109,6 +109,15 @@ deploy_skins() { # Courier Skins with the sale open, revealed with this chain's 
   OUT="$prev"
 }
 deploy_skins
+
+deploy_skins_stamp() { # the $STAMP sale for the skins, open, with a float for 50 skins
+  [ -n "$(addr StampToken)" ] || return 0
+  local prev="$OUT"
+  SKINS=$SKINS STAMP=$(addr StampToken) SKINS_STAMP_FLOAT=200000000000000000 deploy script/DeploySkinsStampSale.s.sol
+  SKINS_STAMP=$(addr SkinsStampSale)
+  OUT="$prev"
+}
+deploy_skins_stamp
 write_dev_vars
 
 NAME=Anvil
@@ -146,6 +155,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
   if [ -n "$SKINS" ]; then
     contracts=$(echo "$contracts" | jq --arg skins "$SKINS" '. + {skins: $skins}')
     abis=$(echo "$abis" | jq --argjson skins "$(abi CourierSkins)" '. + {skins: $skins}')
+  fi
+  if [ -n "${SKINS_STAMP:-}" ]; then
+    contracts=$(echo "$contracts" | jq --arg sale "$SKINS_STAMP" '. + {skinsStamp: $sale}')
+    abis=$(echo "$abis" | jq --argjson sale "$(abi SkinsStampSale)" '. + {skinsStamp: $sale}')
   fi
   [ "$FORK" = 1 ] && contracts=$(echo "$contracts" | jq '. + {multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11"}')
   jq -n --arg rpc "$RPC" --argjson chainId "$CHAIN_ID" --arg name "$NAME" --arg secret "$SECRET" --arg stage "$stage" \

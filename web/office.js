@@ -39,6 +39,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   const panel = $("office");
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
   let skinSecret = ""; // the reveal secret while the owner types it; never stored
+  let stampPriceIn = ""; // a new $STAMP price for skins, while the owner types it
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0, huntAmount = "", huntReward = ""; // the StampHunt contract, read every few seconds
@@ -309,7 +310,18 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(k.minted / SKIN_SUPPLY) * 100}%"></div></div><span>${k.minted}/${SKIN_SUPPLY}</span></div>`;
       if (k.saleOpen && k.minted < SKIN_SUPPLY) {
         html += `<div class="mintrow"><button class="pbtn" data-act="skinQty" data-d="-1">−</button><b>${skinQty}</b><button class="pbtn" data-act="skinQty" data-d="1">+</button>
-          <button class="pbtn primary" data-act="mintSkins" ${!s.account || busy ? "disabled" : ""}>Mint ${skinQty} · ${fmt(k.price * BigInt(skinQty), 3)} ETH</button></div>
+          <button class="pbtn primary" data-act="mintSkins" ${!s.account || busy ? "disabled" : ""}>Mint ${skinQty} · ${fmt(k.price * BigInt(skinQty), 3)} ETH</button></div>`;
+        // Or pay in $STAMP, from the same 999.
+        const st = k.stamp;
+        if (st) {
+          const cost = st.price * BigInt(skinQty), ready = st.open && st.float >= k.price * BigInt(skinQty);
+          const short = !!s.account && s.stamp != null && s.stamp < cost;
+          html += `<button class="pbtn wide stamp-mint" data-act="mintSkinsStamp" ${!s.account || busy || !ready || short ? "disabled" : ""}>Mint ${skinQty} · ${fmt(cost, 0)} $STAMP</button>`;
+          if (!st.open) html += `<p class="note">Paying in $STAMP is paused right now.</p>`;
+          else if (!ready) html += `<p class="note">The $STAMP sale needs topping up. Pay in ETH for now, or check back soon.</p>`;
+          else if (short) html += `<p class="note">You have ${fmt(s.stamp, 0)} $STAMP: not quite enough for ${skinQty > 1 ? `${skinQty} skins` : "a skin"}.</p>`;
+        }
+        html += `
           ${s.account ? "" : `<p class="note">Log in to mint.</p>`}
           <p class="note">A blind mint: every skin's design is revealed after the mint. ${SKIN_RARITY.Common} Common, ${SKIN_RARITY.Rare} Rare and ${SKIN_RARITY.Legendary} Legendary, including 39 Moonwedge supercars. Skins are cosmetic: everyone in the game sees yours, and they never change what you earn.</p>`;
       } else {
@@ -324,6 +336,18 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
             <button class="pbtn primary wide" data-act="skinReveal" ${busy ? "disabled" : ""}>Reveal the skins</button>`;
         }
         html += `<p class="note">Close the sale, wait about 15 seconds, then reveal: the reveal must come in a later block than the close, so nobody can mint knowing the designs. The secret is checked against the contract before anything is sent, and the reveal ends the sale for good.</p></div>`;
+      }
+      // The $STAMP sale's owner: its float, price and switch.
+      if (k.stamp?.isOwner) {
+        const st = k.stamp;
+        html += `<div class="admin-hunt"><h4>Paying in $STAMP <span class="muted">you own the sale</span></h4>
+          <div class="kv"><span>Price</span><b>${fmt(st.price, 0)} $STAMP a skin</b></div>
+          <div class="kv"><span>Float</span><b>${fmt(st.float, 3)} ETH · enough for ${(st.float / k.price).toString()} skins</b></div>
+          <div class="row2"><button class="pbtn" data-act="stampTopUp" ${busy ? "disabled" : ""}>Top up 0.04 ETH</button>
+            <button class="pbtn" data-act="stampOpen" ${busy ? "disabled" : ""}>${st.open ? "Pause it" : "Open it"}</button></div>
+          <label class="field">New $STAMP price a skin<input id="stampPriceIn" data-act="stampPriceIn" inputmode="decimal" placeholder="${fmt(st.price, 0)}"></label>
+          <button class="pbtn wide" data-act="stampSetPrice" ${busy ? "disabled" : ""}>Change the price</button>
+          <p class="note">The float pays each skin's ETH price, which goes straight on to the skins treasury, so topping it up only moves your own ETH round. The $STAMP goes to the treasury.</p></div>`;
       }
       if (k.mine?.length) {
         html += `<h4>Your skins <span class="muted">${k.mine.length}</span></h4><div class="couriers">`;
@@ -383,6 +407,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       $("officeMore").innerHTML = html;
       const sec = $("skinSecret");
       if (sec) sec.value = skinSecret;
+      const sp = $("stampPriceIn");
+      if (sp && document.activeElement !== sp) sp.value = stampPriceIn;
     }
     trade?.update(s);
   }
@@ -478,6 +504,19 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       case "reveal": return run("Revealing the collection", () => chain.devReveal());
       case "skinQty": skinQty = Math.min(10, Math.max(1, skinQty + Number(b.dataset.d))); return draw(true);
       case "mintSkins": return run(`Minting ${skinQty} skin${skinQty > 1 ? "s" : ""}`, () => chain.mintSkins(snap, skinQty));
+      case "mintSkinsStamp": return run(`Minting ${skinQty} skin${skinQty > 1 ? "s" : ""} with $STAMP`, () => chain.mintSkinsWithStamp(snap, skinQty));
+      case "stampTopUp": return run("Topping up the $STAMP sale", () => chain.skinsStampAdmin.topUp(parseEther("0.04")));
+      case "stampOpen": return run(snap.skins.stamp.open ? "Pausing the $STAMP sale" : "Opening the $STAMP sale", () => chain.skinsStampAdmin.setOpen(!snap.skins.stamp.open));
+      case "stampSetPrice": {
+        let wei;
+        try { wei = parseEther(stampPriceIn.trim().replace(/,/g, "")); } catch { wei = 0n; }
+        if (wei <= 0n) return toast("Type the new $STAMP price for one skin, like 150.", "error");
+        if (!confirm(`Change the price to ${stampPriceIn.trim()} $STAMP a skin?`)) return;
+        return run("Changing the $STAMP price", async () => {
+          await chain.skinsStampAdmin.setPrice(wei);
+          stampPriceIn = "";
+        });
+      }
       case "wear": {
         const m = snap.skins?.mine?.find((x) => x.id === id);
         if (m && m.design != null) onWearSkin(m);
@@ -521,6 +560,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     if (e.target.dataset.act === "huntAmount") huntAmount = e.target.value.trim();
     if (e.target.dataset.act === "huntReward") huntReward = e.target.value.trim();
     if (e.target.dataset.act === "skinSecret") skinSecret = e.target.value;
+    if (e.target.dataset.act === "stampPriceIn") stampPriceIn = e.target.value;
   });
 
   refresh();

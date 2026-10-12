@@ -329,3 +329,30 @@ forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.dr
 | 7 | Info: test gaps | Added: reveal in the mint's block (finding 1); the shuffle checked as a bijection with exact design counts for 48 fuzzed seeds (`testFuzz_ShuffleIsABijection`); `safeTransferFrom` with data through the validator; a cap lowered below what was claimed; a claim at its deadline second and after the UTC day rolls; a daily limit that isn't a multiple of the reward. On a Robinhood Chain fork, a sale authorized the way OpenSea runs it (the SignedZone authorizes the token on the live registry, the approved marketplace transfers it and the flag is cleared, all in one transaction) goes through, and a stranger can't authorize (`test_Fork_SaleAuthorizedByOpenSeaGoesThrough`, `test_Fork_StrangersCantAuthorize`). |
 
 140 tests, plus 4 against OpenSea's live registry on a Robinhood Chain fork (`--match-contract CourierSkinsForkTest`).
+
+## 11. New: paying for Courier Skins in $STAMP
+
+`contracts/src/SkinsStampSale.sol` (not deployed yet). Courier Skins only takes ETH and can't be changed,
+so this sale sits beside it:
+
+- `buy(quantity)` / `buyWithPermit(...)`: takes `stampPrice × quantity` $STAMP from the buyer straight to
+  `treasury`, calls `CourierSkins.mint{value: price × quantity}` from its own ETH float, then
+  `transferFrom(this, buyer, id)` for each new id (`totalMinted + 1` onward). Courier Skins enforces its own
+  sale switch, 1–10 per transaction and the 999 cap; a failed mint reverts the whole buy, $STAMP included.
+- The float only ever pays Courier Skins' own `mint`, at Courier Skins' current price; that ETH goes to the
+  Courier Skins treasury. Anyone can top it up (`receive`); only the owner withdraws (`withdrawEth`).
+- The permit is tried, and ignored if it fails (someone used it first): the allowance it set still pays.
+- `nonReentrant` on both buys (a Courier Skins treasury that calls back in is refused).
+- Owner (Ownable2Step): `setStampPrice` (> 0), `setOpen`, `setTreasury` (≠ 0), `withdrawEth`, `withdrawToken`.
+  None of them can take a buyer's $STAMP or skins.
+- The hand-over from the sale to the buyer is an owner moving its own token, which OpenSea's registry
+  allows: checked on a Robinhood Chain fork against the live Courier Skins, $STAMP and registry
+  (`SkinsStampSaleForkTest`).
+
+Known and accepted: the $STAMP price is fixed by the owner, not read from a pool (a pool price could be
+pushed around within a transaction); if $STAMP moves a lot, the owner changes it or pauses. When the float
+runs dry, $STAMP buys revert with `NeedsTopUp` until it's topped up; ETH mints are unaffected.
+
+Tests: `test/SkinsStampSale.t.sol`, 15 unit tests (with the real CourierSkins and StampToken) and the
+fork test.
+
