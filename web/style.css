@@ -342,9 +342,12 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .chat { position: absolute; left: 14px; bottom: 84px; width: min(380px, calc(100vw - 28px)); display: grid; gap: 6px; pointer-events: none !important; }
 .chat > * { pointer-events: auto; }
 .chat[hidden] { display: none; }
-.chat-log { max-height: 190px; overflow-y: auto; display: grid; gap: 3px; align-content: end; scrollbar-width: none; }
+/* Lines sit at the bottom (the first one's auto margin) but older ones stay scrollable above. */
+.chat-log { max-height: 190px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 3px; scrollbar-width: none; }
+.chat-log > :first-child { margin-top: auto; }
+.chat.open .chat-log { max-height: min(300px, 42vh); scrollbar-width: thin; }
 .chat .line {
-  justify-self: start; max-width: 100%; padding: 3px 10px 4px; background: rgba(251, 248, 239, .92); border: 2px solid var(--ink);
+  align-self: flex-start; flex: none; max-width: 100%; padding: 3px 10px 4px; background: rgba(251, 248, 239, .92); border: 2px solid var(--ink);
   border-radius: 12px; font: 400 16px/1.3 system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif; color: var(--ink);
   overflow-wrap: anywhere; transition: opacity .6s;
 }
@@ -364,5 +367,6 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 @media (hover: none), (max-width: 640px) {
   .chat { top: 196px; bottom: auto; left: 10px; width: calc(100vw - 80px); }
   .chat-log { max-height: 118px; }
+  .chat.open .chat-log { max-height: min(220px, 30vh); }
   .chat .line { font-size: 14px; }
 }
