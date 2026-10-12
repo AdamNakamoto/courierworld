@@ -126,7 +126,7 @@ deploy_skins_stamp
 deploy_pad() { # the launchpad, on a fork only (it needs the real Uniswap v4 PoolManager and IMD)
   [ "$FORK" = 1 ] && [ -n "$(addr StampToken)" ] || return 0
   local prev="$OUT"
-  STAMP=$(addr StampToken) POST_OFFICE=$(addr PostOffice) PAD_STAMP_FEE=500000000000000000000 PAD_START_MCAP_USD=5000 \
+  STAMP=$(addr StampToken) POST_OFFICE=$(addr PostOffice) PAD_STAMP_FEE=100000000000000000000 PAD_START_MCAP_USD=5000 \
     deploy script/DeployCourierPad.s.sol
   PAD=$(addr CourierPad) PAD_ROUTER=$(addr Router) PAD_ETH_ROUTER=$(addr EthRouter)
   OUT="$prev"

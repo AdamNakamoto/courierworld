@@ -162,7 +162,7 @@ add the X link (https://x.com/PlayCourierWld) to the collection's links and turn
 ## The launchpad
 
 Any player with a post office can launch their own token, inside the game (`CourierPad.sol`, not deployed
-yet). A launch burns a $STAMP fee (500 at launch; the owner can change it, and launchers name the most
+yet). A launch burns a $STAMP fee (100 at launch; the owner can change it, and launchers name the most
 they'll pay) and creates a `PadToken`: 1,000,000,000 supply, plain ERC-20 with permit, no owner, no tax.
 
 - 95% goes into the token's Uniswap v4 pool against IMD as single-sided liquidity, locked forever (the pad
