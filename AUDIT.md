@@ -439,7 +439,9 @@ IMD, $STAMP burn, post office check, IMD/ETH pool).
 
 ## 13. New: the treasure hunt's token drops (TokenDrops)
 
-`contracts/src/TokenDrops.sol` (not deployed yet) replaces `StampHunt` (never deployed): the treasury scatters
+`contracts/src/TokenDrops.sol`, live since 2026-10-13 at `0xD0e785276840F7175DF12678991605042e89771C` (deployed from
+`a54e30b`, after the fixes below; source verified on Sourcify; owner the treasury, signer `0xac7e…55Ca`), replaces
+`StampHunt` (never deployed): the treasury scatters
 launchpad tokens, or $STAMP for the golden stamps, round the planet as coins, and players with a post office
 claim what they find.
 

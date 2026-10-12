@@ -95,6 +95,9 @@ A player with a post office can also sign in with their wallet (one signature, n
 multiplayer room then checks each find against where they've actually been, and signs a voucher per drop for
 the day's finds. `TokenDrops.sol` pays them from each drop's own tokens (it never mints), claimed for the day of
 the finds or the day after, all drops in one transaction from the Post Office panel's Treasure hunt section.
+`TokenDrops` is live since 2026-10-13 at `0xD0e785276840F7175DF12678991605042e89771C` (source verified on Sourcify);
+the room's voucher key is the multiplayer server's secret `DROPS_KEY` (its address, `0xac7e8d5A3b94ac56Ec1DD10a0Ec6a5ABD3b155Ca`,
+is the contract's signer).
 
 Only the treasury (the contract's owner) starts drops, from that same section: a launchpad token (its 5% of
 each launch) or $STAMP, which pays for the golden stamps. Each drop sets the tokens per coin, how many coins are

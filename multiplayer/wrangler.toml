@@ -25,3 +25,6 @@ new_sqlite_classes = ["Images"]
 SKINS_ADDRESS = "0x19716dAaDE3F2979aAA4f69cc04e2A5c00e7D23e"
 # The post office: only wallets with one open can upload launchpad pictures.
 POST_OFFICE = "0x26D80804D0FA2F4598369E0062bFC9536d115D82"
+# The treasure hunt's payouts (TokenDrops): the room reads the running drops from it and signs vouchers for
+# finds with DROPS_KEY (a secret, set with `npx wrangler secret put DROPS_KEY`; its address is the contract's signer).
+DROPS_ADDRESS = "0xD0e785276840F7175DF12678991605042e89771C"
