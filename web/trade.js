@@ -1,10 +1,9 @@
-// Trade $STAMP inside the post office panel: buy or sell with ETH (routed through the IMD/ETH
-// pool) or with IMD directly. Quotes come from Uniswap's v4 quoter and include the 4% fee.
-// This section lives in its own element so the panel's once-a-second redraw never resets the input.
+// Trade $STAMP inside the post office panel (or a launchpad token, in the launchpad): buy or sell with ETH
+// (routed through the IMD/ETH pool) or with IMD directly. Quotes come from Uniswap's v4 quoter and include
+// the 4% fee. This section lives in its own element so the panel's once-a-second redraw never resets the input.
 import { formatEther, parseEther } from "https://esm.sh/viem@2";
 
 const GAS_RESERVE = parseEther("0.0005"); // ETH kept back by "Max" for transaction fees
-const SUPPLY = 21_000_000;
 const sig = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 });
 const usd = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const amount = (wei) => {
@@ -13,14 +12,20 @@ const amount = (wei) => {
     : n >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : sig.format(n);
 };
 
-export function createTrade(chain, el, { run, isBusy, onLogin }) {
+/// `token`: what's traded. $STAMP unless given: { symbol, supply, balance(snapshot), quote, market, execute, note }.
+export function createTrade(chain, el, { run, isBusy, onLogin, token = null }) {
+  const T = token ?? {
+    symbol: "$STAMP", supply: 21_000_000, balance: (s) => s.stamp,
+    quote: chain.trade.quote, market: chain.trade.market, execute: chain.trade.execute,
+    note: "Every trade pays 4% of its IMD side to the protocol. The pool started with $STAMP only, so sells fill once buyers have brought IMD in.",
+  };
   let side = "buy", asset = "ETH", slipBps = 100, text = "";
   let snap = null, market = null, marketAt = 0;
   let q = null; // { key, out, impact } or { key, error }
   let seq = 0, timer = 0;
 
   el.hidden = false;
-  el.innerHTML = `<h3>Trade $STAMP <span class="muted">4% fee per trade</span></h3>
+  el.innerHTML = `<h3>Trade ${T.symbol} <span class="muted">4% fee per trade</span></h3>
     <div class="seg" role="group" aria-label="Buy or sell">
       <button data-side="buy">Buy</button><button data-side="sell">Sell</button></div>
     <div class="seg small" role="group" aria-label="Currency"><span class="muted" data-r="withLabel"></span>
@@ -36,8 +41,9 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
       <button data-slip="50">0.5%</button><button data-slip="100">1%</button><button data-slip="300">3%</button></div>
     <button class="pbtn primary wide" data-r="go"></button>
     <p class="note" data-r="price"></p>
-    <p class="note">Every trade pays 4% of its IMD side to the protocol. The pool started with $STAMP only, so sells fill once buyers have brought IMD in.</p>`;
+    <p class="note" data-r="note"></p>`;
   const r = Object.fromEntries([...el.querySelectorAll("[data-r]")].map((n) => [n.dataset.r, n]));
+  r.note.textContent = T.note;
 
   const parse = () => {
     if (!/^\d*\.?\d*$/.test(text) || !/\d/.test(text)) return 0n;
@@ -45,10 +51,10 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
   };
   const balance = () => {
     if (!snap?.account) return null;
-    return side === "sell" ? snap.stamp : asset === "ETH" ? snap.eth : snap.imd;
+    return side === "sell" ? T.balance(snap) ?? null : asset === "ETH" ? snap.eth : snap.imd;
   };
-  const inUnit = () => (side === "buy" ? asset : "$STAMP");
-  const outUnit = () => (side === "buy" ? "$STAMP" : asset);
+  const inUnit = () => (side === "buy" ? asset : T.symbol);
+  const outUnit = () => (side === "buy" ? T.symbol : asset);
   const key = (amt) => `${side}:${asset}:${amt}`;
 
   async function requote() {
@@ -57,7 +63,7 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
     try {
       // A tiny trade gives the current rate, so the gap to this one is its price impact (fees cancel out).
       const tiny = amt / 1000n > 0n ? amt / 1000n : amt;
-      const [out, ref] = await Promise.all([chain.trade.quote(side, asset, amt), chain.trade.quote(side, asset, tiny)]);
+      const [out, ref] = await Promise.all([T.quote(side, asset, amt), T.quote(side, asset, tiny)]);
       if (mine !== seq) return;
       const rate = Number(out) / Number(amt), refRate = Number(ref) / Number(tiny);
       q = { key: k, out, impact: refRate > 0 ? Math.max(0, 1 - rate / refRate) : 0 };
@@ -91,7 +97,7 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
     r.impact.textContent = fresh && !q.error ? `${(q.impact * 100).toFixed(q.impact < 0.01 ? 2 : 1)}%` : "—";
     r.impact.classList.toggle("warn", !!(fresh && q.impact > 0.05));
 
-    let label = side === "buy" ? "Buy $STAMP" : "Sell $STAMP", ok = fresh && !q.error && minOut > 0n && !busy;
+    let label = side === "buy" ? `Buy ${T.symbol}` : `Sell ${T.symbol}`, ok = fresh && !q.error && minOut > 0n && !busy;
     if (!snap?.account) { label = "Log in to trade"; ok = !busy; }
     else if (amt > 0n && bal !== null && amt > bal) { label = `Not enough ${inUnit()}`; ok = false; }
     r.go.textContent = label;
@@ -99,9 +105,9 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
     r.go.dataset.min = String(minOut);
 
     if (market) {
-      const p = `1 $STAMP = ${sig.format(market.stampImd)} IMD`;
+      const p = `1 ${T.symbol} = ${sig.format(market.stampImd)} IMD`;
       r.price.textContent = Number.isFinite(market.stampUsd)
-        ? `${p} ≈ $${sig.format(market.stampUsd)} · market cap ≈ ${usd.format(market.stampUsd * SUPPLY)}`
+        ? `${p} ≈ $${sig.format(market.stampUsd)} · market cap ≈ ${usd.format(market.stampUsd * T.supply)}`
         : p;
     }
   }
@@ -129,9 +135,9 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
     if (b === r.go) {
       if (!snap?.account) return onLogin();
       const amt = parse(), minOut = BigInt(b.dataset.min), s0 = side, a0 = asset;
-      const what = s0 === "buy" ? `Buying $STAMP with ${amount(amt)} ${a0}` : `Selling ${amount(amt)} $STAMP for ${a0}`;
+      const what = s0 === "buy" ? `Buying ${T.symbol} with ${amount(amt)} ${a0}` : `Selling ${amount(amt)} ${T.symbol} for ${a0}`;
       return run(what, async () => {
-        await chain.trade.execute({ side: s0, asset: a0, amountIn: amt, minOut });
+        await T.execute({ side: s0, asset: a0, amountIn: amt, minOut });
         text = "";
         r.input.value = "";
         q = null;
@@ -151,7 +157,7 @@ export function createTrade(chain, el, { run, isBusy, onLogin }) {
       const now = Date.now();
       if (now - marketAt > 10_000) {
         marketAt = now;
-        chain.trade.market().then((m) => { market = m; render(); }).catch((e) => console.warn("price failed", e));
+        T.market().then((m) => { market = m; render(); }).catch((e) => console.warn("price failed", e));
         if (parse() > 0n && !isBusy()) schedule(0); // prices move: refresh the quote too
       }
       render();

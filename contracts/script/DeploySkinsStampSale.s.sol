@@ -34,7 +34,8 @@ contract DeploySkinsStampSale is Script {
         console2.log("  $STAMP per skin", price / 1e18);
         console2.log("  float (wei)", float_);
 
-        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663) return sale;
+        // (dev.sh sets DEV_CHAIN: an Anvil fork of Robinhood Chain has its chain ID too, and must not touch the real record.)
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return sale;
         string memory json = "sale";
         vm.serializeUint(json, "chainId", block.chainid);
         vm.serializeUint(json, "block", block.number);

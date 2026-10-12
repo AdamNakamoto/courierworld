@@ -27,6 +27,8 @@ export const BANNED = new Set([]);
 const LEET = { 0: "o", 1: "i", 3: "e", 4: "a", 5: "s", 7: "t", 8: "b", 9: "g" };
 const plain = (low) => low.replace(/_/g, "").replace(/[01345789]/g, (d) => LEET[d]);
 const blocked = (low) => BANNED.has(low) || BLOCKED.some((w) => plain(low).includes(w));
+/// Whether text (any case) contains a blocked word, even spelled with digits or split with underscores.
+export const offensive = (text) => BLOCKED.some((w) => plain(String(text).toLowerCase().replace(/[^a-z0-9_]/g, "")).includes(w));
 
 /// The name as it will be shown, or why it can't be used: { name } or { error }.
 export function cleanName(raw) {

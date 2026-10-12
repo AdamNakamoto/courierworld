@@ -7,10 +7,21 @@ compatibility_date = "2025-10-01"
 name = "PLANET"
 class_name = "Planet"
 
+[[durable_objects.bindings]]
+name = "IMAGES"
+class_name = "Images"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Planet"]
 
+# Token pictures for the launchpad (only post office owners can upload; see padImage in src/index.js).
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Images"]
+
 # Courier Skins on Robinhood Chain: a player is shown in a skin only if this contract says they own it.
 [vars]
 SKINS_ADDRESS = "0x19716dAaDE3F2979aAA4f69cc04e2A5c00e7D23e"
+# The post office: only wallets with one open can upload launchpad pictures.
+POST_OFFICE = "0x26D80804D0FA2F4598369E0062bFC9536d115D82"

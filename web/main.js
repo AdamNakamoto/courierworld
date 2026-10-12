@@ -12,6 +12,7 @@ import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
 import { createAmbience } from "./ambience.js";
 import { createOffice } from "./office.js";
+import { createPad } from "./pad.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
@@ -535,8 +536,16 @@ addEventListener("keydown", (e) => {
     hideAd();
     return;
   }
+  if (e.key === "Escape" && launchpad?.open) {
+    launchpad.show(false);
+    return;
+  }
   if (e.key.toLowerCase() === "p" && office && mode === "play") {
-    office.show($("office").hidden);
+    showOffice($("office").hidden);
+    return;
+  }
+  if (e.key.toLowerCase() === "l" && launchpad && mode === "play") {
+    showPad(!launchpad.open);
     return;
   }
   if ((e.key.toLowerCase() === "m" || e.key.toLowerCase() === "n") && mode !== "title") {
@@ -614,11 +623,14 @@ canvas.addEventListener("pointerup", (e) => {
   presses.delete(e.pointerId);
   pinch = null;
   drag = null;
-  // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad.
-  if (tap && W.orb && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
+  // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad;
+  // on the Launchpad's sign, the Launchpad.
+  if (tap && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
     const r = canvas.getBoundingClientRect();
     orbRay.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), W.camera);
-    if (orbRay.intersectObjects([W.orb.mesh, ...(W.square?.adMeshes ?? [])]).length) showAd();
+    const signs = launchpad ? W.square?.pad?.meshes ?? [] : [];
+    const [hit] = orbRay.intersectObjects([...(W.orb ? [W.orb.mesh] : []), ...(W.square?.adMeshes ?? []), ...signs]);
+    if (hit) signs.includes(hit.object) ? showPad(true) : showAd();
   }
   tap = null;
 });
@@ -726,6 +738,10 @@ function interact() {
   const who = life.nearest(me, 2.4, bodyY);
   if (!who && W.orb && arc(me, W.orb.d) < W.orb.reach) {
     showAd();
+    return;
+  }
+  if (!who && launchpad && W.square?.pad && arc(me, W.square.pad.d) < W.square.pad.reach) {
+    showPad(true);
     return;
   }
   if (!who) {
@@ -1273,6 +1289,7 @@ function frame() {
     }
     compass(p);
     placeTitle(p, dt);
+    padHint(p);
 
     let f;
     if (photo) f = photoCam();
@@ -1386,7 +1403,27 @@ function toast(msg, kind = "ok") {
   return el;
 }
 
-let office = null;
+let office = null, launchpad = null;
+/// The post office panel and the Launchpad share the right-hand side: opening one closes the other.
+function showOffice(on) {
+  if (on) launchpad?.show(false);
+  office?.show(on);
+}
+function showPad(on) {
+  if (on) office?.show(false);
+  launchpad?.show(on);
+}
+/// Near the Launchpad's door, once per visit: how to walk in.
+let padHinted = false;
+function padHint(p) {
+  const door = launchpad && W.square?.pad;
+  if (!door) return;
+  const d = arc(p, door.d);
+  if (!padHinted && d < door.reach + 0.6) {
+    padHinted = true;
+    toast(`🚀 The Launchpad: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to walk in and launch your own token`);
+  } else if (padHinted && d > door.reach + 6) padHinted = false;
+}
 const chainReady = connectChain()
   .then(async (chain) => {
     if (!chain) return null;
@@ -1434,7 +1471,23 @@ const chainReady = connectChain()
         playAs(c, chain.account);
         toast(`Now playing as ${c.name}, ${c.ride.name.toLowerCase()}`);
       },
+      onLaunchpad: chain.pad ? () => showPad(true) : null,
     });
+    if (chain.pad) {
+      launchpad = createPad(chain, {
+        toast,
+        snap: () => office.snap,
+        onLogin: () => chain.login().then(() => office.refresh(), (e) => toast(explain(e), "error")),
+        openOffice: () => showOffice(true),
+        imageApi: MP_HTTP,
+        // Pictures are hosted by the multiplayer server (here, or the live one for tokens launched there).
+        imageHosts: [...new Set([`${MP_HTTP}/pad/image/`, "https://courier-world-mp.courier-world-mp.workers.dev/pad/image/"])],
+        onTokens: (list) => W.square?.showLaunches(list),
+      });
+      if (!matchMedia("(pointer: coarse)").matches) $("help").textContent = $("help").textContent.replace(" · drag to look", " · L for the Launchpad · drag to look");
+      const linked = new URLSearchParams(location.search).get("token");
+      if (linked) setTimeout(() => launchpad.showToken(linked), 4000);
+    }
     refreshBoard(chain);
     setInterval(() => refreshBoard(chain), 20_000);
     return chain;
@@ -1443,7 +1496,7 @@ const chainReady = connectChain()
     console.error(e);
     return null;
   });
-$("officeBtn").addEventListener("click", () => office?.show($("office").hidden));
+$("officeBtn").addEventListener("click", () => showOffice($("office").hidden));
 $("officeClose").addEventListener("click", () => office?.show(false));
 
 hud();

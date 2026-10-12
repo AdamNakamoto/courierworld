@@ -66,7 +66,8 @@ contract DeployCourierPad is Script {
         console2.log("  $STAMP per launch", stampFee / 1e18);
         console2.log("  start market cap (IMD wei)", startMcap);
 
-        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663) return pad;
+        // (dev.sh sets DEV_CHAIN: an Anvil fork of Robinhood Chain has its chain ID too, and must not touch the real record.)
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return pad;
         string memory json = "pad";
         vm.serializeUint(json, "chainId", block.chainid);
         vm.serializeUint(json, "block", block.number);

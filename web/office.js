@@ -34,7 +34,8 @@ const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + 
 /// `hunt`: the golden stamp hunt's side in the game ({ state(), signIn(), voucher() }), when it's running.
 /// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
 /// `wearing()` is the id of the skin you have on, if any. `username`: your name on the planet (username.js).
-export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null }) {
+/// `onLaunchpad()` opens the Launchpad (when it's deployed).
+export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null, onLaunchpad = null }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
@@ -138,6 +139,10 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       }
     }
     html += `</div>`;
+    if (onLaunchpad && s.game) {
+      html += `<section class="padlink"><button class="pbtn wide" data-act="launchpad">🚀 Launchpad: launch your own token</button>
+        <p class="note">Any post office owner can launch one, in Times Square. Burns $STAMP; 5% of each launch goes to drops for post offices.</p></section>`;
+    }
     if (naming && s.account && username) {
       const mine = username.mine;
       html += `<section class="pickname"><h3>${mine ? "Change your name" : "Pick a name"}</h3>
@@ -541,6 +546,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
           skinSecret = "";
         });
       }
+      case "launchpad": return onLaunchpad?.();
       case "fund": return run("Adding 10 play ETH", () => chain.devFund());
       case "gift": return run("Handing you 3 couriers", () => chain.devCouriers(3));
       case "warp": return run(`Skipping ${duration(Number(b.dataset.s))}`, () => chain.devWarp(Number(b.dataset.s)));

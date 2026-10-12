@@ -2,7 +2,7 @@
 // Uses web/chain.json from ./dev.sh when present, otherwise the mainnet deployment.
 import {
   createPublicClient, createWalletClient, createTestClient, http, custom, defineChain,
-  maxUint256, zeroAddress, keccak256, encodeAbiParameters, parseSignature, decodeErrorResult, parseAbi, parseAbiItem, parseEther,
+  maxUint256, zeroAddress, keccak256, encodeAbiParameters, parseSignature, decodeErrorResult, parseAbi, parseAbiItem, parseEther, parseEventLogs,
   BaseError, ContractFunctionRevertedError,
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
@@ -31,7 +31,11 @@ const ERROR_TEXT = {
   BadQuantity: "Mint between 1 and 10 at a time.",
   NotRevealed: "Still sealed. Wait for the reveal.",
   CourierOnDuty: "Take the courier off duty before trading it.",
-  ERC20InsufficientBalance: "Not enough $STAMP.",
+  ERC20InsufficientBalance: "Not enough tokens for that.",
+  // The launchpad (CourierPad)
+  NoPostOffice: "Open a post office first: only post office owners can launch.",
+  FeeChanged: "The launch fee just went up. Check the new fee and try again.",
+  BadMetadata: "Check the name (up to 32 characters), symbol (up to 12) and description.",
   Slippage: "The price moved past your slippage limit. Try again, or allow more slippage.",
   Expired: "The trade took too long and expired. Try again.",
   PartialFill: "The pool can't fill that much right now. Try a smaller amount.",
@@ -111,7 +115,8 @@ export async function connectChain() {
   const game = !!dep.contracts.office;
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
-    ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []), ...V4_ABI,
+    ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []),
+    ...(dep.abis.pad ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -133,6 +138,13 @@ export async function connectChain() {
     quoter: { address: dep.contracts.quoter, abi: QUOTER_ABI },
     pm: { address: dep.contracts.poolManager, abi: V4_ABI },
     ethUsd: { address: dep.contracts.ethUsd, abi: FEED_ABI },
+  } : null;
+  // The launchpad: players' tokens, each in its own pool against IMD, traded through the pad's own routers.
+  const P = T && dep.contracts.pad ? {
+    pad: { address: dep.contracts.pad, abi: withErrors(dep.abis.pad) },
+    router: { address: dep.contracts.padRouter, abi: withErrors(dep.abis.router) },
+    ethRouter: { address: dep.contracts.padEthRouter, abi: withErrors(dep.abis.ethRouter) },
+    tokenAbi: withErrors(dep.abis.padToken),
   } : null;
 
   // Players log in with a browser wallet on mainnet, and on a dev chain started with ./dev.sh --wallet.
@@ -243,51 +255,60 @@ export async function connectChain() {
     const hash = await client.writeContract({ ...c, functionName: fn, args, value, account: from, chain });
     const receipt = await pub.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error(`${fn} reverted`);
+    return receipt;
   }
   async function ensureAllowance(s, amount) {
     if (amount > 0n && s.allowance < amount) await send(C.stamp, "approve", [C.office.address, maxUint256]);
   }
 
   // ---------------------------------------------------------------- trading
-  let poolKeys = null;
-  async function keys() {
-    if (!poolKeys) {
-      const [stampKey, imdEth] = await Promise.all([read(T.hook, "poolKey", [C.stamp.address]), read(T.ethRouter, "imdEthKey")]);
-      poolKeys = { stamp: stampKey, imdEth };
-    }
-    return poolKeys;
+  // A venue is a token with the hook that holds its pool and that hook's routers: $STAMP's, or the launchpad's
+  // for a player's token. Both hooks have the same interface, so quoting and trading are the same.
+  const STAMP_VENUE = T ? { hook: T.hook, router: T.router, ethRouter: T.ethRouter, token: C.stamp } : null;
+  const padVenue = (address) => ({ hook: P.pad, router: P.router, ethRouter: P.ethRouter, token: { address, abi: P.tokenAbi } });
+  const poolKeys = new Map(); // token -> its pool key
+  let imdEthKey = null;
+  async function keys(v) {
+    const t = v.token.address.toLowerCase();
+    if (!poolKeys.has(t)) poolKeys.set(t, await read(v.hook, "poolKey", [v.token.address]));
+    imdEthKey ??= await read(T.ethRouter, "imdEthKey");
+    return { pool: poolKeys.get(t), imdEth: imdEthKey };
   }
   const same = (a, b) => a.toLowerCase() === b.toLowerCase();
 
-  /// $STAMP out for a buy (`amountIn` ETH or IMD), or ETH/IMD out for a sell (`amountIn` $STAMP), after every fee.
-  async function quote(side, asset, amountIn) {
-    const k = await keys(), S = C.stamp.address, I = T.imd.address;
+  /// Tokens out for a buy (`amountIn` ETH or IMD), or ETH/IMD out for a sell (`amountIn` tokens), after every fee.
+  async function quote(side, asset, amountIn, v = STAMP_VENUE) {
+    const k = await keys(v), S = v.token.address, I = T.imd.address;
     if (asset === "IMD") {
-      const zeroForOne = same(k.stamp.currency0, side === "buy" ? I : S);
-      const [out] = await read(T.quoter, "quoteExactInputSingle", [{ poolKey: k.stamp, zeroForOne, exactAmount: amountIn, hookData: "0x" }]);
+      const zeroForOne = same(k.pool.currency0, side === "buy" ? I : S);
+      const [out] = await read(T.quoter, "quoteExactInputSingle", [{ poolKey: k.pool, zeroForOne, exactAmount: amountIn, hookData: "0x" }]);
       return out;
     }
     const hop = (to, key) => ({ intermediateCurrency: to, fee: key.fee, tickSpacing: key.tickSpacing, hooks: key.hooks, hookData: "0x" });
-    const path = side === "buy" ? [hop(I, k.imdEth), hop(S, k.stamp)] : [hop(I, k.stamp), hop(zeroAddress, k.imdEth)];
+    const path = side === "buy" ? [hop(I, k.imdEth), hop(S, k.pool)] : [hop(I, k.pool), hop(zeroAddress, k.imdEth)];
     const [out] = await read(T.quoter, "quoteExactInput", [{ exactCurrency: side === "buy" ? zeroAddress : S, path, exactAmount: amountIn }]);
     return out;
   }
 
-  /// $STAMP's pool price, and USD through the IMD/ETH pool and Chainlink ETH/USD.
-  async function market() {
-    const k = await keys();
+  /// IMD's price in USD, through the IMD/ETH pool and Chainlink ETH/USD.
+  async function imdUsd() {
+    imdEthKey ??= await read(T.ethRouter, "imdEthKey");
+    const k = imdEthKey;
     const id = keccak256(encodeAbiParameters(
       [{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }],
-      [k.imdEth.currency0, k.imdEth.currency1, k.imdEth.fee, k.imdEth.tickSpacing, k.imdEth.hooks],
+      [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks],
     ));
     const slot = keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [id, 6n])); // PoolManager pools mapping
-    const [price, slot0, round] = await Promise.all([
-      read(T.hook, "price", [C.stamp.address]), read(T.pm, "extsload", [slot]), read(T.ethUsd, "latestRoundData"),
-    ]);
+    const [slot0, round] = await Promise.all([read(T.pm, "extsload", [slot]), read(T.ethUsd, "latestRoundData")]);
     const sqrtP = Number(BigInt(slot0) & ((1n << 160n) - 1n)) / 2 ** 96;
-    const imdUsd = Number(round[1]) / 1e8 / (sqrtP * sqrtP); // ETH is currency0: price = IMD per ETH
+    return Number(round[1]) / 1e8 / (sqrtP * sqrtP); // ETH is currency0: price = IMD per ETH
+  }
+
+  /// A token's pool price, and in USD.
+  async function market(v = STAMP_VENUE) {
+    const [price, usd] = await Promise.all([read(v.hook, "price", [v.token.address]), imdUsd()]);
     const stampImd = Number(price) / 1e18;
-    return { stampImd, imdUsd, stampUsd: stampImd * imdUsd };
+    return { stampImd, imdUsd: usd, stampUsd: stampImd * usd };
   }
 
   // ---------------------------------------------------------------- the leaderboard
@@ -396,8 +417,8 @@ export async function connectChain() {
     };
   }
 
-  async function signPermit(spender, value, deadline) {
-    const [nonce, domain] = await Promise.all([read(C.stamp, "nonces", [account]), read(C.stamp, "eip712Domain")]);
+  async function signPermit(spender, value, deadline, token = C.stamp) {
+    const [nonce, domain] = await Promise.all([read(token, "nonces", [account]), read(token, "eip712Domain")]);
     const signature = await wallet.signTypedData({
       account,
       domain: { name: domain[1], version: domain[2], chainId: Number(domain[3]), verifyingContract: domain[4] },
@@ -415,33 +436,97 @@ export async function connectChain() {
   }
   const rejected = (e) => e?.code === 4001 || /reject|denied/i.test(e?.shortMessage ?? e?.message ?? "");
 
-  async function trade({ side, asset, amountIn, minOut }) {
-    const S = C.stamp.address;
+  async function trade({ side, asset, amountIn, minOut }, v = STAMP_VENUE) {
+    const S = v.token.address;
     const deadline = (await pub.getBlock()).timestamp + 600n;
-    if (side === "buy" && asset === "ETH") return send(T.ethRouter, "buyWithEth", [S, minOut, deadline], amountIn);
+    if (side === "buy" && asset === "ETH") return send(v.ethRouter, "buyWithEth", [S, minOut, deadline], amountIn);
     if (side === "buy") {
-      if ((await read(T.imd, "allowance", [account, T.router.address])) < amountIn) {
-        await send(T.imd, "approve", [T.router.address, amountIn]);
+      if ((await read(T.imd, "allowance", [account, v.router.address])) < amountIn) {
+        await send(T.imd, "approve", [v.router.address, amountIn]);
       }
-      return send(T.router, "buy", [S, amountIn, minOut, deadline]);
+      return send(v.router, "buy", [S, amountIn, minOut, deadline]);
     }
     const [r, plain, withPermit] = asset === "ETH"
-      ? [T.ethRouter, "sellForEth", "sellForEthWithPermit"]
-      : [T.router, "sell", "sellWithPermit"];
-    if ((await read(C.stamp, "allowance", [account, r.address])) >= amountIn) {
+      ? [v.ethRouter, "sellForEth", "sellForEthWithPermit"]
+      : [v.router, "sell", "sellWithPermit"];
+    if ((await read(v.token, "allowance", [account, r.address])) >= amountIn) {
       return send(r, plain, [S, amountIn, minOut, deadline]);
     }
     // One signature instead of an approval transaction; wallets that can't sign typed data approve instead.
     let sig = null;
     try {
-      sig = await signPermit(r.address, amountIn, deadline);
+      sig = await signPermit(r.address, amountIn, deadline, v.token);
     } catch (e) {
       if (rejected(e)) throw e;
     }
     if (sig) return send(r, withPermit, [S, amountIn, minOut, deadline, sig.v, sig.r, sig.s]);
-    await send(C.stamp, "approve", [r.address, amountIn]);
+    await send(v.token, "approve", [r.address, amountIn]);
     return send(r, plain, [S, amountIn, minOut, deadline]);
   }
+
+  // ---------------------------------------------------------------- the launchpad
+  // Players with a post office launch their own tokens (CourierPad): 1B supply, 95% locked in a pool against
+  // IMD, 5% to the treasury for drops. Token details that never change are read once and kept.
+  const padStatic = new Map(); // token (lower case) -> { address, name, symbol, metadata, creator, createdAt }
+  const pad = P ? {
+    address: P.pad.address,
+    async info() {
+      const [stampFee, startTick, count, owner] = await Promise.all([
+        read(P.pad, "stampFee"), read(P.pad, "startTick"), read(P.pad, "tokenCount"), read(P.pad, "owner"),
+      ]);
+      return { stampFee, startTick: Number(startTick), count: Number(count), owner, isOwner: !!account && same(owner, account) };
+    },
+    /// Every token launched, oldest first: [{ address, name, symbol, metadata, creator, createdAt }].
+    async tokens(count) {
+      const known = [...padStatic.values()];
+      if (known.length >= count) return known;
+      const fresh = await Promise.all(Array.from({ length: count - known.length }, (_, i) => read(P.pad, "allTokens", [BigInt(known.length + i)])));
+      const details = await Promise.all(fresh.map(async (address) => {
+        const t = { address, abi: P.tokenAbi };
+        const [name, symbol, metadata, creator, launch] = await Promise.all([
+          read(t, "name"), read(t, "symbol"), read(t, "metadata"), read(t, "creator"), read(P.pad, "launches", [address]),
+        ]);
+        return { address, name, symbol, metadata, creator, createdAt: Number(launch[2]) };
+      }));
+      for (const d of details) padStatic.set(d.address.toLowerCase(), d);
+      return [...padStatic.values()];
+    },
+    /// Market caps (IMD wei) of `addresses`, at their pools' current prices.
+    marketCaps: (addresses) => Promise.all(addresses.map((a) => read(P.pad, "marketCap", [a]))),
+    imdUsd,
+    balanceOf: (token) => (account ? read({ address: token, abi: P.tokenAbi }, "balanceOf", [account]) : 0n),
+    quote: (token, side, asset, amountIn) => quote(side, asset, amountIn, padVenue(token)),
+    market: (token) => market(padVenue(token)),
+    trade: (token, args) => trade(args, padVenue(token)),
+    /// Launch a token, burning the $STAMP fee (one permit signature, or an approval); resolves to its address.
+    async launch({ name, symbol, metadata }) {
+      const fee = await read(P.pad, "stampFee");
+      let receipt;
+      if (fee === 0n || (await read(C.stamp, "allowance", [account, P.pad.address])) >= fee) {
+        receipt = await send(P.pad, "launch", [name, symbol, metadata, fee]);
+      } else {
+        const deadline = (await pub.getBlock()).timestamp + 600n;
+        let sig = null;
+        try {
+          sig = await signPermit(P.pad.address, fee, deadline);
+        } catch (e) {
+          if (rejected(e)) throw e;
+        }
+        if (sig) receipt = await send(P.pad, "launchWithPermit", [name, symbol, metadata, fee, deadline, sig.v, sig.r, sig.s]);
+        else {
+          await send(C.stamp, "approve", [P.pad.address, fee]);
+          receipt = await send(P.pad, "launch", [name, symbol, metadata, fee]);
+        }
+      }
+      const [ev] = parseEventLogs({ abi: P.pad.abi, logs: receipt.logs, eventName: "TokenLaunched" });
+      return ev.args.token;
+    },
+    /// The owner: the $STAMP fee per launch, and the start tick (price) of future launches.
+    admin: {
+      setStampFee: (wei) => send(P.pad, "setStampFee", [wei]),
+      setStartTick: (tick) => send(P.pad, "setStartTick", [tick]),
+    },
+  } : null;
 
   // ---------------------------------------------------------------- the golden stamp hunt
   // The StampHunt contract pays $STAMP, from a pool its owner fills, for golden stamps the multiplayer
@@ -557,6 +642,7 @@ export async function connectChain() {
     },
     claim: () => send(C.office, "claim"),
     trade: T ? { quote, market, execute: trade } : null,
+    pad,
     leaderboard,
     admin: T ? {
       isAdmin,

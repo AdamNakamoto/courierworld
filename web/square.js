@@ -6,7 +6,9 @@
 // and residents stay, under a tower, and the golden stamps and the players' lots are kept clear.
 //
 // The screens show posters for the game and for shows that only play on this planet; a few show the ad
-// that's on the Orb (orb.json) at the time. None of them name a real brand.
+// that's on the Orb (orb.json) at the time. None of them name a real brand. One poster shows the newest
+// tokens players launched in the Launchpad, on the corner tower's ground floor (pad.js), and the ticker
+// carries the biggest ones; tokens on the game's hide list never show.
 import * as THREE from "https://esm.sh/three@0.160.0";
 
 export const SQUARE_R = 13; // metres from the crossing that the square covers
@@ -261,6 +263,46 @@ const POSTERS = [
     say(g, "DELIVERING HAPPINESS", w / 2, h * (wide ? 0.82 : 0.62), w * 0.86, h * (wide ? 0.11 : 0.055), bungee, "#283033");
     if (!wide) envelope(g, w / 2, h * 0.8, w * 0.48, w * 0.3, "#fbf8ef", "#283033");
   },
+  // The newest tokens from the Launchpad (img.launches, from showLaunches), or an invitation to launch one.
+  function launchpad(g, w, h, wide, img) {
+    gradient(g, w, h, "#1b1046", "#3a1c8c");
+    for (let i = 0; i < 12; i++) star(g, ((i * 67 + 11) % 100) / 100 * w, ((i * 37 + 5) % 100) / 100 * h, Math.min(w, h) * 0.012, "#ffffff");
+    const list = img.launches ?? [];
+    if (!list.length) {
+      say(g, "LAUNCHPAD", w / 2, h * (wide ? 0.34 : 0.36), w * 0.9, h * (wide ? 0.24 : 0.12), bungee, "#ffd23f");
+      say(g, "LAUNCH YOUR OWN TOKEN", w / 2, h * (wide ? 0.58 : 0.5), w * 0.88, h * (wide ? 0.11 : 0.055), hand, "#ffffff");
+      say(g, img.padOpen ? "RIGHT HERE IN TIMES SQUARE" : "COMING SOON TO TIMES SQUARE", w / 2, h * (wide ? 0.76 : 0.6), w * 0.84, h * (wide ? 0.08 : 0.04), bungee, "#7ef0ff");
+      return;
+    }
+    say(g, "JUST LAUNCHED", w / 2, h * (wide ? 0.13 : 0.08), w * 0.86, h * (wide ? 0.13 : 0.06), bungee, "#ffd23f");
+    const n = Math.min(3, list.length);
+    for (let i = 0; i < n; i++) {
+      const t = list[i];
+      // Side by side on a wide screen; down a tall one, spread over its height however many there are.
+      const cx = wide ? w * ((i + 0.5) / n) : w / 2, cy = wide ? h * 0.48 : h * (0.13 + ((i + 0.5) * 0.74) / n) - h * 0.03;
+      const r = wide ? Math.min(h * 0.2, (w / n) * 0.28) : Math.min(w * 0.3, h * (0.075 + (3 - n) * 0.02));
+      g.save();
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.closePath();
+      g.fillStyle = `hsl(${parseInt(t.address.slice(2, 6), 16) % 360} 55% 52%)`;
+      g.fill();
+      if (t.pic) {
+        g.clip();
+        g.drawImage(t.pic, cx - r, cy - r, r * 2, r * 2);
+      } else say(g, t.symbol.slice(0, 3), cx, cy, r * 1.6, r * 0.8, bungee, "#ffffff");
+      g.restore();
+      g.lineWidth = Math.max(2, r * 0.08);
+      g.strokeStyle = "#ffffff";
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.stroke();
+      const tw = wide ? w / n * 0.92 : w * 0.9;
+      say(g, `$${t.symbol}`, cx, cy + r + h * (wide ? 0.09 : 0.03), tw, h * (wide ? 0.1 : 0.04), bungee, "#ffffff");
+      if (t.mcap) say(g, t.mcap, cx, cy + r + h * (wide ? 0.19 : 0.065), tw, h * (wide ? 0.08 : 0.032), hand, "#7ef0ff");
+    }
+    if (!wide) say(g, "LAUNCHPAD · TIMES SQUARE", w / 2, h * 0.95, w * 0.9, h * 0.035, bungee, "#ffd23f");
+  },
   function gm(g, w, h, wide) {
     gradient(g, w, h, "#ffcf6b", "#ff6f91");
     g.fillStyle = "rgba(255,255,255,0.35)";
@@ -327,7 +369,7 @@ export function createSquare(k) {
   const img = {};
   const L = POSTERS.map((p) => canvasTexture(512, 256, (g, w, h) => p(g, w, h, true, img)));
   const P = POSTERS.map((p) => canvasTexture(256, 512, (g, w, h) => p(g, w, h, false, img)));
-  const repaint = () => [...L, ...P, ticker, year, busSign, ad].forEach((t) => t.paint());
+  const repaint = () => [...L, ...P, ticker, year, busSign, ad, padSign].forEach((t) => t.paint());
   document.fonts?.ready.then(repaint);
   for (const [key, src] of [["banner", "skins/banner.png"], ["collection", "skins/collection.png"]]) {
     const im = new Image();
@@ -340,17 +382,25 @@ export function createSquare(k) {
     im.src = src;
   }
   const TICKER = " ★ COURIER WORLD ★ DELIVERING HAPPINESS ★ $STAMP ★ GM COURIERS ★ POST OFFICES OPEN 24/7 ★ FIND THE GOLDEN STAMPS ★ PICK YOUR NAME AT THE POST OFFICE";
+  let tickerTokens = ""; // once the Launchpad is open: an invitation, and its biggest tokens (from showLaunches)
   // The ticker's line fills its texture exactly, so it runs round without a seam.
   const ticker = canvasTexture(4096, 64, (g, w, h) => {
+    const line = TICKER + tickerTokens;
     fill(g, w, h, "#120d05");
     g.font = bungee(40);
-    const s = Math.ceil((40 * w) / g.measureText(TICKER).width) + 1;
+    const s = Math.ceil((40 * w) / g.measureText(line).width) + 1;
     g.font = bungee(Math.min(48, s));
     g.fillStyle = "#ffb000";
     g.textBaseline = "middle";
     g.textAlign = "left";
-    g.fillText(TICKER, 0, h / 2 + 2, w);
+    g.fillText(line, 0, h / 2 + 2, w);
   }, true);
+  // The Launchpad's sign, over the corner tower's door.
+  const padSign = canvasTexture(512, 128, (g, w, h) => {
+    gradient(g, w, h, "#2a1466", "#5b2bd1", true);
+    say(g, "🚀 LAUNCHPAD", w / 2, h * 0.42, w * 0.92, h * 0.5, bungee, "#ffd23f");
+    say(g, img.padOpen ? "LAUNCH YOUR TOKEN · WALK IN" : "COMING SOON", w / 2, h * 0.8, w * 0.86, h * 0.17, bungee, "#ffffff");
+  });
   const year = canvasTexture(256, 128, (g, w, h) => {
     fill(g, w, h, "#0d0d10");
     say(g, "2026", w / 2, h * 0.55, w * 0.9, h * 0.8, bungee, "#ff3b3b");
@@ -394,7 +444,7 @@ export function createSquare(k) {
   let nextL = 0, nextP = 0;
   /// A screen on a building at `dir` turned by `spin`: centred at local (x, y, z), w by h, facing local
   /// +z turned by ry. cls: "L" landscape poster, "P" portrait poster, "A" the Orb's ad, "T" ticker,
-  /// "Y" the year, "B" the bus's sign.
+  /// "Y" the year, "B" the bus's sign, "D" the Launchpad's sign.
   function screen(dir, spin, s) {
     const q = frameAt(dir, spin), o = dir.clone().multiplyScalar(R);
     const rot = new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), s.ry);
@@ -435,6 +485,9 @@ export function createSquare(k) {
       for (let i = 0; i < 4; i++) box(g, 0.05, 0.3, 0.22, pick(r, [0xe46f5f, 0x5d8fd1, 0xf2c94c, 0x7cc2b5]), w / 2 + 1.12, 0.6 + (i % 2) * 0.4, d / 2 - 1.3 + (i >> 1) * 0.5);
     }
     if (iconic) {
+      // Its ground floor is the Launchpad: a lit sign over the door.
+      box(g, 2.2, 0.62, 0.1, 0x16181d, rec.doorX, 2.12, front + 0.11);
+      screens.push({ x: rec.doorX, y: 2.12, z: front + 0.17, w: 2.04, h: 0.51, ry: 0, cls: "D" });
       // The tower on the corner: narrow, stacked with screens, a ticker round its podium and a lit ball on top.
       const bw = Math.min(w, 4.4) * 0.86, bd = Math.min(d, 4.0) * 0.86, H = 16;
       box(g, bw, H - 2.6, bd, 0x3b404c, 0, 2.6 + (H - 2.6) / 2, -front + bd / 2);
@@ -456,7 +509,7 @@ export function createSquare(k) {
       part(g, new THREE.CylinderGeometry(0.07, 0.07, 2.4, 6), 0x9aa0aa, 0, H + 1.2, fz - bd / 2);
       glow(g, new THREE.IcosahedronGeometry(0.62, 1), 0xfff3c4, 0, H + 2.6, fz - bd / 2);
       for (let i = 0; i < 4; i++) part(g, new THREE.TorusGeometry(0.66, 0.025, 4, 18), 0xd8c27a, 0, H + 2.6, fz - bd / 2, 0, (i * Math.PI) / 4, 0);
-      return { g, screens, h: H + 3.3 };
+      return { g, screens, h: H + 3.3, door: { x: rec.doorX, z: front + 1.1 } };
     }
     const floors = 6 + Math.floor(r() * 5), fh = 1.25, H = 2.7 + floors * fh;
     const glassy = r() < 0.55;
@@ -503,6 +556,7 @@ export function createSquare(k) {
 
   /// Build a tower on every building the square left out (after the streets are laid out). The one
   /// nearest the crossing is the corner tower; the biggest other screen shows the Orb's ad too.
+  let padDoor = null; // where you stand to walk into the Launchpad
   function raise() {
     if (!recs.length) return;
     const near = recs.reduce((a, b) => (arc(a.dir, centre) <= arc(b.dir, centre) ? a : b));
@@ -519,6 +573,7 @@ export function createSquare(k) {
       }
       bake(t.g, rec.dir, rec.spin);
       for (const s of t.screens) screen(rec.dir, rec.spin, s);
+      if (t.door) padDoor = V(t.door.x, 0, t.door.z).applyQuaternion(q).add(rec.dir.clone().multiplyScalar(R)).normalize();
       // Taller now: the camera keeps clear of all of it.
       if (rec.obstacle?.wall) rec.obstacle.wall.h = t.h;
     }
@@ -685,10 +740,11 @@ export function createSquare(k) {
       if (key === "T") return ticker.tex;
       if (key === "Y") return year.tex;
       if (key === "B") return busSign.tex;
+      if (key === "D") return padSign.tex;
       const n = Number(key.slice(1));
       return (key[0] === "L" ? L : P)[(n * 3) % POSTERS.length].tex;
     };
-    const adMeshes = [];
+    const adMeshes = [], padMeshes = [];
     for (const [key, c] of channels) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(c.pos, 3));
@@ -702,6 +758,7 @@ export function createSquare(k) {
       const mesh = new THREE.Mesh(geo, mat);
       world.add(mesh);
       if (key === "A") adMeshes.push(mesh);
+      if (key === "D") padMeshes.push(mesh);
     }
     // Posters take turns, each channel a little after the last, so the square never changes all at once.
     const showing = new Map();
@@ -718,8 +775,45 @@ export function createSquare(k) {
       }
     });
 
+    const pictures = new Map(); // picture URL -> Image, once loaded
+    const at = POSTERS.findIndex((p) => p.name === "launchpad");
+    let launchKey = "";
+    const usd = (n) => (Number.isFinite(n) && n > 0 ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(n) : "");
+    function paintLaunches(list) {
+      img.launches = list.slice(0, 3).map((t) => ({ address: t.address, symbol: t.symbol, mcap: usd(t.mcapUsd), pic: pictures.get(t.meta?.image) ?? null }));
+      const top = list.filter((t) => Number.isFinite(t.mcapUsd) && t.mcapUsd > 0).sort((a, b) => b.mcapUsd - a.mcapUsd).slice(0, 5);
+      tickerTokens = " ★ LAUNCH YOUR TOKEN AT THE LAUNCHPAD" + top.map((t) => ` ★ $${t.symbol} ${usd(t.mcapUsd)}`).join("");
+      L[at].paint();
+      P[at].paint();
+      ticker.paint();
+      padSign.paint();
+    }
+
     return {
       key: "square", name: "Times Square", d: centre, r: SQUARE_R, adMeshes,
+      /// The Launchpad's door (stand within `reach` and press E) and its sign (tap it).
+      pad: padDoor ? { d: padDoor, reach: 2.6, meshes: padMeshes } : null,
+      /// The tokens the Launchpad shows, newest first (pad.js onTokens): the newest on a poster, the biggest on the
+      /// ticker. Until the first call (no launchpad deployed yet) the sign and the poster say it's coming soon.
+      showLaunches(list) {
+        const key = "open:" + list.slice(0, 8).map((t) => `${t.address}:${Math.round(t.mcapUsd || 0)}`).join(",");
+        if (key === launchKey) return;
+        img.padOpen = true;
+        launchKey = key;
+        for (const t of list.slice(0, 3)) {
+          const url = t.meta?.image;
+          if (!url || pictures.has(url)) continue;
+          const im = new Image();
+          im.crossOrigin = "anonymous";
+          im.onload = () => {
+            pictures.set(url, im);
+            paintLaunches(list);
+          };
+          im.src = url;
+          pictures.set(url, null);
+        }
+        paintLaunches(list);
+      },
       /// Show the Orb's ad (from orb.js: the ad and its loaded picture) on the square's ad screens.
       showAd(a, picture) {
         [shownAd, adPicture] = [a, picture ?? null];

@@ -175,6 +175,19 @@ they'll pay) and creates a `PadToken`: 1,000,000,000 supply, plain ERC-20 with p
 
 Learned from PepesFamily (fixed-supply v4 launches, locked liquidity, hook fees), without its holder rewards.
 
+In the game (`web/pad.js`): the Launchpad is the ground floor of Times Square's corner tower (its sign says
+"coming soon" until the pad is deployed). Walk up and press E, tap the sign, press L, or use the button in
+the Post Office panel. It lists every token (newest or biggest), shows each with its own trade box (ETH or
+IMD, the same as $STAMP's), and has the launch form: name, symbol, picture, description and links, then one
+permit signature for the fee. A "Just launched" poster and the ticker in the square show the newest and
+biggest tokens.
+
+- Pictures are shrunk to 512 px in the browser and kept by the multiplayer server (`/pad/image`, its own
+  Durable Object, by SHA-256): only a wallet with a post office can upload, signing for the picture, 12 a day.
+- `web/pad-rules.js` (shared with the server): the form refuses the game's own names ($STAMP, IMD, Courier
+  World...) and blocked words, and the game hides any token that breaks those rules. To take one off the
+  game by hand, add its address to `web/pad-hidden.json` and push; it still trades on-chain.
+
 ```bash
 cd contracts
 ./script/deploy-pad.sh --sender 0x7221…                                   # dry run on a fork

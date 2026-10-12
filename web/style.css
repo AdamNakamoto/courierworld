@@ -445,3 +445,55 @@ body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card 
 
 /* Courier Skins: the $STAMP button under the ETH one. */
 .skins .stamp-mint { margin-top: 6px; background: #f2c94c; }
+
+/* ---------------------------------------------------------------- the launchpad (pad.js) */
+
+#padBody { padding: 10px 14px 4px; }
+.pad .pad-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pad .pad-top .seg { margin: 0; }
+.pad-search, .pad .field > input, .pad .field > textarea, .pad .admin input {
+  box-sizing: border-box; width: 100%; border: 2px solid var(--ink); border-radius: 3px; padding: 7px 9px;
+  font: 17px "Patrick Hand", sans-serif; color: var(--ink); background: #fff; outline: none;
+}
+.pad .field > textarea { resize: vertical; min-height: 54px; }
+.pad-search { margin: 10px 0 8px; }
+.pad-list { display: grid; gap: 6px; }
+.pad-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: #fff; color: var(--ink);
+  border: 2px solid var(--ink); border-radius: 3px; padding: 6px 8px; cursor: pointer; font: inherit;
+}
+.pad-row:hover { background: #fff6d6; }
+.pad-name { flex: 1; min-width: 0; display: grid; }
+.pad-name b, .pad-name .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pad-name b { font: 400 14px/1.25 Bungee, Impact, sans-serif; }
+.pad .pad-name .muted { font-size: 14px; }
+.pad-mc { font: 400 13px/1 Bungee, Impact, sans-serif; white-space: nowrap; }
+.pad-img { flex: 0 0 auto; border-radius: 50%; object-fit: cover; border: 2px solid var(--ink); background: #fff; }
+.pad-badge {
+  flex: 0 0 auto; display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--ink);
+  background: #8b8f99; color: #fff; font: 400 12px/1 Bungee, Impact, sans-serif; text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+}
+.pad-head { display: flex; gap: 12px; align-items: center; margin: 10px 0 6px; }
+.pad-head h3 { margin: 0 0 2px; overflow-wrap: anywhere; }
+.pad-head p { margin: 0; }
+.pad-desc { margin: 6px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.25; }
+.pad-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.pad-links .pbtn { font-size: 12px; text-decoration: none; }
+.pad section.trade { padding: 12px 0; margin-top: 10px; border-top: 2px dashed #d8d2c2; border-bottom: 2px dashed #d8d2c2; }
+.pad > #padBody > h3 { margin: 10px 0 4px; }
+.pad-form { display: flex; gap: 12px; align-items: center; }
+.pad-pic {
+  flex: 0 0 92px; height: 92px; border: 2.5px dashed var(--ink); border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  overflow: hidden; background: #fff; font: 400 12px Bungee, Impact, sans-serif; color: var(--muted);
+}
+.pad-pic img { width: 100%; height: 100%; object-fit: cover; }
+.pad-fields { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.pad-form .pad-fields { grid-template-columns: 1fr; }
+.pad .field { margin: 6px 0; }
+.pad-facts { margin: 10px 0 4px; padding-left: 20px; font-size: 16px; line-height: 1.3; color: var(--muted); }
+.pad-facts b { color: var(--ink); }
+.pad .admin { margin-top: 12px; padding: 10px; border: 2px dashed var(--ink); border-radius: 3px; }
+.pad .admin input { flex: 1; width: auto; min-width: 0; }
+.office .padlink { padding: 4px 14px 8px; }
+.office .padlink .pbtn { background: #e7dcff; }
+.office .padlink .note { margin: 2px 0 0; font-size: 15px; }

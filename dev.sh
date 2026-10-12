@@ -60,6 +60,7 @@ cast rpc anvil_mine 2 --rpc-url "$RPC" >/dev/null
 # A throwaway reveal secret for this local chain only. The dev players (accounts 2-9) get couriers.
 export SECRET=$((RANDOM * 32768 + RANDOM))
 export FEE_RECIPIENT=${ACCOUNTS[1]} TREASURY=${ACCOUNTS[1]}
+export DEV_CHAIN=true # the deploy scripts never write contracts/deployments/ from here
 export PLAYERS=$(IFS=,; echo "${ACCOUNTS[*]:2}")
 
 deploy() { # <script> [--sig <fn>]: run a forge script as the deployer (account 0) and keep its output in OUT
@@ -97,6 +98,7 @@ write_dev_vars() {
   {
     [ -n "${HUNT:-}" ] && printf 'HUNT_KEY=%s\nHUNT_ADDRESS=%s\nHUNT_CHAIN_ID=%s\n' "$HUNT_KEY" "$HUNT" "$(cast chain-id --rpc-url "$RPC")"
     [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
+    [ -n "$(addr PostOffice)" ] && printf 'POST_OFFICE=%s\nPAD_RPC=%s\n' "$(addr PostOffice)" "$RPC"
   } > multiplayer/.dev.vars || true
 }
 deploy_hunt
@@ -118,6 +120,16 @@ deploy_skins_stamp() { # the $STAMP sale for the skins, open, with a float for 5
   OUT="$prev"
 }
 deploy_skins_stamp
+
+deploy_pad() { # the launchpad, on a fork only (it needs the real Uniswap v4 PoolManager and IMD)
+  [ "$FORK" = 1 ] && [ -n "$(addr StampToken)" ] || return 0
+  local prev="$OUT"
+  STAMP=$(addr StampToken) POST_OFFICE=$(addr PostOffice) PAD_STAMP_FEE=500000000000000000000 PAD_START_MCAP_USD=5000 \
+    deploy script/DeployCourierPad.s.sol
+  PAD=$(addr CourierPad) PAD_ROUTER=$(addr Router) PAD_ETH_ROUTER=$(addr EthRouter)
+  OUT="$prev"
+}
+deploy_pad
 write_dev_vars
 
 NAME=Anvil
@@ -159,6 +171,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
   if [ -n "${SKINS_STAMP:-}" ]; then
     contracts=$(echo "$contracts" | jq --arg sale "$SKINS_STAMP" '. + {skinsStamp: $sale}')
     abis=$(echo "$abis" | jq --argjson sale "$(abi SkinsStampSale)" '. + {skinsStamp: $sale}')
+  fi
+  if [ -n "${PAD:-}" ]; then
+    contracts=$(echo "$contracts" | jq --arg pad "$PAD" --arg r "$PAD_ROUTER" --arg er "$PAD_ETH_ROUTER" '. + {pad: $pad, padRouter: $r, padEthRouter: $er}')
+    abis=$(echo "$abis" | jq --argjson pad "$(abi CourierPad)" --argjson padToken "$(abi PadToken)" '. + {pad: $pad, padToken: $padToken}')
   fi
   [ "$FORK" = 1 ] && contracts=$(echo "$contracts" | jq '. + {multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11"}')
   jq -n --arg rpc "$RPC" --argjson chainId "$CHAIN_ID" --arg name "$NAME" --arg secret "$SECRET" --arg stage "$stage" \

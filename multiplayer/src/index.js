@@ -15,6 +15,7 @@ import SPOTS from "../../web/hunt-spots.json";
 import { HUNT_STAMPS, huntDay, pickSpots, authMessage } from "../../web/hunt-pick.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
+import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -428,9 +429,104 @@ export class Planet extends DurableObject {
   }
 }
 
+// ---------------------------------------------------------------- launchpad pictures
+// Token pictures for the launchpad, kept in a Durable Object of their own (so the room never waits on them),
+// by the SHA-256 of their bytes. Only a wallet with a post office can upload (it signs for the picture), at
+// most UPLOADS_PER_DAY a day; anyone can fetch one. The game shrinks pictures to 512 px before sending.
+const UPLOADS_PER_DAY = 12;
+const UPLOAD_WINDOW_MS = 10 * 60_000; // how old a signature can be
+const OFFICES_ABI = parseAbi(["function offices(address) view returns (bool, uint8, uint8, uint16, uint64, address, uint256, uint256, uint256)"]);
+const MAGIC = { "image/jpeg": [0xff, 0xd8, 0xff], "image/png": [0x89, 0x50, 0x4e, 0x47], "image/webp": [0x52, 0x49, 0x46, 0x46] };
+const corsJson = (body, status = 200) =>
+  Response.json(body, { status, headers: { "access-control-allow-origin": "*", "cache-control": "no-store" } });
+
+export class Images extends DurableObject {
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (req.method === "GET") {
+      const hash = url.pathname.split("/").pop();
+      const img = /^[0-9a-f]{64}$/.test(hash) ? await this.ctx.storage.get(`img:${hash}`) : null;
+      if (!img) return new Response("Not found", { status: 404 });
+      return new Response(img.data, { headers: { "content-type": img.type } });
+    }
+    // An upload the Worker has checked: count it against the wallet's day, then keep it.
+    const { wallet, hash, type, data } = await req.json();
+    const day = Math.floor(Date.now() / 86_400_000), key = `up:${wallet}:${day}`;
+    const n = (await this.ctx.storage.get(key)) ?? 0;
+    if (!(await this.ctx.storage.get(`img:${hash}`))) {
+      if (n >= UPLOADS_PER_DAY) return corsJson({ error: "That's enough pictures for today. Try again tomorrow." }, 429);
+      await this.ctx.storage.put({ [`img:${hash}`]: { type, data: Uint8Array.from(atob(data), (c) => c.charCodeAt(0)) }, [key]: n + 1 });
+    }
+    return corsJson({ hash });
+  }
+}
+
+async function padImage(req, env, url) {
+  const images = env.IMAGES.get(env.IMAGES.idFromName("images"));
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type" } });
+  }
+  if (req.method === "GET") {
+    const cache = caches.default, hit = await cache.match(req);
+    if (hit) return hit;
+    const r = await images.fetch(new Request(`https://images${url.pathname}`));
+    if (!r.ok) return new Response("Not found", { status: 404, headers: { "access-control-allow-origin": "*" } });
+    const out = new Response(r.body, {
+      headers: { "content-type": r.headers.get("content-type"), "access-control-allow-origin": "*", "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" },
+    });
+    await cache.put(req, out.clone());
+    return out;
+  }
+  if (req.method !== "POST" || url.pathname !== "/pad/image") return new Response("Not found", { status: 404 });
+  if (!ORIGINS.some((re) => re.test(req.headers.get("Origin") || ""))) return corsJson({ error: "Not allowed" }, 403);
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return corsJson({ error: "Send the picture as JSON." }, 400);
+  }
+  const { wallet, time, type, data, signature } = body ?? {};
+  if (!isAddress(wallet ?? "") || !Number.isInteger(time) || typeof data !== "string" || typeof signature !== "string" || !IMAGE_TYPES.includes(type)) {
+    return corsJson({ error: "That upload is missing something." }, 400);
+  }
+  if (Math.abs(Date.now() - time * 1000) > UPLOAD_WINDOW_MS) return corsJson({ error: "That signature has expired. Try again." }, 400);
+  let buf;
+  try {
+    buf = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  } catch {
+    return corsJson({ error: "That file isn't a picture." }, 400);
+  }
+  const magic = MAGIC[type];
+  const isWebp = type !== "image/webp" || String.fromCharCode(...buf.slice(8, 12)) === "WEBP";
+  if (!buf.length || buf.length > IMAGE_MAX_BYTES || !magic.every((b, i) => buf[i] === b) || !isWebp) {
+    return corsJson({ error: "Use a JPG, PNG or WEBP picture under 160 KB." }, 400);
+  }
+  const hash = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", buf)));
+  let ok = false;
+  try {
+    ok = await verifyMessage({ address: wallet, message: imageMessage(wallet, hash, time), signature });
+  } catch {}
+  if (!ok) return corsJson({ error: "That signature didn't check out. Try again." }, 401);
+  // Only players with a post office (the same rule as launching).
+  try {
+    const chain = createPublicClient({ transport: http(env.PAD_RPC ?? env.SKINS_RPC ?? "https://robinhood-rpc.publicnode.com") });
+    const [open] = await chain.readContract({ address: env.POST_OFFICE, abi: OFFICES_ABI, functionName: "offices", args: [getAddress(wallet)] });
+    if (!open) return corsJson({ error: "Open a post office first: only post office owners can launch." }, 403);
+  } catch {
+    return corsJson({ error: "Couldn't check your post office right now. Try again." }, 503);
+  }
+  const r = await images.fetch(new Request("https://images/put", {
+    method: "POST", body: JSON.stringify({ wallet: wallet.toLowerCase(), hash, type, data }),
+  }));
+  const j = await r.json();
+  if (!r.ok) return corsJson(j, r.status);
+  return corsJson({ url: `${url.origin}/pad/image/${hash}` });
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    if (url.pathname.startsWith("/pad/image")) return padImage(req, env, url);
     const room = env.PLANET.get(env.PLANET.idFromName("planet"));
     if (url.pathname === "/count") {
       const r = await room.fetch("https://room/count");
