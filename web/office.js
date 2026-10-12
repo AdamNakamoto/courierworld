@@ -7,7 +7,7 @@ import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
-import { displayName, namesOn } from "./names.js";
+import { displayName } from "./names.js";
 
 const TIER_NAMES = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 const RARITY_INK = { Common: "#5f6b6e", Uncommon: "#5e9f57", Rare: "#3f6fbf", Epic: "#8d5a99", Legendary: "#c9962a" };
@@ -33,8 +33,8 @@ const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + 
 
 /// `hunt`: the golden stamp hunt's side in the game ({ state(), signIn(), voucher() }), when it's running.
 /// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
-/// `wearing()` is the id of the skin you have on, if any. `xname`: names from X (xname.js), when the game has them.
-export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, xname = null }) {
+/// `wearing()` is the id of the skin you have on, if any. `username`: your name on the planet (username.js).
+export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
@@ -43,6 +43,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0, huntAmount = "", huntReward = ""; // the StampHunt contract, read every few seconds
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
+  let naming = false, nameDraft = ""; // picking a name, and what's typed so far
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
   let queue = Promise.resolve(); // stamp renders, one at a time
@@ -120,12 +121,13 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<a class="addr" href="${s.explorer ? `${s.explorer}/address/${s.account}` : "#"}" target="_blank" rel="noopener">${short(s.account)}</a>
         <button class="pbtn" data-act="connect">Switch wallet</button>`;
     }
-    // Names from X: your @handle instead of your wallet address, on the planet.
-    if (s.account && xname && namesOn()) {
-      const mine = xname.mine;
-      html += mine
-        ? `<span class="xname" title="Your name on the planet">@${esc(mine.handle)}</span><button class="pbtn" data-act="xUnlink" ${busy ? "disabled" : ""}>Unlink X</button>`
-        : `<button class="pbtn" data-act="xClaim" ${busy ? "disabled" : ""}>𝕏 Claim your name</button>`;
+    // Your name on the planet, instead of your wallet address.
+    if (s.account && username) {
+      const mine = username.mine, elsewhere = username.elsewhere;
+      if (mine) html += `<span class="pname" title="Your name on the planet">${esc(mine.name)}</span><button class="pbtn" data-act="nameEdit" ${busy ? "disabled" : ""}>Change name</button>`;
+      else if (username.waiting) html += elsewhere ? `<span class="pname" title="Your name on the planet">${esc(elsewhere)}</span>` : ""; // (the room is about to say)
+      else if (elsewhere) html += `<span class="pname" title="Your name on the planet">${esc(elsewhere)}</span><button class="pbtn" data-act="nameUse" ${busy ? "disabled" : ""}>Use it here</button>`;
+      else html += `<button class="pbtn" data-act="nameEdit" ${busy ? "disabled" : ""}>✏️ Pick a name</button>`;
     }
     if (s.account) {
       html += `<span class="bal"><b>${fmt(s.eth, 3)}</b> ETH</span>`;
@@ -135,17 +137,15 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       }
     }
     html += `</div>`;
-    const claim = xname?.pending;
-    if (claim) {
-      const h = esc(claim.handle);
-      html += `<section class="xclaim"><h3>Claim @${h}</h3>
-        <p>Sign with your wallet to show up as <b>@${h}</b> on the planet: on your name tag, in chat, on your post office and on the
-        leaderboard, instead of your wallet address. Anyone will be able to see which wallet @${h} belongs to.</p>
-        ${s.account
-          ? `<button class="pbtn primary wide" data-act="xSign" ${busy ? "disabled" : ""}>Sign & claim @${h}</button>
-             <p class="note">Signing is free and sends no transaction. You'll show as @${h} with ${short(s.account)}.</p>`
-          : `<p class="note">Log in with the wallet you play with first.</p>`}
-        <button class="pbtn wide" data-act="xCancel" ${busy ? "disabled" : ""}>Not now</button></section>`;
+    if (naming && s.account && username) {
+      const mine = username.mine;
+      html += `<section class="pickname"><h3>${mine ? "Change your name" : "Pick a name"}</h3>
+        <div class="namerow"><input id="nameInput" data-act="nameInput" maxlength="15" placeholder="3 to 15 letters, numbers or _" spellcheck="false" autocomplete="off" autocapitalize="off">
+        <button class="pbtn primary" data-act="nameSave" ${busy ? "disabled" : ""}>Save</button></div>
+        <p class="note">Shown instead of your wallet address: on your name tag, in chat, on your post office and on the leaderboard.
+        First come, first served, and you can change it once a day. Saving asks your wallet to sign: free, no transaction.</p>
+        <div class="namerow">${mine ? `<button class="pbtn" data-act="nameRemove" ${busy ? "disabled" : ""}>Use my wallet address</button>` : ""}
+        <button class="pbtn" data-act="nameCancel">Cancel</button></div></section>`;
     }
 
     // ---- admin: only for the wallet the contracts pay
@@ -375,6 +375,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       if (inp && document.activeElement !== inp) inp.value = invite;
       const fw = $("feeWallet");
       if (fw && document.activeElement !== fw) fw.value = newFeeWallet;
+      const ni = $("nameInput");
+      if (ni && document.activeElement !== ni) ni.value = nameDraft;
     }
     if (force || html !== lastMore) {
       lastMore = html;
@@ -389,18 +391,34 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     ? createTrade(chain, $("trade"), { run, isBusy: () => !!busy, onLogin: () => run("Logging in", () => chain.login()) })
     : null;
 
+  const saveName = () =>
+    run("Saving your name", async () => {
+      await username.save(nameDraft);
+      naming = false;
+    });
+  panel.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.dataset.act === "nameInput" && !busy) saveName();
+  });
+
   panel.addEventListener("click", (e) => {
     const b = e.target.closest("[data-act]");
     if (!b || b.disabled || b.tagName === "SELECT" || b.tagName === "INPUT") return;
     const id = Number(b.dataset.id);
     switch (b.dataset.act) {
       case "connect": return run("Logging in", () => chain.login());
-      case "xClaim": return xname.start();
-      case "xSign": return run("Claiming your name", () => xname.sign());
-      case "xCancel": return xname.cancel();
-      case "xUnlink":
-        if (!confirm(`Stop showing @${xname.mine?.handle} as your name? You'll show as your wallet address again.`)) return;
-        return xname.unlink();
+      case "nameEdit":
+        [naming, nameDraft] = [true, username.mine?.name ?? ""];
+        draw(true);
+        return $("nameInput")?.focus();
+      case "nameCancel":
+        naming = false;
+        return draw(true);
+      case "nameSave": return saveName();
+      case "nameUse": return run("Using your name here", () => username.save(username.elsewhere));
+      case "nameRemove":
+        if (!confirm(`Stop using ${username.mine?.name} as your name? You'll show as your wallet address again (you can take the name back today).`)) return;
+        naming = false;
+        return username.remove();
       case "open":
         if (invite && !isAddress(invite)) return toast("That invite address isn't valid.", "error");
         return run("Opening your post office", () => chain.openOffice(snap, invite || ZERO));
@@ -498,6 +516,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   });
   panel.addEventListener("input", (e) => {
     if (e.target.dataset.act === "invite") invite = e.target.value.trim();
+    if (e.target.dataset.act === "nameInput") nameDraft = e.target.value;
     if (e.target.dataset.act === "feeWallet") newFeeWallet = e.target.value.trim();
     if (e.target.dataset.act === "huntAmount") huntAmount = e.target.value.trim();
     if (e.target.dataset.act === "huntReward") huntReward = e.target.value.trim();

@@ -5,6 +5,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
 import { authMessage } from "./hunt-pick.js";
+import { nameMessage, nameShown } from "./name-rules.js";
 import { SKINS } from "./skins.js";
 
 /// What you can show the players around you: an emoji, or an emoji and a few words. It pops up
@@ -39,7 +40,7 @@ function cleanLook(src = {}) {
   return look;
 }
 
-/// A name tag: the player's @handle, short address or "Guest", and their post office tier under it.
+/// A name tag: the player's name, short address or "Guest", and their post office tier under it.
 function nameTag(name, sub) {
   const c = document.createElement("canvas");
   c.width = 256;
@@ -258,9 +259,9 @@ function orient(obj, up, forward) {
 /// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count)` and `onNope(spot, why)` hear
 /// from the golden stamp hunt,
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
-/// (null while not connected). Names from X: `nameToken(address)` is the token the room gave that
-/// wallet when it claimed its name (or null), and `onNamed(info)` hears the name the room shows you
-/// with ({ handle, wallet }, or null).
+/// (null while not connected). Names: `nameToken(address)` is the token the room gave that wallet when
+/// it picked its name (or null), and `onNamed(info)` hears the name the room shows you with ({ name,
+/// wallet }, or null).
 export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
@@ -271,7 +272,7 @@ export function createNet(W, {
   const emotes = createEmotes(W.world, W.noNormals);
   let ws = null, me = null, started = false, retry = 1, sendIn = 0, pingIn = 0, last = null;
   let code = null, voucherWait = null; // the room's sign-in code for this connection; a pending voucher request
-  let claimWait = null; // a name claim waiting for the room's answer
+  let nameWait = null, checkWait = null; // a name being set, and a name being checked, waiting for the room
   let myId = null; // the room's name for you on this connection
   const grabs = []; // stamps picked up this frame: sent right after where you are, so the room checks the spot
 
@@ -311,7 +312,7 @@ export function createNet(W, {
 
   function label(hello) {
     const addr = /^0x[0-9a-fA-F]{40}$/.test(hello.addr ?? "") ? hello.addr : null;
-    const name = /^@[A-Za-z0-9_]{1,15}$/.test(hello.name ?? "") ? hello.name : addr ? short(addr) : "Guest"; // the room checked it
+    const name = nameShown(hello.name) ? hello.name : addr ? short(addr) : "Guest"; // (the room only sends names it checked)
     return nameTag(name, addr ? tier(addr) : null);
   }
   function add(id, hello, s) {
@@ -362,13 +363,17 @@ export function createNet(W, {
         sendName();
         break;
       case "named":
-        if (m[1]?.token && claimWait) claimWait.resolve(m[1]);
-        else if (!m[1] || /^[A-Za-z0-9_]{1,15}$/.test(m[1].handle)) onNamed(m[1] ? { handle: m[1].handle, wallet: m[1].wallet } : null);
-        if (m[1]?.token) claimWait = null;
+        if (m[1]?.token && nameWait) nameWait.resolve(m[1]);
+        else if (!m[1] || nameShown(m[1].name)) onNamed(m[1] ? { name: m[1].name, wallet: m[1].wallet } : null);
+        if (m[1]?.token) nameWait = null;
         return;
       case "nameno":
-        claimWait?.reject(new Error(m[1]));
-        claimWait = null;
+        nameWait?.reject(new Error(m[1]));
+        nameWait = null;
+        return;
+      case "namefree":
+        checkWait?.({ free: !!m[2], why: m[3] ?? null });
+        checkWait = null;
         return;
       case "hunt":
         onHunt(m[1]);
@@ -441,22 +446,32 @@ export function createNet(W, {
         if (addr !== was) sendName(); // a different wallet: its own name, if it has one
       }
     },
-    /// Claim an X handle: `claim` came back from signing in to X, and `wallet` signed claimMessage for it.
-    /// Resolves with { handle, wallet, token }.
-    claimName(claim, wallet, signature) {
-      if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players yet. Try again in a moment."));
+    /// Is `name` free? Resolves with { free, why } (free if the room doesn't answer: setName decides).
+    checkName(name) {
+      if (ws?.readyState !== 1) return Promise.resolve({ free: true, why: null });
+      return new Promise((resolve) => {
+        checkWait = resolve;
+        send(["namecheck", name]);
+        setTimeout(() => checkWait === resolve && ((checkWait = null), resolve({ free: true, why: null })), 5000);
+      });
+    },
+    /// Take `name` for `wallet`, signing the room's message with `sign(message)`. Resolves with
+    /// { name, wallet, token }.
+    async setName(name, wallet, sign) {
+      if (!code || ws?.readyState !== 1) throw new Error("Not connected to the other players yet. Try again in a moment.");
+      const signature = await sign(nameMessage(wallet, name, code));
       return new Promise((resolve, reject) => {
-        claimWait = { resolve, reject };
-        send(["claim", claim, wallet, signature]);
+        nameWait = { resolve, reject };
+        send(["setname", name, wallet, signature]);
         setTimeout(() => {
-          if (claimWait?.resolve === resolve) {
-            claimWait = null;
+          if (nameWait?.resolve === resolve) {
+            nameWait = null;
             reject(new Error("The server didn't answer. Try again."));
           }
         }, 15_000);
       });
     },
-    /// Stop using your X handle as your name.
+    /// Stop using your name: show your wallet address again.
     unname: () => send(["unname"]),
     /// Wave (-1) or show one of EMOTES to the players around you (and over your own head).
     say(i) {
