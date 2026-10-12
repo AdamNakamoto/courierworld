@@ -68,6 +68,35 @@ export function buildBiomes(k) {
       k.addRect(mid, spinAlong(mid, ramp.dir), ramp.hw, (b - a) / 2, null, { y1: h - 0.65 });
     }
   };
+  /// Bake a group built flat round d, bent over the planet: x and z become distances along the ground
+  /// (as `step` measures them) and y the height above it. On a planet this small a flat 8 m deck would
+  /// float a quarter metre above its walkway at the ends; bent, a deck and its stairs sit on their
+  /// walkways all along. Long parts need segments along their length to bend.
+  const bakeBent = (g, d, spin) => {
+    const q = k.frameAt(d, spin), qi = q.clone().invert(), o = d.clone().multiplyScalar(R);
+    const right = V(1, 0, 0).applyQuaternion(q), front = V(0, 0, 1).applyQuaternion(q);
+    const flat = new THREE.Group(), v = V(0, 0, 0), dir = V(0, 0, 0), tilt = new THREE.Quaternion();
+    g.updateMatrixWorld(true);
+    g.traverse((m) => {
+      if (m.isMesh) flat.add(new THREE.Mesh(m.geometry.clone().applyMatrix4(m.matrixWorld), m.material));
+    });
+    for (const m of flat.children) {
+      const pos = m.geometry.attributes.position, nrm = m.geometry.attributes.normal;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        const y = v.y;
+        dir.copy(o).addScaledVector(right, v.x).addScaledVector(front, v.z).normalize();
+        tilt.setFromUnitVectors(d, dir);
+        // The bent spot, back in the group's own frame (bake puts it in place).
+        v.copy(dir).multiplyScalar(R + y).sub(o).applyQuaternion(qi);
+        pos.setXYZ(i, v.x, v.y, v.z);
+        v.fromBufferAttribute(nrm, i).applyQuaternion(q).applyQuaternion(tilt).applyQuaternion(qi);
+        nrm.setXYZ(i, v.x, v.y, v.z);
+      }
+    }
+    k.bake(flat, d, spin, 0);
+    g.traverse((m) => m.geometry?.dispose());
+  };
   /// A sign board with a painted face (kept as its own mesh so it can carry a texture).
   const signBoard = (draw, w, h, d, spin, lift, face = 0) => {
     const c = document.createElement("canvas");
@@ -978,46 +1007,138 @@ export function buildBiomes(k) {
       const tan = road.tangent(t), side = new THREE.Vector3().crossVectors(p, tan).normalize();
       const H = 4.0, len = H / 0.62, reach = T.DECK_HW + 1.0;
       const bottoms = [1, -1].map((s) => step(step(p, side, s * reach), tan, s * (len + 0.2)));
-      // Deck across the street, with railings and a sign on each face.
-      const teal = 0x7fcfbd, tealDark = 0x5fae9e;
+      // Built in the deck's frame: x across the street (along `side`), z along it (along `tan`), y up,
+      // then bent over the planet. The deck spans ±EX by ±EZ, with solid walls and a handrail. Stairs
+      // come in through gaps in the walls, their side walls carrying on into the deck's, so the way up
+      // is one walled walkway. At the -x end the stair runs straight down along the street. At the +x
+      // end the main post office stands where that stair would land (and a player's lot is behind), so
+      // that stair turns back on itself: down to a landing beside the office, then back the other way.
+      const EX = reach + 0.8, EZ = 0.85, PANEL = 0.75, RAIL = 1.05; // the solid wall's height, and the handrail's
+      const L = len + 0.2 - EZ; // the straight stair's length (it rises H)
+      const gap = reach - 0.74; // where the deck's long walls stop for the stairs
+      const green = 0x5fae9e, mint = 0x7fcfbd;
+      const at = (x, z) => p.clone().multiplyScalar(R).addScaledVector(side, x).addScaledVector(tan, z).normalize();
       const g = new THREE.Group();
-      const span = reach * 2 + 1.6;
-      box(g, span, 0.3, 1.7, teal, 0, H - 0.15, 0);
-      for (const zz of [-0.85, 0.85]) {
-        box(g, span, 0.55, 0.06, tealDark, 0, H + 0.25, zz);
-        box(g, span, 0.06, 0.1, teal, 0, H + 0.95, zz);
-        for (let i = 0; i <= 12; i++) part(g, new THREE.CylinderGeometry(0.025, 0.025, 0.95, 4), tealDark, -span / 2 + (i / 12) * span, H + 0.48, zz);
+      // The deck: a slab with edge beams and a paved top, on two piers.
+      part(g, new THREE.BoxGeometry(2 * EX, 0.3, 2 * EZ, 14), mint, 0, H - 0.18, 0);
+      part(g, new THREE.BoxGeometry(2 * EX - 0.1, 0.04, 2 * EZ - 0.1, 14), C.walk, 0, H - 0.01, 0);
+      for (const zz of [-1, 1]) part(g, new THREE.BoxGeometry(2 * EX, 0.45, 0.1, 14), green, 0, H - 0.3, zz * (EZ - 0.02));
+      for (const s of [-1, 1]) {
+        const x = s * (T.DECK_HW + 0.35);
+        for (const zz of [-0.7, 0.7]) part(g, new THREE.CylinderGeometry(0.14, 0.14, H - 0.4, 8), green, x, (H - 0.4) / 2, zz);
+        box(g, 0.34, 0.25, 2 * EZ - 0.1, green, x, H - 0.45, 0);
       }
-      for (const s of [-1, 1]) for (const zz of [-0.7, 0.7]) part(g, new THREE.CylinderGeometry(0.14, 0.14, H, 8), tealDark, s * (T.DECK_HW + 0.35), H / 2, zz);
+      // A straight wall standing on `base`: a solid panel with a cap, and a handrail on posts above it.
+      const wall = (cx, cz, n, alongZ = false, base = H) => {
+        const segs = Math.max(1, Math.round(n / 0.7));
+        const geo = (w, h, d) => (alongZ ? new THREE.BoxGeometry(d, h, w, 1, 1, segs) : new THREE.BoxGeometry(w, h, d, segs));
+        part(g, geo(n, PANEL + 0.08, 0.08), green, cx, base + (PANEL - 0.08) / 2, cz);
+        part(g, geo(n + 0.06, 0.06, 0.14), mint, cx, base + PANEL + 0.03, cz);
+        part(g, geo(n + 0.06, 0.06, 0.07), mint, cx, base + RAIL, cz);
+        const posts = Math.max(1, Math.round(n / 1.1));
+        for (let i = 0; i <= posts; i++) {
+          const o = -n / 2 + (i / posts) * n;
+          part(g, new THREE.CylinderGeometry(0.025, 0.025, RAIL - PANEL, 5), mint, alongZ ? cx : cx + o, base + (PANEL + RAIL) / 2, alongZ ? cz + o : cz);
+        }
+      };
+      // A wall to bump into: along z (or x), from a to b, stopping feet between y0 and y1.
+      const block = (x0, z0, x1, z1, y0, y1) => {
+        const m = at((x0 + x1) / 2, (z0 + z1) / 2), alongZ = Math.abs(z1 - z0) > Math.abs(x1 - x0);
+        k.addRect(m, spinAlong(m, alongZ ? tan : side), 0.05, Math.max(Math.abs(z1 - z0), Math.abs(x1 - x0)) / 2, null, { y0, y1 });
+      };
+      // Long walls (each open at the end where a stair comes in) and closed ends.
+      for (const zz of [-1, 1]) wall((zz * (gap - EX)) / 2, zz * EZ, EX + gap);
+      for (const s of [-1, 1]) wall(s * (EX - 0.04), 0, 2 * EZ + 0.08, true);
       const spin = k.spinToward(p, step(p, tan, 1));
-      k.bake(g, p, spin, 0);
-      k.plate({ d: p, right: side, front: tan, hw: reach + 0.8, hd: 0.85, h: H });
-      for (const zz of [-1, 1]) {
-        const r = step(p, tan, zz * 0.87);
-        k.addRect(r, spinAlong(r, side), 0.06, reach + 0.8, null, { y0: H - 0.3, y1: H + 0.5 });
-      }
+      k.plate({ d: p, right: side, front: tan, hw: EX, hd: EZ, h: H });
+      for (const zz of [-1, 1]) block(-zz * EX, zz * (EZ + 0.02), zz * gap, zz * (EZ + 0.02), H - 0.3, H + 0.5);
       for (const s of [-1, 1]) {
         const r = step(p, side, s * (reach + 0.85));
         k.addRect(r, spinAlong(r, tan), 0.06, 0.85, null, { y0: H - 0.3, y1: H + 0.5 });
         for (const zz of [-0.7, 0.7]) k.addCircle(step(step(p, side, s * (T.DECK_HW + 0.35)), tan, zz), 0.16, { y1: H - 0.3 });
       }
-      // Stairs down each side, along the street.
+
+      // A flight of closed steps between solid side walls, centred on x and `w` wide, running along z from
+      // its foot (zFoot, at height hFoot) up to its top (zTop, hTop). Each tread is level with the walkway
+      // at its middle, and the top one is flush with what the flight leads to. Returns the walkway.
+      const flight = (x, w, zFoot, hFoot, zTop, hTop, { under = false } = {}) => {
+        const len = Math.abs(zTop - zFoot), dz = Math.sign(zTop - zFoot), rise = hTop - hFoot;
+        const zOf = (u) => zFoot + dz * u, yOf = (u) => hFoot + (rise * u) / len;
+        const n = Math.round(rise / 0.2), riser = rise / n, run = len / n;
+        // A part following the slope from u0 to u1, `lift` above the line of the step edges.
+        const sloped = (sw, sh, color, xx, lift, u0 = 0, u1 = len) => {
+          const geo = new THREE.BoxGeometry(sw, sh, u1 - u0, 1, 1, Math.max(1, Math.round((u1 - u0) / 0.7)));
+          geo.applyMatrix4(new THREE.Matrix4().makeShear(0, 0, 0, 0, 0, (dz * rise) / len));
+          return part(g, geo, color, xx, yOf((u0 + u1) / 2) + lift, zOf((u0 + u1) / 2));
+        };
+        // (Off a landing, the first tread is the half step at the landing's height.)
+        for (let j = hFoot > 0 ? -1 : 0; j < n; j++) {
+          const u0 = Math.max(0, (j + 0.5) * run), u1 = Math.min(len, (j + 1.5) * run);
+          box(g, w, 0.07, u1 - u0 + 0.01, C.walk, x, hFoot + (j + 1) * riser - 0.035, zOf((u0 + u1) / 2));
+          if (j >= 0) box(g, w, riser + 0.12, 0.04, C.curb, x, hFoot + j * riser + riser / 2 - 0.06, zOf(u0));
+        }
+        sloped(w, 0.1, mint, x, -0.25);
+        for (const e of [-1, 1]) {
+          const xx = x + e * (w / 2 + 0.04);
+          sloped(0.08, PANEL + 0.35, green, xx, (PANEL - 0.35) / 2, 0, len + 0.04);
+          sloped(0.14, 0.06, mint, xx, PANEL + 0.03, 0, len + 0.04);
+          sloped(0.07, 0.06, mint, xx, RAIL, 0, len + 0.04);
+          for (let j = 1; j < 5; j++) part(g, new THREE.CylinderGeometry(0.025, 0.025, RAIL - PANEL, 5), mint, xx, yOf((j * len) / 5) + (PANEL + RAIL) / 2, zOf((j * len) / 5));
+          if (hFoot === 0) box(g, 0.16, RAIL + 0.08, 0.16, green, xx, (RAIL + 0.08) / 2, zOf(0));
+          // Its walls, a quarter at a time, each stopping only feet at its own height.
+          for (let j = 0; j < 4; j++) block(xx, zOf((j * len) / 4), xx, zOf(((j + 1) * len) / 4), yOf((j * len) / 4) - 0.4, yOf(((j + 1) * len) / 4) + 0.5);
+        }
+        // Walking: the walkway reaches hTop exactly at the top, then runs a little onto what's there.
+        const a = at(x, zFoot), b = at(x, zTop), run0 = a.distanceTo(b) * R;
+        const up = b.clone().sub(a);
+        up.addScaledVector(a, -up.dot(a)).normalize();
+        const ramp = k.ramp(a, up, run0 + 0.05, w / 2, hFoot, hFoot + (rise * (run0 + 0.05)) / run0);
+        // Nobody walks in underneath (a flight off a landing is too high to step onto from below).
+        if (under) for (let j = 0; j < 4; j++) {
+          const m = at(x, zOf(((j + 0.5) * len) / 4));
+          k.addRect(m, spinAlong(m, tan), w / 2, len / 8, null, { y1: yOf((j * len) / 4) - 0.65 });
+        } else stairSides(ramp);
+        return { zOf, yOf, len };
+      };
+
+      // The straight stair at the -x end, on a column.
+      {
+        const x = -reach, f = flight(x, 1.4, -(len + 0.2), 0, -EZ, H), uc = f.len * 0.55;
+        box(g, 0.24, f.yOf(uc) - 0.3, 0.24, green, x, (f.yOf(uc) - 0.3) / 2, f.zOf(uc));
+        box(g, 1.5, 0.18, 0.24, green, x, f.yOf(uc) - 0.39, f.zOf(uc));
+      }
+      // The turning stair at the +x end: flight A from the deck down to a landing at half height, beside
+      // the office; flight B, further from the street, from the landing back down to the ground.
+      {
+        const HM = H / 2, ZL = EZ + L / 2, ZE = ZL + 0.9; // the landing: its height, and where it starts and ends
+        const X0 = gap, X1 = 5.46; // its outer walls (X1 keeps clear of the lot behind)
+        flight((X0 + EX - 0.04) / 2, EX - 0.04 - X0 - 0.08, ZL, HM, EZ, H, { under: true });
+        flight((EX + X1) / 2, X1 - EX - 0.08, EZ, 0, ZL, HM);
+        part(g, new THREE.BoxGeometry(X1 - X0 + 0.04, 0.3, ZE + 0.08 - ZL, 4), mint, (X0 + X1) / 2, HM - 0.18, (ZL + ZE + 0.08) / 2);
+        box(g, X1 - X0 - 0.08, 0.04, ZE - ZL, C.walk, (X0 + X1) / 2, HM - 0.01, (ZL + ZE) / 2);
+        wall(X0, (ZL + ZE + 0.08) / 2, ZE + 0.08 - ZL, true, HM);
+        wall(X1, (ZL + ZE + 0.08) / 2, ZE + 0.08 - ZL, true, HM);
+        wall((X0 + X1) / 2, ZE + 0.04, X1 - X0 + 0.08, false, HM);
+        for (const x of [X0 + 0.2, X1 - 0.2]) box(g, 0.22, HM - 0.3, 0.22, green, x, (HM - 0.3) / 2, ZE - 0.2);
+        k.plate({ d: at((X0 + X1) / 2, (ZL - 0.05 + ZE) / 2), right: side, front: tan, hw: (X1 - X0) / 2 - 0.04, hd: (ZE - ZL + 0.05) / 2, h: HM });
+        const m = at((X0 + X1) / 2, (ZL + ZE) / 2);
+        k.addRect(m, spinAlong(m, tan), (X1 - X0) / 2, (ZE - ZL) / 2, null, { y1: HM - 0.65 });
+        block(X0, ZL, X0, ZE + 0.08, HM - 0.4, HM + 0.5);
+        block(X1, ZL, X1, ZE + 0.08, HM - 0.4, HM + 0.5);
+        block(X0, ZE + 0.04, X1, ZE + 0.04, HM - 0.4, HM + 0.5);
+      }
+      // (Where the straight stair on the +z side used to come down stays clear, so the town keeps its layout.)
       [1, -1].forEach((s, i) => {
-        const bottom = bottoms[i], up = tan.clone().multiplyScalar(-s);
-        const ramp = k.ramp(bottom, up, len + 0.25, 0.7, 0, H);
-        const sg = new THREE.Group();
-        stairs(sg, len + 0.25, H, 1.4, teal, tealDark, { solid: false });
-        const mid = step(bottom, up, (len + 0.25) / 2);
-        k.bake(sg, mid, k.spinToward(mid, step(mid, up, 1)), 0);
-        stairSides(ramp);
-        for (let j = 0; j < 4; j++) k.taken.push({ d: step(bottom, up, j * 1.6), r: 1.4 });
+        const up = tan.clone().multiplyScalar(-s);
+        for (let j = 0; j < 4; j++) k.taken.push({ d: step(bottoms[i], up, j * 1.6), r: 1.4 });
       });
+      bakeBent(g, p, spin);
       for (const zz of [-1, 1]) {
         signBoard((g2, w, h) => {
           g2.fillStyle = "#5fae9e"; g2.fillRect(0, 0, w, h);
           g2.fillStyle = "#fbf6ea"; g2.font = "700 34px Bungee, Impact, sans-serif"; g2.textAlign = "center"; g2.textBaseline = "middle";
-          g2.fillText("MAIN STREET", w / 2, h / 2 + 2);
-        }, 3.2, 0.42, step(p, tan, zz * 0.9), spin + (zz > 0 ? 0 : Math.PI), H + 0.25, 0.02);
+          g2.fillText("MAIN STREET", w / 2, h / 2 + 2, w - 16);
+        }, 3.2, 0.42, step(p, tan, zz * 0.9), k.spinToward(step(p, tan, zz * 0.9), step(p, tan, zz * 2)), H + 0.25, 0.03);
       }
       k.stampSpot(step(p, side, 0.6), H);
       break;
