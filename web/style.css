@@ -384,3 +384,9 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .orb-links a[hidden] { display: none; }
 .orb-domain { margin: 8px 0 0; font: 600 13px ui-monospace, Menlo, monospace; color: var(--muted); }
 .orb-note { margin: 8px 0 0; font-size: 14px; line-height: 1.2; color: var(--muted); }
+
+/* Names from X: your @handle in the Post Office panel, and the claim waiting for your signature. */
+.who .xname { font: 700 15px ui-monospace, Menlo, monospace; color: #3f6fbf; }
+.xclaim { border: 2px solid #3f6fbf; background: #eef3fb; }
+.xclaim p { margin: 6px 0 10px; }
+.xclaim .pbtn + .pbtn, .xclaim .note + .pbtn { margin-top: 6px; }

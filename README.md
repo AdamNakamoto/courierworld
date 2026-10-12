@@ -72,6 +72,38 @@ npx wrangler dev          # a local room on :8787; open the game with ?mp=ws://1
 npx wrangler deploy       # the live room, at wss://courier-world-mp.courier-world-mp.workers.dev/ws
 ```
 
+### Names from X
+
+Players can show as their X @handle instead of their wallet address: on name tags, in chat, on their
+post office's sign and on the leaderboard. In the Post Office panel, **𝕏 Claim your name** opens X's
+OAuth 2.0 sign-in (with PKCE) through the room (`/x/login`, back at `/x/callback`). The room asks X
+who they are (`GET /2/users/me`, scopes `tweet.read users.read`; nothing is posted, and the token is
+revoked straight away) and sends them back to the game (`web/x.html`) with a one-time claim. Their
+wallet then signs `claimMessage` (`web/x-claim.js`, free, no transaction), and the room links the
+handle to that wallet: one wallet per X account and one X account per wallet, so claiming again
+moves it. The game keeps a token per wallet so later visits show the name without signing; a name
+sent in a hello is ignored, so nobody can wear someone else's. `GET /names` lists every claim
+(wallet → handle) for the signs and the leaderboard. **Unlink X** in the panel drops it.
+
+Claiming is off until the room has an X app's keys:
+
+1. In the [X Developer Console](https://console.x.com) (pay-per-use; reading who signed in costs about
+   $0.01 per claim, so set a monthly spending limit), create an app.
+2. Under **User authentication settings**: OAuth 2.0 on, type **Web App**, permission **Read**,
+   callback URI `https://courier-world-mp.courier-world-mp.workers.dev/x/callback`, website
+   `https://courierworld.fun`.
+3. Give the room the app's OAuth 2.0 Client ID and Client Secret (each command asks for the value):
+
+```bash
+cd multiplayer
+npx wrangler secret put X_CLIENT_ID
+npx wrangler secret put X_CLIENT_SECRET
+```
+
+The button appears in the game once `GET /names` says `"on": true`. Only courierworld.fun (and
+localhost, for development) can receive a claim. For local testing without X, `X_AUTHORIZE` and
+`X_API` point the room at a stand-in.
+
 ## The golden stamp hunt
 
 Golden stamps move every day: 24 of the spots in `web/hunt-spots.json` are out each UTC day

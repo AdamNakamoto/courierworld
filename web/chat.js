@@ -9,8 +9,9 @@ const MUTED_KEY = "courier:chat:muted";
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 /// `net`: the multiplayer client (chat, bubble). `toast(text, kind)` shows a short message. `me()` is the
-/// logged-in wallet, so your own lines from earlier visits read "You" too.
-export function createChat(net, { toast, me = () => null }) {
+/// logged-in wallet and `myName()` your @handle if you've claimed one, so your own lines from earlier
+/// visits read "You" too.
+export function createChat(net, { toast, me = () => null, myName = () => null }) {
   const $ = (id) => document.getElementById(id);
   const box = $("chat"), log = $("chatLog"), form = $("chatForm"), input = $("chatInput"), hint = $("chatOpen");
   const touch = matchMedia("(hover: none), (max-width: 640px)").matches;
@@ -26,7 +27,7 @@ export function createChat(net, { toast, me = () => null }) {
   };
 
   function line(l) {
-    const mine = l.mine || (!!me() && l.name.toLowerCase() === short(me()).toLowerCase());
+    const mine = l.mine || (!!me() && l.name.toLowerCase() === short(me()).toLowerCase()) || (!!myName() && l.name === myName());
     const row = document.createElement("div");
     row.className = "line";
     row.dataset.key = muteKey(l);

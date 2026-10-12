@@ -16,6 +16,8 @@ import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
 import { createDistrict } from "./district.js";
+import { loadNames, onNames } from "./names.js";
+import { createXName } from "./xname.js";
 
 const $ = (id) => document.getElementById(id);
 // Golden stamp spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
@@ -236,6 +238,7 @@ async function refreshBoard(chain) {
 // The multiplayer room (multiplayer/ in the repo, on Cloudflare). ?mp=ws://… points the game at
 // another one, such as `wrangler dev` on your own machine.
 const MP_URL = new URLSearchParams(location.search).get("mp") ?? "wss://courier-world-mp.courier-world-mp.workers.dev/ws";
+const MP_HTTP = MP_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 const net = createNet(W, {
@@ -266,8 +269,30 @@ const net = createNet(W, {
   onChat: (line) => chatUI.add(line),
   onChatHistory: (lines) => chatUI.history(lines),
   onChatError: (why) => chatUI.error(why),
+  // Names from X (see xname.js).
+  nameToken: (addr) => xname.token(addr),
+  onNamed: (info) => xname.named(info),
 });
-const chatUI = createChat(net, { toast, me: () => chainRef?.account ?? null });
+const chatUI = createChat(net, { toast, me: () => chainRef?.account ?? null, myName: () => (xname.mine ? `@${xname.mine.handle}` : null) });
+
+// ---------------------------------------------------------------- names from X
+
+// Claim your @handle as your name: X sign-in, then a signature from your wallet (the Post Office panel).
+const xname = createXName({
+  base: MP_HTTP, net, toast, chain: () => chainRef,
+  onChange(arrived) {
+    if (arrived && mode === "play") office?.show(true); // back from X: show the claim to sign (or once you're playing)
+    else office?.refresh();
+    if (!arrived) loadNames(MP_HTTP);
+  },
+});
+// Everyone's names, for the post office signs and the leaderboard.
+onNames(() => {
+  if (board) district.update(board.list, chainRef?.account);
+  office?.refresh();
+});
+loadNames(MP_HTTP);
+setInterval(() => loadNames(MP_HTTP), 60_000);
 
 // ---------------------------------------------------------------- the Orb's ads
 
@@ -306,7 +331,7 @@ function netState() {
   return { p: localPos(), f, h: bodyY, air: jumpY, spd: moveSpeed, swim: swimK };
 }
 /// How many are playing, on the title screen (from the room, every half minute).
-const countUrl = MP_URL.replace(/^ws/, "http").replace(/\/ws$/, "/count");
+const countUrl = `${MP_HTTP}/count`;
 async function titleCount() {
   if (mode !== "title") return;
   try {
@@ -964,6 +989,7 @@ function frame() {
       introduce();
       fillBag();
       say(INTRO);
+      if (xname.pending) office?.show(true); // back from X before you started playing: the claim to sign
     }
   } else {
     let ix = 0, iy = 0;
@@ -1209,6 +1235,7 @@ const chainReady = connectChain()
         skinButtons(s);
       },
       wearing: () => skinWorn?.id ?? null,
+      xname,
       onWearSkin(m) {
         if (!m) {
           takeOffSkin(chain.account);
@@ -1224,6 +1251,7 @@ const chainReady = connectChain()
         toast(`Now playing as ${c.name}, ${c.ride.name.toLowerCase()}`);
       },
     });
+    if (xname.pending && mode === "play") office.show(true); // came back from X before the panel was ready
     refreshBoard(chain);
     setInterval(() => refreshBoard(chain), 20_000);
     return chain;

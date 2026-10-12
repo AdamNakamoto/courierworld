@@ -4,11 +4,11 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, toon, texFromCanvas } from "./world.js";
 import { compact } from "./character.js";
+import { displayName, nameOf } from "./names.js";
 
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 const RED = 0xd9534a, RED_DARK = 0xb4443c, CREAM = 0xf4efe0, WALL = 0xf1e6d2, GLASS = 0x8db8c6, WOOD = 0x6c5446, STEEL = 0x8d9790, INK = 0x3b4145;
 const MEDALS = [0xf2c94c, 0xd9dde0, 0xd08a4e];
-const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 /// A painted sign: a big line and a small one.
 function sign(w, h, big, small, { bg = "#d9534a", fg = "#fbf6ea" } = {}) {
@@ -25,7 +25,7 @@ function sign(w, h, big, small, { bg = "#d9534a", fg = "#fbf6ea" } = {}) {
   g.textAlign = "center";
   g.textBaseline = "middle";
   g.font = `400 ${Math.round(c.height * (small ? 0.42 : 0.55))}px Bungee, Impact, sans-serif`;
-  g.fillText(big, c.width / 2, c.height * (small ? 0.4 : 0.54));
+  g.fillText(big, c.width / 2, c.height * (small ? 0.4 : 0.54), c.width - 40);
   if (small) {
     g.font = `700 ${Math.round(c.height * 0.24)}px ui-monospace, Menlo, monospace`;
     g.fillText(small, c.width / 2, c.height * 0.76);
@@ -56,7 +56,7 @@ function building(tier, owner, rank, mine) {
     return m;
   };
   const box = (w, h, d, color, x, y, z) => add(new THREE.BoxGeometry(w, h, d), color, x, y, z);
-  const label = mine ? "YOUR OFFICE" : short(owner);
+  const label = mine ? "YOUR OFFICE" : displayName(owner);
   let hw, hd, h, signAt;
   if (tier <= 0) {
     // Kiosk: a little booth with a striped awning and a post box.
@@ -191,7 +191,7 @@ export function createDistrict(W) {
       lots.forEach((lot, i) => {
         const o = list[i];
         const mine = !!(o && me && o.owner.toLowerCase() === me.toLowerCase());
-        const key = o ? `${o.owner}:${o.tier}:${Math.min(i, 3)}:${mine}` : null;
+        const key = o ? `${o.owner}:${o.tier}:${Math.min(i, 3)}:${mine}:${nameOf(o.owner)}` : null;
         if (key === lot.key) return;
         lot.key = key;
         clear(lot);

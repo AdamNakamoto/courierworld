@@ -461,6 +461,8 @@ export async function connectChain() {
     chainName: chain.name,
     snapshot,
     get account() { return account; },
+    /// Sign a message with the logged-in wallet (proves it's theirs; no transaction).
+    signMessage: (message) => wallet.signMessage({ account, message }),
     setAccount(a) {
       account = a;
       try { localStorage.setItem("courier:account", a); } catch {}

@@ -7,6 +7,7 @@ import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
+import { displayName, namesOn } from "./names.js";
 
 const TIER_NAMES = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 const RARITY_INK = { Common: "#5f6b6e", Uncommon: "#5e9f57", Rare: "#3f6fbf", Epic: "#8d5a99", Legendary: "#c9962a" };
@@ -32,8 +33,8 @@ const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + 
 
 /// `hunt`: the golden stamp hunt's side in the game ({ state(), signIn(), voucher() }), when it's running.
 /// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
-/// `wearing()` is the id of the skin you have on, if any.
-export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null }) {
+/// `wearing()` is the id of the skin you have on, if any. `xname`: names from X (xname.js), when the game has them.
+export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, xname = null }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
@@ -119,6 +120,13 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<a class="addr" href="${s.explorer ? `${s.explorer}/address/${s.account}` : "#"}" target="_blank" rel="noopener">${short(s.account)}</a>
         <button class="pbtn" data-act="connect">Switch wallet</button>`;
     }
+    // Names from X: your @handle instead of your wallet address, on the planet.
+    if (s.account && xname && namesOn()) {
+      const mine = xname.mine;
+      html += mine
+        ? `<span class="xname" title="Your name on the planet">@${esc(mine.handle)}</span><button class="pbtn" data-act="xUnlink" ${busy ? "disabled" : ""}>Unlink X</button>`
+        : `<button class="pbtn" data-act="xClaim" ${busy ? "disabled" : ""}>𝕏 Claim your name</button>`;
+    }
     if (s.account) {
       html += `<span class="bal"><b>${fmt(s.eth, 3)}</b> ETH</span>`;
       if (s.game) {
@@ -127,6 +135,18 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       }
     }
     html += `</div>`;
+    const claim = xname?.pending;
+    if (claim) {
+      const h = esc(claim.handle);
+      html += `<section class="xclaim"><h3>Claim @${h}</h3>
+        <p>Sign with your wallet to show up as <b>@${h}</b> on the planet: on your name tag, in chat, on your post office and on the
+        leaderboard, instead of your wallet address. Anyone will be able to see which wallet @${h} belongs to.</p>
+        ${s.account
+          ? `<button class="pbtn primary wide" data-act="xSign" ${busy ? "disabled" : ""}>Sign & claim @${h}</button>
+             <p class="note">Signing is free and sends no transaction. You'll show as @${h} with ${short(s.account)}.</p>`
+          : `<p class="note">Log in with the wallet you play with first.</p>`}
+        <button class="pbtn wide" data-act="xCancel" ${busy ? "disabled" : ""}>Not now</button></section>`;
+    }
 
     // ---- admin: only for the wallet the contracts pay
     if (admin) {
@@ -226,7 +246,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
           const share = board.totalPower ? Number((o.power * 10000n) / board.totalPower) / 100 : 0;
           const mine = me && o.owner.toLowerCase() === me;
           return `<li class="${mine ? "me" : ""}"><span class="rk">${i + 1}</span>
-            <a href="${s.explorer ? `${s.explorer}/address/${o.owner}` : "#"}" target="_blank" rel="noopener">${mine ? "You" : short(o.owner)}</a>
+            <a href="${s.explorer ? `${s.explorer}/address/${o.owner}` : "#"}" target="_blank" rel="noopener">${mine ? "You" : esc(displayName(o.owner))}</a>
             <span class="tr">${TIER_NAMES[o.tier] ?? `Tier ${o.tier + 1}`}</span><span class="pw">${Number(o.power).toLocaleString()}</span>
             <span class="er" title="${fmt(o.earned)} $STAMP earned: ${fmt(o.claimed)} claimed, ${fmt(o.waiting)} waiting">${compact(o.earned)}</span><span class="sh">${share.toFixed(1)}%</span></li>`;
         };
@@ -375,6 +395,12 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     const id = Number(b.dataset.id);
     switch (b.dataset.act) {
       case "connect": return run("Logging in", () => chain.login());
+      case "xClaim": return xname.start();
+      case "xSign": return run("Claiming your name", () => xname.sign());
+      case "xCancel": return xname.cancel();
+      case "xUnlink":
+        if (!confirm(`Stop showing @${xname.mine?.handle} as your name? You'll show as your wallet address again.`)) return;
+        return xname.unlink();
       case "open":
         if (invite && !isAddress(invite)) return toast("That invite address isn't valid.", "error");
         return run("Opening your post office", () => chain.openOffice(snap, invite || ZERO));

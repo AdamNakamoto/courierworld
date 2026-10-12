@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Courier World</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg: #f7f1e3; --ink: #283033; --btn: #fbf8ef; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1f2426; --ink: #f2ede1; --btn: #2c3336; } }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: var(--bg); color: var(--ink); font: 18px/1.4 system-ui, sans-serif; text-align: center; }
+    a { display: inline-block; margin-top: 8px; padding: 10px 18px; border: 2px solid var(--ink); border-radius: 4px; background: var(--btn); color: var(--ink); text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    <p id="msg">Taking you back to Courier World…</p>
+    <a id="back" href="/" hidden>Back to the game</a>
+  </main>
+  <script>
+    // Where X sends you back after signing in (by way of the multiplayer server). The result goes to the
+    // game through localStorage, which every Courier World tab shares. Then back to the game: this popup
+    // closes itself, or, if you signed in in the game's own tab, the game loads again.
+    const q = new URLSearchParams(location.hash.slice(1));
+    history.replaceState(null, "", location.pathname);
+    const got = q.get("claim") ? { claim: q.get("claim"), handle: q.get("handle") } : { error: q.get("error") || "failed" };
+    let ret = null;
+    try {
+      localStorage.setItem("courier:xclaim", JSON.stringify({ ...got, at: Date.now() }));
+      ret = JSON.parse(localStorage.getItem("courier:xreturn"));
+      localStorage.removeItem("courier:xreturn");
+    } catch {}
+    const same = ret && Date.now() - ret.at < 15 * 60_000 && new URL(ret.url, location.href).origin === location.origin;
+    if (same) location.replace(ret.url);
+    else window.close();
+    // Still here (not a popup, or the browser kept it open): say so, with a way back.
+    setTimeout(() => {
+      document.getElementById("msg").textContent = got.claim
+        ? `Signed in to X as @${got.handle}. Go back to the game to finish claiming your name.`
+        : "X sign-in didn't finish. Go back to the game to try again.";
+      document.getElementById("back").hidden = false;
+    }, 400);
+  </script>
+</body>
+</html>
