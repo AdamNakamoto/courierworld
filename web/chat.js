@@ -68,6 +68,26 @@ export function createChat(net, { toast, me = () => null }) {
     input.blur();
   }
 
+  // On a phone the keyboard covers the lower half of the screen. While typing, keep the box just above it
+  // (the visual viewport is the part you can still see), with the latest lines right over the field.
+  const vv = window.visualViewport;
+  function fit() {
+    const typing = touch && vv && box.classList.contains("open") && document.activeElement === input;
+    if (!typing) {
+      box.style.top = box.style.bottom = log.style.maxHeight = "";
+      return;
+    }
+    const visibleBottom = vv.offsetTop + vv.height;
+    box.style.top = "auto";
+    box.style.bottom = `${Math.max(8, innerHeight - visibleBottom + 8)}px`;
+    log.style.maxHeight = `${Math.max(40, Math.min(220, vv.height - form.offsetHeight - 100))}px`;
+    log.scrollTop = log.scrollHeight;
+  }
+  vv?.addEventListener("resize", fit);
+  vv?.addEventListener("scroll", fit);
+  // The keyboard slides in (and out) after focus changes; fit again once it has.
+  for (const ev of ["focus", "blur"]) input.addEventListener(ev, () => [0, 150, 400].forEach((ms) => setTimeout(fit, ms)));
+
   hint.addEventListener("click", open);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Escape") close();
