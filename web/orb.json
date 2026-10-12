@@ -2,13 +2,13 @@
   "about": "Ads on the Orb. Only what's listed here shows, so add an ad only once it's paid and approved. image: a picture in web/orb/ (\"orb/name.png\"), square (it's shown as a circle filling the globe's face; round logos fit best), PNG/JPG/WebP; url (website) and/or chart: https links, at least one; text: up to 140 characters; color: the rest of the globe (\"#rrggbb\"; if left out, the picture's edge colour); from/until: when it runs (UTC).",
   "ads": [
     {
-      "name": "SIMD",
-      "image": "orb/simd.png",
-      "chart": "https://dexscreener.com/ethereum/0x99de115f6fcf3a505e94a16175fbb34a304425f9a72a2e091c60fb723dc39a4e",
-      "text": "Super Intelligent Identity",
+      "name": "PEPES",
+      "image": "orb/pepes.png",
+      "url": "https://pepesfamily-f765.sites.imd.fun/",
+      "chart": "https://dexscreener.com/robinhood/0xa6ac374bf40898004f0f4cf46389d4fc2735fe413c95379a5b2e1fdce089ec18",
+      "text": "Launch and Pair everything with $IMD on Ethereum and Robinhood",
       "color": "#ffffff",
-      "from": "2026-10-12",
-      "until": "2026-10-19"
+      "from": "2026-10-12"
     }
   ]
 }
