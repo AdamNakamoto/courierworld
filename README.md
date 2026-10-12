@@ -138,9 +138,11 @@ npx wrangler deploy --var SKINS_ADDRESS:0x…
 `SkinsStampSale.sol` sells the same skins for $STAMP (150 a skin at launch, to the treasury). Courier
 Skins only takes ETH, so the sale pays each skin's ETH price from a float its owner tops up (that ETH
 goes straight on to the skins treasury, so it only goes round), takes the buyer's $STAMP (one permit
-signature, or an approval), and moves the minted skins on to the buyer in the same transaction. Same
-999, same enforced royalty; Courier Skins itself is untouched. The owner can change the $STAMP price,
-pause it, top up or withdraw the float (all in the Post Office panel too, except withdrawing).
+signature, or an approval), and moves the minted skins on to the buyer in the same transaction. Buyers
+name the most $STAMP they'll pay (the panel sends the price it showed), so a price change can't charge
+them more. Same 999, same enforced royalty; Courier Skins itself is untouched. The owner can change the
+$STAMP price, pause it, top up or withdraw the float (all in the Post Office panel too, except
+withdrawing), and return a skin someone sent to the sale by mistake.
 
 ```bash
 cd contracts
@@ -259,8 +261,8 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
 
 ```bash
-cd contracts && forge test                                             # 156 tests
-forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
+cd contracts && forge test                                             # 168 tests
+forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 
 ## Deploying to Robinhood Chain

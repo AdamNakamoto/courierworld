@@ -335,16 +335,19 @@ forge test --match-contract CourierSkinsForkTest --fork-url https://robinhood.dr
 `contracts/src/SkinsStampSale.sol` (not deployed yet). Courier Skins only takes ETH and can't be changed,
 so this sale sits beside it:
 
-- `buy(quantity)` / `buyWithPermit(...)`: takes `stampPrice × quantity` $STAMP from the buyer straight to
-  `treasury`, calls `CourierSkins.mint{value: price × quantity}` from its own ETH float, then
-  `transferFrom(this, buyer, id)` for each new id (`totalMinted + 1` onward). Courier Skins enforces its own
-  sale switch, 1–10 per transaction and the 999 cap; a failed mint reverts the whole buy, $STAMP included.
+- `buy(quantity, maxStampCost)` / `buyWithPermit(quantity, maxStampCost, deadline, v, r, s)`: takes
+  `stampPrice × quantity` $STAMP from the buyer straight to `treasury` (reverting `PriceChanged(stampPrice)` if
+  that's more than `maxStampCost`), calls `CourierSkins.mint{value: price × quantity}` from its own ETH float,
+  then `transferFrom(this, buyer, id)` for each new id (`totalMinted + 1` onward). Courier Skins enforces its
+  own sale switch, 1–10 per transaction and the 999 cap; a failed mint reverts the whole buy, $STAMP included.
 - The float only ever pays Courier Skins' own `mint`, at Courier Skins' current price; that ETH goes to the
   Courier Skins treasury. Anyone can top it up (`receive`); only the owner withdraws (`withdrawEth`).
-- The permit is tried, and ignored if it fails (someone used it first): the allowance it set still pays.
+- The permit is for `maxStampCost`. If it fails, the buy goes on only when the allowance already covers the
+  cost (someone submitted the permit first); otherwise the permit's own error is passed on.
 - `nonReentrant` on both buys (a Courier Skins treasury that calls back in is refused).
-- Owner (Ownable2Step): `setStampPrice` (> 0), `setOpen`, `setTreasury` (≠ 0), `withdrawEth`, `withdrawToken`.
-  None of them can take a buyer's $STAMP or skins.
+- Owner (Ownable2Step): `setStampPrice` (> 0), `setOpen`, `setTreasury` (≠ 0), `withdrawEth`, `withdrawToken`,
+  `withdrawSkin` (a skin sent to the sale by mistake). `renounceOwnership` only once the sale is closed and the
+  float is empty. None of them can take a buyer's $STAMP or skins.
 - The hand-over from the sale to the buyer is an owner moving its own token, which OpenSea's registry
   allows: checked on a Robinhood Chain fork against the live Courier Skins, $STAMP and registry
   (`SkinsStampSaleForkTest`).
@@ -353,6 +356,20 @@ Known and accepted: the $STAMP price is fixed by the owner, not read from a pool
 pushed around within a transaction); if $STAMP moves a lot, the owner changes it or pauses. When the float
 runs dry, $STAMP buys revert with `NeedsTopUp` until it's topped up; ETH mints are unaffected.
 
-Tests: `test/SkinsStampSale.t.sol`, 15 unit tests (with the real CourierSkins and StampToken) and the
-fork test.
+The owner of Courier Skins (the same wallet) sets the ETH price the float pays per skin, and could point Courier
+Skins' treasury at the sale so the float refills itself; both are owner powers, not buyer risks. The $STAMP price
+is set by hand: at 150 $STAMP and about $0.08 a $STAMP, a skin costs a little more than 0.004 ETH, and the owner
+reprices or pauses if that drifts.
+
+Independent review: IMD's audit of `d11a6b1` (four specialists and a judge, 5 low and 2 info, nothing above
+low) found, and the fix covers: (1) no buyer-side price bound, so a reprice mined first charged a standing
+allowance the new price: `maxStampCost`; (2) the permit value came from the live price, so any reprice voided
+the signature and a blanket catch hid the reason: permit for `maxStampCost`, errors passed on when there's no
+allowance to fall back on; (3) a Courier Skin sent to the sale was stuck: `withdrawSkin`; (4) an unguarded
+`renounceOwnership` could strand the float: refused while open or holding ETH; (5) the fork test passed
+silently without a fork: now `vm.skip`, and a closed sale fails it. Their three proof tests pass on the fix.
+Report: https://explorer.imd.fun/jobs/1cb3a064-ca38-4c22-954d-7a748cd4fb23
+
+Tests: `test/SkinsStampSale.t.sol`, 27 unit tests (with the real CourierSkins and StampToken, including every
+edge the audit listed) and the fork test.
 

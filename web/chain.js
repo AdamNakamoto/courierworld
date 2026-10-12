@@ -11,6 +11,9 @@ const ERROR_TEXT = {
   // Courier Skins for $STAMP (SkinsStampSale)
   Closed: "Paying in $STAMP is paused right now. You can still pay in ETH.",
   NeedsTopUp: "The $STAMP sale needs topping up. Pay in ETH for now, or try again soon.",
+  PriceChanged: "The $STAMP price just went up. Check the new price and try again.",
+  ERC2612ExpiredSignature: "The signature expired. Try again.",
+  ERC2612InvalidSigner: "The wallet signature didn't match. Try again.",
   AlreadyOpen: "You already run a post office.",
   NotOpen: "Open a post office first.",
   WrongPayment: "The price changed. Try again.",
@@ -507,9 +510,10 @@ export async function connectChain() {
     mintSkins: (s, n) => send(C.skins, "mint", [BigInt(n)], s.skins.price * BigInt(n)),
     /// Mint with $STAMP instead: one signature (a permit) and one transaction, or an approval first for wallets
     /// that can't sign typed data.
+    /// Pays the price the panel showed, at most: if it goes up first, the sale refuses (PriceChanged).
     async mintSkinsWithStamp(s, n) {
       const sale = C.skinsStamp, cost = s.skins.stamp.price * BigInt(n);
-      if ((await read(C.stamp, "allowance", [account, sale.address])) >= cost) return send(sale, "buy", [BigInt(n)]);
+      if ((await read(C.stamp, "allowance", [account, sale.address])) >= cost) return send(sale, "buy", [BigInt(n), cost]);
       const deadline = (await pub.getBlock()).timestamp + 600n;
       let sig = null;
       try {
@@ -517,9 +521,9 @@ export async function connectChain() {
       } catch (e) {
         if (rejected(e)) throw e;
       }
-      if (sig) return send(sale, "buyWithPermit", [BigInt(n), deadline, sig.v, sig.r, sig.s]);
+      if (sig) return send(sale, "buyWithPermit", [BigInt(n), cost, deadline, sig.v, sig.r, sig.s]);
       await send(C.stamp, "approve", [sale.address, cost]);
-      return send(sale, "buy", [BigInt(n)]);
+      return send(sale, "buy", [BigInt(n), cost]);
     },
     /// The $STAMP sale's owner: pause or open it, change its price, top up its ETH float.
     skinsStampAdmin: C.skinsStamp ? {
