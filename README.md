@@ -161,9 +161,27 @@ up unapproved. Nothing is named "ad…", because ad blockers hide such files and
 - `from` / `until` (UTC): when it runs. A running ad stays on the globe until it ends; several take
   turns, 20 seconds each, at the same moment for everyone. The "Advertise on the Orb" card shows only
   when no ad is running.
+- The ad on the Orb also shows on two of Times Square's big screens (its picture, name and line), and
+  tapping one opens the same card.
 
 The globe is placed last in `world.js`, on open ground in sight of the start, and the park trees that
 would stand on its plaza are simply left out, so nothing else in the town moves for it.
+
+## Times Square
+
+The town crossing farthest from the main post office (well clear of the sea and the other places) is
+Times Square (`web/square.js`): within 13 m of it, every house and shop becomes a tall tower on the
+same footprint, its door and residents where they were, with giant screens on its front and the side
+that faces the square, rooftop billboards and water towers. The tower nearest the crossing is narrow and
+stacked with screens, with a ticker round its podium and a lit ball on top. The trees, lawns, poles and
+wires give way to grey paving, red steps you can climb (a ticket booth tucked underneath), a bronze
+courier on a plinth, parked yellow cabs, a red tour bus and two people to talk to.
+
+The screens show posters that take turns every few seconds: the game's own (Courier Skins, $STAMP, post
+offices, the golden stamp hunt, "advertise here") and shows that only play on this planet ("The Letter
+King", "Mail-a-Mia!", "Phantom of the Post Office"...), none naming a real brand, plus the Orb's ad.
+Like the Orb, what the square replaces is still drawn at random and left out, so nothing else in the
+town moves: the same addresses, lots, golden stamps and obstacles everywhere outside it.
 
 ## On Robinhood Chain
 

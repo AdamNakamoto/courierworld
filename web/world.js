@@ -7,6 +7,7 @@ import { createTerrain, SEA_LEVEL, KERB } from "./terrain.js";
 import { buildBiomes } from "./biomes.js";
 import { WATER } from "./water.js";
 import { createDust } from "./fx.js";
+import { createSquare } from "./square.js";
 
 export const R = 34;
 /// How much more ground there is than the planet was first designed for (radius 24): counts of things
@@ -619,6 +620,14 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     });
     return best;
   })();
+  // Times Square, at the town crossing farthest from the post office (square.js). What it replaces is
+  // left out rather than not made, so the rest of the town comes out the same.
+  const square = createSquare({
+    R, ROADS, ROAD_HW, WALK, terrain, box, part, glow, bake, frameAt, spinToward, offsetOnSphere, world, C, nearestRoad, mulberry32, from: spawnSpot.p,
+    toon, makeBatch: () => new Batch(),
+  });
+  const squareOff = []; // obstacles of what the square left out, dropped once the town is laid out
+  const dropOut = (g) => g.traverse((o) => o.geometry?.dispose());
 
   // ---- ground
   {
@@ -630,6 +639,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     const woods1 = new THREE.Color(0x5f9a52), woods2 = new THREE.Color(0x4f8946), dirt = new THREE.Color(0x9c8460);
     const concrete = new THREE.Color(0xb8bab1), dryGrass = new THREE.Color(0xa3b878);
     const pave1 = new THREE.Color(0x3d3852), pave2 = new THREE.Color(0x34304a);
+    const square1 = new THREE.Color(0xc9c7c0), square2 = new THREE.Color(0xbcbab2);
     const patch = (p) => Math.sin(p.x * 9.1 + 1.7) * Math.sin(p.y * 8.7 + 0.3) * Math.sin(p.z * 9.3 + 2.1)
       + 0.5 * Math.sin(p.x * 23.3) * Math.sin(p.y * 21.1 + 1) * Math.sin(p.z * 22.7 + 0.5);
     const m = new THREE.Vector3();
@@ -645,6 +655,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       } else if (zone === "woods") c.copy(n > 0.55 ? dirt : n > 0.1 ? woods2 : woods1);
       else if (zone === "works") c.copy(n > -0.1 ? concrete : dryGrass);
       else if (zone === "neon") c.copy(n > 0.2 ? pave1 : pave2);
+      else if (square?.inside(m)) c.copy(n > 0.15 ? square1 : square2);
       else c.copy(n > 0.15 ? g2 : g1);
       for (let k = 0; k < 3; k++) col.push(c.r, c.g, c.b);
     }
@@ -758,24 +769,27 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
           if (near > ROAD_HW + WALK + 2.5 && !bridge && !byFootbridge && (zone === "town" || zone === "works") && !wetNear(poleSpot, 1.5)) {
             const d = poleSpot;
             const spin = spinToward(d, p1); // crossarm (local x) spans across the street
-            bake(pole(), d, spin);
+            const sq = !!square?.inside(d, 1); // no poles, wires or lamps in Times Square: its screens light it
+            const put = (g, at, sp, lift) => (sq ? dropOut(g) : bake(g, at, sp, lift));
+            put(pole(), d, spin, 0);
             addCircle(d, 0.2);
+            if (sq) squareOff.push(obstacles[obstacles.length - 1]);
             // A street lamp reaching out over the road; at night it lights a pool on the ground.
             const arm = offsetOnSphere(p0, s0, ROAD_HW + WALK - 0.7), head = offsetOnSphere(p0, s0, ROAD_HW + WALK - 1.15);
             const ga = new THREE.Group();
             box(ga, 0.07, 0.07, 0.95, C.concrete, 0, 0, 0);
-            bake(ga, arm, spinToward(arm, p0), 4.75);
+            put(ga, arm, spinToward(arm, p0), 4.75);
             const gh = new THREE.Group();
             box(gh, 0.26, 0.1, 0.4, 0x4e5a67, 0, 0, 0);
             box(gh, 0.2, 0.04, 0.32, C.lamp, 0, -0.06, 0);
-            bake(gh, head, spinToward(head, p0), 4.72);
-            lamps.push(head);
+            put(gh, head, spinToward(head, p0), 4.72);
+            if (!sq) lamps.push(head);
             taken.push({ d, r: 0.4 });
             const top = d.clone().multiplyScalar(R + 6.25);
             const across = new THREE.Vector3(1, 0, 0).applyQuaternion(frameAt(d, spin));
             const tops = [-0.7, 0, 0.7].map((x) => top.clone().addScaledVector(across, x));
-            if (poleRun) for (let k = 0; k < 3; k++) wireSegs.push([poleRun[k], tops[k]]);
-            poleRun = tops;
+            if (poleRun && !sq) for (let k = 0; k < 3; k++) wireSegs.push([poleRun[k], tops[k]]);
+            poleRun = sq ? null : tops;
           } else poleRun = null;
         }
         if (i % 37 === 11 && near > ROAD_HW + WALK + 3 && !bridge && !byFootbridge && zone === "town") {
@@ -934,7 +948,8 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
             const spin = spinToward(dir, p);
             const b = k.f(spec);
             const gone = inOrbClear(dir, r * 0.6); // on the Orb's plaza: left out
-            if (gone) {
+            const squared = !gone && !!square?.inside(dir); // in Times Square: left out, a tower built on its footprint
+            if (gone || squared) {
               leaveOut(b.g);
               if (b.extras) leaveOut(b.extras);
             } else {
@@ -947,6 +962,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
             }
             addRect(dir, spin, spec.w / 2 + 0.05, spec.d / 2 + 0.6, { h: b.h, hd: spec.d / 2 + 0.1 });
             if (gone) offOrb.push(obstacles[obstacles.length - 1]);
+            if (squared) square.replace({ dir, spin, spec, doorX: b.doorX, vend: !!b.vend, obstacle: obstacles[obstacles.length - 1] });
             if (extra) {
               const q = frameAt(dir, spin);
               addCircle(dir.clone().multiplyScalar(R).add(new THREE.Vector3(spec.w / 2 + 0.6, 0, spec.d / 2 - 0.9).applyQuaternion(q)).normalize(), 0.65);
@@ -968,6 +984,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       }
     });
   }
+  square?.raise(); // Times Square's towers, on the footprints of the buildings it left out
 
   let stage = null;
   /// The spin that turns a spot to face its nearest street.
@@ -1106,9 +1123,9 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   }
 
   // ---- parks: trees, bushes and benches fill the blocks between streets
-  // Trees, bushes and benches that would grow on the Orb's plaza are left out (still drawn at random, so
-  // the rest of the parks come out the same).
-  const onOrb = (d, r) => inOrbClear(d, r);
+  // Trees, bushes and benches that would grow on the Orb's plaza or in Times Square are left out (still
+  // drawn at random, so the rest of the parks come out the same).
+  const onOrb = (d, r) => inOrbClear(d, r) || !!square?.inside(d, r);
   const plant = (g, d, spin, r) => {
     if (onOrb(d, r)) leaveOut(g);
     else bake(g, d, spin);
@@ -1135,7 +1152,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     }
     placed++;
   }
-  for (const o of offOrb) obstacles.splice(obstacles.indexOf(o), 1);
+  for (const o of [...offOrb, ...squareOff]) obstacles.splice(obstacles.indexOf(o), 1);
 
   // Pools of warm light under the street lamps, faded in at night.
   const pools = (() => {
@@ -1252,6 +1269,10 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     }
     tuftsMesh.instanceMatrix.needsUpdate = true;
   }
+
+  // ---- Times Square's plaza: red steps, a statue, cabs and a bus, people, and its screens (built last,
+  // in spots left open, like the Orb)
+  const squareView = square?.finish({ animators, npcs, keepClear, lots, tufts: tuftsMesh, blocked, addRect, addCircle }) ?? null;
 
   // ---------------------------------------------------------------- rendering
 
@@ -1448,6 +1469,8 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     lots,
     stage,
     orb,
+    /// Times Square ({ key, name, d, r, adMeshes, showAd(ad, picture) }), or null.
+    square: squareView,
     /// The lie of the land: places, ground and water heights, what you can stand on.
     terrain,
     /// People who live out in the places (beach, pier, shrine, cabin, works), golden-stamp spots up

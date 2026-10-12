@@ -1,5 +1,5 @@
 {
-  "about": "Ads on the Orb. Only what's listed here shows, so add an ad only once it's paid and approved. image: a picture in web/orb/ (\"orb/name.png\"), square (it's shown as a circle filling the globe's face; round logos fit best), PNG/JPG/WebP; url (website) and/or chart: https links, at least one; text: up to 140 characters; color: the rest of the globe (\"#rrggbb\"; if left out, the picture's edge colour); from/until: when it runs (UTC).",
+  "about": "Ads on the Orb. Only what's listed here shows, so add an ad only once it's paid and approved. image: a picture in web/orb/ (\"orb/name.png\"), square (it's shown as a circle filling the globe's face; round logos fit best), PNG/JPG/WebP; url (website) and/or chart: https links, at least one; text: up to 140 characters; color: the rest of the globe (\"#rrggbb\"; if left out, the picture's edge colour); from/until: when it runs (UTC). The running ad also shows on two of Times Square's big screens.",
   "ads": [
     {
       "name": "PEPES",

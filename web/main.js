@@ -297,6 +297,7 @@ setInterval(() => loadNames(MP_HTTP), 60_000);
 
 const orbAds = W.orb ? createOrbAds(W.orb) : null;
 const orbRay = new THREE.Raycaster();
+let squareAd = null; // the ad Times Square's screens are showing
 /// The card for the ad on the Orb right now: what it is, where its links go, and that it's an ad.
 function showAd() {
   const ad = orbAds?.current();
@@ -577,11 +578,11 @@ canvas.addEventListener("pointermove", (e) => {
 });
 canvas.addEventListener("pointerup", (e) => {
   drag = null;
-  // A quick tap (not a drag to look round) on the Orb opens its ad.
+  // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad.
   if (tap && W.orb && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
     const r = canvas.getBoundingClientRect();
     orbRay.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), W.camera);
-    if (orbRay.intersectObject(W.orb.mesh).length) showAd();
+    if (orbRay.intersectObjects([W.orb.mesh, ...(W.square?.adMeshes ?? [])]).length) showAd();
   }
   tap = null;
 });
@@ -1119,6 +1120,11 @@ function frame() {
   if (got) collected(got);
   life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
   orbAds?.update(dt);
+  // Times Square's big screens show the Orb's ad too.
+  if (W.square && orbAds && orbAds.current() !== squareAd) {
+    squareAd = orbAds.current();
+    W.square.showAd(squareAd, orbAds.pictureOf(squareAd));
+  }
   net.update(dt, t, mode === "play" ? netState() : null, localPos(), mode !== "play");
   waveT = Math.max(0, waveT - dt);
   player.ch.setWave(waveT > 0 ? Math.min(1, waveT * 3, (1.6 - waveT) * 6) : 0);
@@ -1152,7 +1158,7 @@ function frame() {
 /// there for a moment, so walking along a border doesn't flicker).
 let place = null, placeNext = null, placeFor = 0;
 function placeTitle(p, dt) {
-  const z = W.terrain.zoneAt(p);
+  const z = W.square && arc(p, W.square.d) < W.square.r ? W.square : W.terrain.zoneAt(p);
   if (z.key === place) return void (placeNext = null);
   if (z.key !== placeNext) [placeNext, placeFor] = [z.key, 0];
   placeFor += dt;
@@ -1172,6 +1178,8 @@ function nearby(p) {
   if (A.works) out.works = 1 - Math.min(1, Math.max(0, (arc(p, A.works.d) - A.works.r) / 12));
   // The neon district hums too, a little quieter.
   if (A.neon) out.works = Math.max(out.works, 0.6 * (1 - Math.min(1, Math.max(0, (arc(p, A.neon.d) - A.neon.r) / 12))));
+  // And Times Square, the city's busiest corner.
+  if (W.square) out.works = Math.max(out.works, 0.5 * (1 - Math.min(1, Math.max(0, (arc(p, W.square.d) - W.square.r) / 12))));
   return out;
 }
 

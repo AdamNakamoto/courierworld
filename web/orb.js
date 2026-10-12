@@ -185,6 +185,8 @@ export function createOrbAds(orb) {
 
   return {
     current,
+    /// The loaded picture of an ad (null for the house card or one that didn't load).
+    pictureOf: (ad) => pictures.get(ad) ?? null,
     /// Each frame: turn slowly, and change the picture when the next ad's turn comes.
     update(dt) {
       orb.mesh.rotateY(dt * 0.1);
