@@ -134,14 +134,16 @@ up unapproved. Nothing is named "ad…", because ad blockers hide such files and
 
 ```json
 { "name": "Project name", "image": "orb/project.png", "url": "https://project.site",
-  "chart": "https://dexscreener.com/robinhood/0x…", "text": "Up to 140 characters.",
+  "chart": "https://dexscreener.com/…", "text": "Up to 140 characters.", "color": "#ffffff",
   "from": "2026-10-12", "until": "2026-10-19" }
 ```
 
-- `image`: a picture in `web/orb/` (2:1, e.g. 1200x600; PNG, JPG or WebP), shown twice round the globe
-  in LED dots, and on the ad's card.
-- `url` (required) and `chart` (optional): `https://` links only. The card shows where each one leads,
-  says it's an ad, not an endorsement, and opens them in a new tab.
+- The ad covers the whole globe, like the big LED spheres: `color` fills the surface (left out, it's the
+  picture's edge colour) and `image` sits on the front and the back as a perfect circle filling the face.
+  So the picture is square (cropped to its centre if not) and round logos fit best; PNG, JPG or WebP in
+  `web/orb/`. The ad's card shows it as a circle too.
+- `url` (website) and `chart`: `https://` links, at least one. The card shows where each leads, says it's
+  an ad, not an endorsement, and opens them in a new tab.
 - `from` / `until` (UTC): when it runs. Ads take turns, 20 seconds each, at the same moment for
   everyone; an "Advertise on the Orb" card fills a slot each round.
 

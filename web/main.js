@@ -282,11 +282,14 @@ function showAd() {
   $("orbName").textContent = ad.name;
   $("orbText").textContent = ad.text ?? "";
   const site = $("orbSite"), chart = $("orbChart");
-  site.href = ad.url;
+  site.hidden = !ad.url;
+  if (ad.url) site.href = ad.url;
   site.textContent = ad.house ? "DM us on X ↗" : "Visit website ↗";
   chart.hidden = !ad.chart;
   if (ad.chart) chart.href = ad.chart;
-  $("orbDomain").textContent = ad.house ? "" : `Opens ${domainOf(ad.url)}${ad.chart ? ` · chart on ${domainOf(ad.chart)}` : ""}`;
+  chart.classList.toggle("primary", !ad.url); // the main button when it's the only link
+  $("orbDomain").textContent = ad.house ? "" : [ad.url && `Opens ${domainOf(ad.url)}`, ad.chart && `chart on ${domainOf(ad.chart)}`].filter(Boolean).join(" · ");
+  $("orbImg").style.background = ad.color ?? "";
   $("orbNote").hidden = !!ad.house;
   $("orbCard").hidden = false;
 }
