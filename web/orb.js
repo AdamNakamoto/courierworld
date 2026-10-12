@@ -3,9 +3,9 @@
 // (Nothing here is named "ad...": ad blockers hide such files and page elements.)
 //
 // Like the big LED spheres it's modelled on, an ad covers the whole globe: its colour fills the surface
-// and its picture sits on the front and the back as a perfect circle, filling the face you see. Each ad
-// shows for ROTATE seconds, in turn, at the same moment for everyone (it's timed from the clock), and the
-// "advertise here" card fills a slot each round.
+// and its picture sits on the front and the back as a perfect circle, filling the face you see. A running
+// ad stays on the globe until it ends; several take turns, ROTATE seconds each, at the same moment for
+// everyone (it's timed from the clock). The "advertise here" card shows only when no ad is running.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { texFromCanvas } from "./world.js";
 
@@ -173,8 +173,10 @@ export function createOrbAds(orb) {
         pictures.set(ad, img);
         ad.color ??= edgeColour(img);
       }
-      // The paid ads whose picture loaded, then the house card once a round.
-      ads = [...paid.filter((a) => pictures.has(a)), HOUSE];
+      // The paid ads whose picture loaded, taking turns if there are several; the house card only when
+      // there are none.
+      const running = paid.filter((a) => pictures.has(a));
+      ads = running.length ? running : [HOUSE];
     })
     .catch(() => {});
 

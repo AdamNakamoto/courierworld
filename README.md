@@ -144,8 +144,9 @@ up unapproved. Nothing is named "ad…", because ad blockers hide such files and
   `web/orb/`. The ad's card shows it as a circle too.
 - `url` (website) and `chart`: `https://` links, at least one. The card shows where each leads, says it's
   an ad, not an endorsement, and opens them in a new tab.
-- `from` / `until` (UTC): when it runs. Ads take turns, 20 seconds each, at the same moment for
-  everyone; an "Advertise on the Orb" card fills a slot each round.
+- `from` / `until` (UTC): when it runs. A running ad stays on the globe until it ends; several take
+  turns, 20 seconds each, at the same moment for everyone. The "Advertise on the Orb" card shows only
+  when no ad is running.
 
 The globe is placed last in `world.js`, on open ground in sight of the start, and the park trees that
 would stand on its plaza are simply left out, so nothing else in the town moves for it.
