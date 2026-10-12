@@ -1194,7 +1194,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     world.add(tufts);
   }
 
-  // ---- the Orb: a giant LED globe near the post office, showing the ads in ads.json (orb.js paints and
+  // ---- the Orb: a giant LED globe near the post office, showing the ads in orb.json (orb.js paints and
   // turns it). Built last, in a spot left open, so nothing else in the town moves for it.
   let orb = null;
   {

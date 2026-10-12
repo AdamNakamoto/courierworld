@@ -277,22 +277,22 @@ const orbRay = new THREE.Raycaster();
 function showAd() {
   const ad = orbAds?.current();
   if (!ad) return;
-  $("adImg").hidden = !ad.image;
-  if (ad.image) $("adImg").src = ad.image;
-  $("adName").textContent = ad.name;
-  $("adText").textContent = ad.text ?? "";
-  const site = $("adSite"), chart = $("adChart");
+  $("orbImg").hidden = !ad.image;
+  if (ad.image) $("orbImg").src = ad.image;
+  $("orbName").textContent = ad.name;
+  $("orbText").textContent = ad.text ?? "";
+  const site = $("orbSite"), chart = $("orbChart");
   site.href = ad.url;
   site.textContent = ad.house ? "DM us on X ↗" : "Visit website ↗";
   chart.hidden = !ad.chart;
   if (ad.chart) chart.href = ad.chart;
-  $("adDomain").textContent = ad.house ? "" : `Opens ${domainOf(ad.url)}${ad.chart ? ` · chart on ${domainOf(ad.chart)}` : ""}`;
-  $("adNote").hidden = !!ad.house;
-  $("adPanel").hidden = false;
+  $("orbDomain").textContent = ad.house ? "" : `Opens ${domainOf(ad.url)}${ad.chart ? ` · chart on ${domainOf(ad.chart)}` : ""}`;
+  $("orbNote").hidden = !!ad.house;
+  $("orbCard").hidden = false;
 }
-const hideAd = () => ($("adPanel").hidden = true);
-$("adClose").addEventListener("click", hideAd);
-for (const a of [$("adSite"), $("adChart")]) a.addEventListener("click", () => setTimeout(hideAd, 0));
+const hideAd = () => ($("orbCard").hidden = true);
+$("orbClose").addEventListener("click", hideAd);
+for (const a of [$("orbSite"), $("orbChart")]) a.addEventListener("click", () => setTimeout(hideAd, 0));
 /// Tell the room who you are: your courier, and your wallet if you're logged in.
 function introduce() {
   net.hello(player.params, player.rideKey, chainRef?.account ?? null, skinWorn?.id ?? null);
@@ -483,7 +483,7 @@ const keys = new Set();
 const typing = (e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
 addEventListener("keydown", (e) => {
   if (typing(e)) return;
-  if (e.key === "Escape" && !$("adPanel").hidden) {
+  if (e.key === "Escape" && !$("orbCard").hidden) {
     hideAd();
     return;
   }

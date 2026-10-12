@@ -1,5 +1,6 @@
-// The Orb: a giant LED globe across the street from the post office, showing paid ads. The ads are
-// listed in ads.json, and only what's listed there shows, so every ad is approved before it goes up.
+// The Orb: a giant LED globe near the post office, showing paid ads. The ads are listed in orb.json
+// (pictures in orb/), and only what's listed there shows, so every ad is approved before it goes up.
+// (Nothing here is named "ad...": ad blockers hide such files and page elements.)
 // Each one shows for ROTATE seconds, in turn, at the same moment for everyone (it's timed from the clock),
 // and the "advertise here" card fills the gaps.
 import * as THREE from "https://esm.sh/three@0.160.0";
@@ -14,17 +15,17 @@ const HOUSE = {
   url: ADVERTISE_URL,
 };
 
-/// The ads in ads.json that are well-formed and running now.
+/// The ads in orb.json that are well-formed and running now.
 function validAds(list, now = Date.now()) {
   const out = [];
   for (const a of Array.isArray(list) ? list : []) {
     const ok =
       typeof a?.name === "string" && a.name.length > 0 && a.name.length <= 40 &&
-      typeof a.image === "string" && /^ads\/[a-z0-9._-]+\.(png|jpe?g|webp)$/i.test(a.image) &&
+      typeof a.image === "string" && /^orb\/[a-z0-9._-]+\.(png|jpe?g|webp)$/i.test(a.image) &&
       isHttps(a.url) && (a.chart == null || isHttps(a.chart)) &&
       (a.text == null || (typeof a.text === "string" && a.text.length <= 140));
     if (!ok) {
-      console.warn("ads.json: skipping a malformed ad", a);
+      console.warn("orb.json: skipping a malformed entry", a);
       continue;
     }
     const from = Date.parse(a.from ?? "1970-01-01"), until = Date.parse(a.until ?? "2999-01-01");
@@ -113,7 +114,7 @@ const loadImage = (src) =>
     img.src = src;
   });
 
-/// `orb`: the globe from world.js ({ mesh }). Loads ads.json, paints each ad and turns the globe.
+/// `orb`: the globe from world.js ({ mesh }). Loads orb.json, paints each ad and turns the globe.
 export function createOrbAds(orb) {
   let ads = [HOUSE];
   const pictures = new Map(); // ad -> its loaded picture
@@ -125,7 +126,7 @@ export function createOrbAds(orb) {
   orb.mesh.material.needsUpdate = true;
   let shown = HOUSE;
 
-  fetch("./ads.json", { cache: "no-store" })
+  fetch("./orb.json", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : { ads: [] }))
     .then(async (cfg) => {
       const paid = validAds(cfg.ads);

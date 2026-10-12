@@ -129,15 +129,16 @@ add the X link (https://x.com/PlayCourierWld) to the collection's links and turn
 
 The Orb (`web/orb.js`) is a giant LED globe near the main post office that shows paid ads. Booking is
 manual: a project DMs @PlayCourierWld, pays ETH to the treasury, and once you approve the ad you add it
-to `web/ads.json` and push. Only what's listed there shows, so nothing goes up unapproved.
+to `web/orb.json` (its picture in `web/orb/`) and push. Only what's listed there shows, so nothing goes
+up unapproved. Nothing is named "ad…", because ad blockers hide such files and page elements.
 
 ```json
-{ "name": "Project name", "image": "ads/project.png", "url": "https://project.site",
+{ "name": "Project name", "image": "orb/project.png", "url": "https://project.site",
   "chart": "https://dexscreener.com/robinhood/0x…", "text": "Up to 140 characters.",
   "from": "2026-10-12", "until": "2026-10-19" }
 ```
 
-- `image`: a picture in `web/ads/` (2:1, e.g. 1200x600; PNG, JPG or WebP), shown twice round the globe
+- `image`: a picture in `web/orb/` (2:1, e.g. 1200x600; PNG, JPG or WebP), shown twice round the globe
   in LED dots, and on the ad's card.
 - `url` (required) and `chart` (optional): `https://` links only. The card shows where each one leads,
   says it's an ad, not an endorsement, and opens them in a new tab.
