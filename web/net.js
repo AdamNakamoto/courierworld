@@ -113,6 +113,68 @@ function emoteTexture({ e, t }) {
   return texFromCanvas(c);
 }
 
+const CHAT_FONT = '600 34px system-ui, -apple-system, "Segoe UI", "Noto Sans", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo", "Noto Sans CJK SC", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+
+/// A chat line as a speech bubble: wrapped into at most three lines, any script. Returns the texture
+/// and its size in metres.
+function bubbleTexture(text) {
+  const c = document.createElement("canvas");
+  const g = c.getContext("2d");
+  g.font = CHAT_FONT;
+  const maxW = 440, lineH = 42;
+  // Break between words where the language has spaces, between characters where it doesn't.
+  const parts = typeof Intl !== "undefined" && Intl.Segmenter
+    ? [...new Intl.Segmenter(undefined, { granularity: "word" }).segment(text)].map((x) => x.segment)
+    : text.split(/(\s+)/);
+  const lines = [];
+  let line = "";
+  for (const part of parts) {
+    if (g.measureText(line + part).width <= maxW) {
+      line += part;
+      continue;
+    }
+    if (line.trim()) lines.push(line.trim());
+    line = "";
+    for (const ch of part) {
+      if (g.measureText(line + ch).width > maxW) {
+        lines.push(line);
+        line = "";
+      }
+      line += ch;
+    }
+  }
+  if (line.trim()) lines.push(line.trim());
+  if (lines.length > 3) {
+    lines.length = 3;
+    lines[2] = lines[2].slice(0, -1) + "…";
+  }
+  const w = Math.max(...lines.map((l) => g.measureText(l).width)) + 44;
+  c.width = Math.ceil(w) + 12;
+  c.height = lines.length * lineH + 54;
+  const bh = lines.length * lineH + 24, x = 6, cx = c.width / 2;
+  g.fillStyle = "#fbf8ef";
+  g.strokeStyle = "#283033";
+  g.lineWidth = 5;
+  g.beginPath();
+  g.roundRect(x, 4, c.width - 12, bh, 18);
+  g.fill();
+  g.stroke();
+  g.beginPath();
+  g.moveTo(cx - 13, bh + 2);
+  g.lineTo(cx, bh + 24);
+  g.lineTo(cx + 14, bh + 2);
+  g.fill();
+  g.stroke();
+  g.fillRect(cx - 12, bh - 4, 25, 8);
+  g.fillStyle = "#283033";
+  g.font = CHAT_FONT;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  lines.forEach((l, i) => g.fillText(l, cx, 16 + lineH / 2 + i * lineH));
+  const k = 0.0045; // metres per pixel
+  return { tex: texFromCanvas(c), w: c.width * k, h: c.height * k };
+}
+
 /// Emotes popping up over people's heads: a little pool of sprites that rise, then shrink away.
 function createEmotes(world, noNormals) {
   const textures = EMOTES.map(emoteTexture);
@@ -125,17 +187,36 @@ function createEmotes(world, noNormals) {
     s.renderOrder = 3;
     world.add(s);
     noNormals.push(s);
-    pool.push({ s, who: null, age: 0, life: 0, h: 2.4, w: 1, ht: 1 });
+    pool.push({ s, who: null, age: 0, life: 0, h: 2.4, w: 1, ht: 1, own: null });
+  }
+  /// The sprite for `who`: theirs if they have one up, else a free one, else the oldest. A chat bubble's
+  /// own texture is freed when its sprite is reused.
+  function slot(who) {
+    const b = pool.find((p) => p.who === who) ?? pool.find((p) => p.life <= 0) ?? pool.reduce((a, p) => (p.age > a.age ? p : a));
+    b.own?.dispose();
+    b.own = null;
+    return b;
   }
   return {
     show(who, i, h = 2.4) {
       const em = EMOTES[i];
       if (!em) return;
-      const b = pool.find((p) => p.who === who) ?? pool.find((p) => p.life <= 0) ?? pool.reduce((a, p) => (p.age > a.age ? p : a));
+      const b = slot(who);
       b.s.material.map = textures[i];
       b.s.material.needsUpdate = true;
       [b.who, b.age, b.life, b.h] = [who, 0, 2.6, h];
       [b.w, b.ht] = em.t ? [2.2, 0.69] : [0.95, 0.95];
+      b.s.visible = true;
+    },
+    /// A chat line over someone's head, up longer the longer it is.
+    say(who, text, h = 2.4) {
+      const b = slot(who);
+      const { tex, w, h: ht } = bubbleTexture(text);
+      b.own = tex;
+      b.s.material.map = tex;
+      b.s.material.needsUpdate = true;
+      [b.who, b.age, b.life, b.h] = [who, 0, Math.min(9, 4 + [...text].length / 20), h];
+      [b.w, b.ht] = [w, ht];
       b.s.visible = true;
     },
     update(dt) {
@@ -145,6 +226,8 @@ function createEmotes(world, noNormals) {
         if (b.age >= b.life || !b.who) {
           b.life = 0;
           b.who = null;
+          b.own?.dispose();
+          b.own = null;
           b.s.visible = false;
           b.s.scale.setScalar(0);
           continue;
@@ -176,13 +259,17 @@ function orient(obj, up, forward) {
 /// from the golden stamp hunt,
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
 /// (null while not connected).
-export function createNet(W, { url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {} }) {
+export function createNet(W, {
+  url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {},
+  onChat = () => {}, onChatHistory = () => {}, onChatError = () => {},
+}) {
   const players = new Map(); // id -> { hello, root, rider, tag, pos, fwd, target, h, air, spd, swim, wave }
   const anchor = new THREE.Object3D(); // where you are on the planet, for your own emotes
   W.world.add(anchor);
   const emotes = createEmotes(W.world, W.noNormals);
   let ws = null, me = null, started = false, retry = 1, sendIn = 0, pingIn = 0, last = null;
   let code = null, voucherWait = null; // the room's sign-in code for this connection; a pending voucher request
+  let myId = null; // the room's name for you on this connection
   const grabs = []; // stamps picked up this frame: sent right after where you are, so the room checks the spot
 
   const count = () => onCount(ws?.readyState === 1 && me ? players.size + 1 : null);
@@ -255,11 +342,18 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
     p.target = { p: new THREE.Vector3(x, y, z).normalize(), f: new THREE.Vector3(fx, fy, fz), h, air, spd, swim };
   }
 
+  /// A chat line from the room: [id, name, text, time] -> { id, name, text, time, mine }.
+  function chatLine([id, name, text, time]) {
+    return { id: String(id), name: String(name), text: String(text), time: Number(time), mine: id === myId };
+  }
+
   function handle(m) {
     switch (m[0]) {
       case "welcome":
         for (const [id, hello, s] of m[2]) add(id, hello, s);
         code = m[3] ?? null;
+        myId = m[1];
+        onChatHistory((m[4] ?? []).map(chatLine));
         onHunt(null); // a new connection: sign in again to hunt
         break;
       case "hunt":
@@ -286,6 +380,12 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
         add(m[1], m[2], p?.target ? [...p.target.p.toArray(), ...p.target.f.toArray(), p.target.h, p.target.air, p.target.spd, p.target.swim] : null);
         break;
       }
+      case "chat":
+        onChat(chatLine(m.slice(1)));
+        return;
+      case "chatno":
+        onChatError(m[1]);
+        return;
       case "leave":
         remove(m[1]);
         break;
@@ -378,6 +478,18 @@ export function createNet(W, { url, makeRider, dispose, tier = () => null, onCou
         p.wave = Math.max(0, p.wave - dt);
         p.rider.ch.setWave(p.wave > 0 ? Math.min(1, p.wave * 3, (1.6 - p.wave) * 6) : 0);
       }
+    },
+    /// Send a chat line to everyone (checked again by the room). False if not connected.
+    chat(text) {
+      if (ws?.readyState !== 1) return false;
+      send(["chat", text]);
+      return true;
+    },
+    /// Show a chat line as a bubble over whoever said it, if they're in view (you included).
+    bubble(id, text) {
+      if (id === myId) return emotes.say(anchor, text, 2.55);
+      const p = players.get(id);
+      if (p?.root.visible) emotes.say(p.rider.group, text, p.rider.ride ? 3.2 : 2.85);
     },
     /// The golden stamp hunt: sign in with `wallet`, signing the room's message with `sign(message)`.
     async huntSignIn(wallet, sign) {

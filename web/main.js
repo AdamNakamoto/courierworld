@@ -5,6 +5,7 @@ import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { createNet, EMOTES } from "./net.js";
+import { createChat } from "./chat.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
@@ -258,7 +259,12 @@ const net = createNet(W, {
     $("online").hidden = n === null;
     if (n !== null) $("onlineN").textContent = n.toLocaleString();
   },
+  // Chat: lines from everyone on the planet (see chat.js).
+  onChat: (line) => chatUI.add(line),
+  onChatHistory: (lines) => chatUI.history(lines),
+  onChatError: (why) => chatUI.error(why),
 });
+const chatUI = createChat(net, { toast, me: () => chainRef?.account ?? null });
 /// Tell the room who you are: your courier, and your wallet if you're logged in.
 function introduce() {
   net.hello(player.params, player.rideKey, chainRef?.account ?? null, skinWorn?.id ?? null);
@@ -462,6 +468,11 @@ addEventListener("keydown", (e) => {
   if (dialog && (e.key === " " || e.key === "Enter")) {
     e.preventDefault();
     advance();
+    return;
+  }
+  if ((e.key === "Enter" || (e.key.toLowerCase() === "t" && !e.metaKey && !e.ctrlKey)) && mode === "play") {
+    e.preventDefault();
+    chatUI.open();
     return;
   }
   if (e.key.toLowerCase() === "e" && mode === "play" && !dialog) {
@@ -818,7 +829,7 @@ const GFX = {
   medium: { quality: 0.85, maxDpr: 1.5, shadows: "low", tufts: true },
   low: { quality: 0.65, maxDpr: 1, shadows: "off", tufts: false },
 };
-const settings = { gfx: "auto", fps: 0, showFps: false }; // fps: 0 is as fast as the screen refreshes
+const settings = { gfx: "auto", fps: 0, showFps: false, chat: true }; // fps: 0 is as fast as the screen refreshes
 try { Object.assign(settings, JSON.parse(localStorage.getItem("courier:settings")) ?? {}); } catch {}
 if (!GFX[settings.gfx]) settings.gfx = "auto";
 function applySettings() {
@@ -827,6 +838,7 @@ function applySettings() {
   W.setQuality(quality);
   W.setGraphics(g);
   $("fps").hidden = !settings.showFps;
+  chatUI.setEnabled(settings.chat !== false);
   for (const b of $("settings").querySelectorAll("button[data-k]")) b.classList.toggle("on", String(settings[b.dataset.k]) === b.dataset.v);
   try { localStorage.setItem("courier:settings", JSON.stringify(settings)); } catch {}
 }
@@ -836,6 +848,10 @@ $("settings").addEventListener("click", (e) => {
   const { k, v } = b.dataset;
   settings[k] = k === "gfx" ? v : k === "fps" ? Number(v) : v === "true";
   applySettings();
+});
+$("chatUnmute").addEventListener("click", () => {
+  chatUI.unmuteAll();
+  toast("Everyone in chat is unmuted");
 });
 $("setBtn").addEventListener("click", () => {
   $("settings").hidden = !$("settings").hidden;

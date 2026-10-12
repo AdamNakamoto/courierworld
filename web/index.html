@@ -39,13 +39,21 @@
     <div class="card bag"><span class="env" aria-hidden="true"></span><b id="bagN">0</b> in bag <span class="sep"></span> delivered <b id="doneN">0</b> <span class="sep"></span> <span class="gold" aria-label="Golden stamps">★</span> <b id="stampN">0</b></div>
     <div id="compass" class="card"><span id="arrow">▲</span><span id="target"></span></div>
     <div id="online" class="card online" hidden title="Couriers on the planet right now">👥 <b id="onlineN">1</b> online</div>
-    <div id="help" class="card help">WASD / arrows to walk · Shift to run · Space to jump · E to talk or wave · 1–9, 0 to emote · drag to look</div>
+    <div id="help" class="card help">WASD / arrows to walk · Shift to run · Space to jump · E to talk or wave · 1–9, 0 to emote · Enter to chat · drag to look</div>
     <button id="officeBtn" class="office-btn" hidden>Post office <kbd>P</kbd></button>
     <button id="skinMintHud" class="skin-mint-hud" hidden><span class="em" aria-hidden="true">👕</span><span class="long">Mint Limited Courier Skin</span><span class="short">Mint Skin</span></button>
     <button id="musicBtn" class="music-btn" aria-label="Music" title="Music (M)">♪</button>
     <button id="chatBtn" class="music-btn chat-btn" aria-label="Emotes" title="Emotes (1–9, 0)" aria-expanded="false">😊</button>
     <div id="phrases" class="phrases card" hidden></div>
     <div id="emoteBar" class="emote-bar" aria-label="Emotes"></div>
+    <div id="chat" class="chat">
+      <div id="chatLog" class="chat-log" aria-live="polite"></div>
+      <button id="chatOpen" class="chat-open" type="button">💬 Press Enter to chat</button>
+      <form id="chatForm" class="chat-form" hidden>
+        <input id="chatInput" maxlength="300" autocomplete="off" autocapitalize="sentences" enterkeyhint="send" placeholder="Say something (text only, no links)" aria-label="Chat message">
+        <button class="chat-send" type="submit">Send</button>
+      </form>
+    </div>
     <button id="setBtn" class="music-btn set-btn" aria-label="Settings" title="Graphics and frame rate" aria-expanded="false">⚙︎</button>
     <button id="fullBtn" class="music-btn full-btn" aria-label="Fullscreen" title="Fullscreen (F)"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div id="settings" class="settings card" hidden>
@@ -56,6 +64,9 @@
       <div class="seg"><button data-k="fps" data-v="30">30</button><button data-k="fps" data-v="60">60</button><button data-k="fps" data-v="0">Max</button></div>
       <h3>FPS counter</h3>
       <div class="seg"><button data-k="showFps" data-v="false">Off</button><button data-k="showFps" data-v="true">On</button></div>
+      <h3>Chat</h3>
+      <div class="seg"><button data-k="chat" data-v="true">Show</button><button data-k="chat" data-v="false">Hide</button></div>
+      <button id="chatUnmute" class="unmute" type="button">Unmute everyone</button>
     </div>
     <div id="fps" class="card fps" hidden>– FPS</div>
     <button id="soundsBtn" class="music-btn sounds-btn" aria-label="Sounds" title="Sounds (N)"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>

@@ -60,8 +60,10 @@ reload the page.
 Other players walk the planet with you: `multiplayer/` is a Cloudflare Worker with one Durable
 Object holding the planet's room. Each player says who they are (their courier's look and ride,
 and their wallet if logged in), then sends where they are while moving; the room passes it on to
-the players near them, plus waves and the preset phrases (keys 1-8). Nothing in it touches the
-chain. `GET /count` tells the title screen how many are playing.
+the players near them, plus waves and emotes (keys 1-9, 0), and chat lines to everyone (text only:
+`web/chat-rules.js`, shared with the game, refuses links and wallet addresses; one line every two
+seconds; the last 30 kept for newcomers). It reads the chain only to check worn Courier Skins, and
+signs golden stamp hunt vouchers. `GET /count` tells the title screen how many are playing.
 
 ```bash
 cd multiplayer

@@ -337,3 +337,32 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   .skin-mint-hud .long { display: none; }
   .skin-mint-hud .short { display: inline; }
 }
+
+/* Chat: lines from everyone, above the emote bar (top left on touch screens, where the joystick is) */
+.chat { position: absolute; left: 14px; bottom: 84px; width: min(380px, calc(100vw - 28px)); display: grid; gap: 6px; pointer-events: none !important; }
+.chat > * { pointer-events: auto; }
+.chat[hidden] { display: none; }
+.chat-log { max-height: 190px; overflow-y: auto; display: grid; gap: 3px; align-content: end; scrollbar-width: none; }
+.chat .line {
+  justify-self: start; max-width: 100%; padding: 3px 10px 4px; background: rgba(251, 248, 239, .92); border: 2px solid var(--ink);
+  border-radius: 12px; font: 400 16px/1.3 system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif; color: var(--ink);
+  overflow-wrap: anywhere; transition: opacity .6s;
+}
+.chat .line.old { opacity: 0; pointer-events: none; }
+.chat.open .line.old { opacity: 1; pointer-events: auto; }
+.chat .who { display: inline; font: 700 13px ui-monospace, Menlo, monospace; color: #3f6fbf; background: none; border: 0; padding: 0 6px 0 0; cursor: pointer; }
+.chat .who.me { color: #b4443c; cursor: default; }
+.chat-open {
+  justify-self: start; font: 400 12px/1 Bungee, Impact, sans-serif; letter-spacing: .03em; color: var(--ink);
+  background: rgba(251, 248, 239, .88); border: 2px solid var(--ink); border-radius: 14px; padding: 6px 10px; cursor: pointer;
+}
+.chat-open[hidden], .chat-form[hidden] { display: none; }
+.chat-form { display: flex; gap: 6px; background: var(--paper); border: 2.5px solid var(--ink); border-radius: 6px; padding: 5px; box-shadow: 3px 4px 0 rgba(40, 48, 51, 0.85); }
+.chat-form input { flex: 1; min-width: 0; font: 400 16px system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif; border: 0; background: transparent; outline: none; color: var(--ink); padding: 4px; }
+.chat-send { font: 400 12px/1 Bungee, Impact, sans-serif; background: var(--yellow); color: var(--ink); border: 2px solid var(--ink); border-radius: 3px; padding: 6px 10px; cursor: pointer; }
+.settings .unmute { margin-top: 8px; font: 400 11px/1 Bungee, Impact, sans-serif; background: #fff; color: var(--ink); border: 2px solid var(--ink); border-radius: 3px; padding: 6px 8px; cursor: pointer; }
+@media (hover: none), (max-width: 640px) {
+  .chat { top: 196px; bottom: auto; left: 10px; width: calc(100vw - 80px); }
+  .chat-log { max-height: 118px; }
+  .chat .line { font-size: 14px; }
+}

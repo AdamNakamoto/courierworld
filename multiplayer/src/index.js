@@ -2,15 +2,16 @@
 // are (their courier's look and ride, and a name), then sends where they are a few times a second
 // while moving. The room passes that on to the players near them, and now and then to everyone
 // else, so the far side of the planet still knows who's about. Waves and preset phrases go to the
-// players nearby. It also runs the golden stamp hunt: a hunter signs in with their wallet, the room
-// checks each find against where they've actually been, and signs vouchers the StampHunt contract
-// pays $STAMP for. Positions and emotes are just for show; only the vouchers touch the chain. A player
+// players nearby, and chat lines (text only: no links) to everyone. It also runs the golden stamp
+// hunt: a hunter signs in with their wallet, the room checks each find against where they've
+// actually been, and signs vouchers the StampHunt contract pays $STAMP for. Positions and emotes are just for show; only the vouchers touch the chain. A player
 // wearing a Courier Skin is shown in it only once the room has read on-chain that their wallet owns it.
 import { DurableObject } from "cloudflare:workers";
 import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import SPOTS from "../../web/hunt-spots.json";
 import { HUNT_STAMPS, huntDay, pickSpots, authMessage } from "../../web/hunt-pick.js";
+import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -31,6 +32,10 @@ const RIDES = ["foot", "skate", "bike", "moped", "plane"];
 const SKIN_SUPPLY = 999;
 const SKINS_ABI = parseAbi(["function ownerOf(uint256) view returns (address)", "function designOf(uint256) view returns (uint256)"]);
 const SKIN_CHECK_MS = 60_000; // how long a skin's owner is trusted before it's read again
+const CHAT_KEEP = 30; // chat lines kept for players who join later
+const CHAT_RECENT_MS = 60 * 60_000; // ...if they're less than an hour old
+const CHAT_ROOM_MAX = 20; // lines from everyone together every five seconds
+const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 // The hunt: how close (in metres, and in height) a hunter's last reported position must be to a stamp
 // for the find to count, the fastest anyone moves (paper plane, running: ~13 m/s; this allows lag),
@@ -158,7 +163,34 @@ export class Planet extends DurableObject {
       if (Number.isInteger(i) && i >= -1 && i < PHRASES) this.broadcast(ws, ["say", a.id, i], a.s);
       return;
     }
+    if (m[0] === "chat") return this.chat(ws, a, m[1], now);
     if (m[0] === "auth" || m[0] === "hunt" || m[0] === "grab" || m[0] === "voucher") return this.hunt(ws, a, m, now);
+  }
+
+  // ---------------------------------------------------------------- chat
+
+  /// The chat lines kept for newcomers: [id, name, text, time], oldest first.
+  async chatLog() {
+    return (this.log ??= (await this.ctx.storage.get("chat")) ?? []);
+  }
+
+  /// A line from one player to everyone on the planet, if it passes the rules (no links or wallet
+  /// addresses, 140 characters) and the limits (one every two seconds, no repeats, the room not flooded).
+  async chat(ws, a, raw, now) {
+    const r = cleanChat(raw);
+    if (r.error) return send(ws, ["chatno", r.error]);
+    if (now - (a.chatAt ?? 0) < CHAT_EVERY_MS) return send(ws, ["chatno", "Slow down a little."]);
+    if (r.text === a.chatLast && now - a.chatAt < 30_000) return send(ws, ["chatno", "You just said that."]);
+    if (!(now - this.chatT0 < 5000)) [this.chatT0, this.chatN] = [now, 0];
+    if (++this.chatN > CHAT_ROOM_MAX) return send(ws, ["chatno", "The chat is busy. Try again in a moment."]);
+    [a.chatAt, a.chatLast] = [now, r.text];
+    ws.serializeAttachment(a);
+    const line = [a.id, a.hello.addr ? short(a.hello.addr) : "Guest", r.text, now];
+    const log = await this.chatLog();
+    log.push(line);
+    if (log.length > CHAT_KEEP) log.splice(0, log.length - CHAT_KEEP);
+    await this.ctx.storage.put("chat", log);
+    this.broadcast(null, ["chat", ...line]);
   }
 
   // ---------------------------------------------------------------- the golden stamp hunt
@@ -181,7 +213,8 @@ export class Planet extends DurableObject {
     a.hello = hello;
     ws.serializeAttachment(a);
     if (first) {
-      send(ws, ["welcome", a.id, this.others(ws).map((o) => [this.info(o).id, this.info(o).hello, this.info(o).s]), a.code]);
+      const recent = (await this.chatLog()).filter((l) => Date.now() - l[3] < CHAT_RECENT_MS);
+      send(ws, ["welcome", a.id, this.others(ws).map((o) => [this.info(o).id, this.info(o).hello, this.info(o).s]), a.code, recent]);
       this.broadcast(ws, ["join", a.id, hello]);
     } else {
       this.broadcast(ws, ["look", a.id, hello]); // they switched couriers
