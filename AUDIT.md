@@ -374,3 +374,46 @@ Report: https://explorer.imd.fun/jobs/1cb3a064-ca38-4c22-954d-7a748cd4fb23
 Tests: `test/SkinsStampSale.t.sol`, 27 unit tests (with the real CourierSkins and StampToken, including every
 edge the audit listed) and the fork test.
 
+
+## 12. New: the launchpad (CourierPad, PadToken)
+
+`contracts/src/CourierPad.sol` and `contracts/src/PadToken.sol` (not deployed yet). Players launch their own
+tokens inside the game.
+
+- `launch(name, symbol, metadata, maxStampFee)` / `launchWithPermit(..., deadline, v, r, s)`: needs an open post
+  office (`PostOffice.offices(msg.sender).open`), burns `stampFee` $STAMP from the launcher (`burnFrom`; reverts
+  `FeeChanged(stampFee)` if that's more than `maxStampFee`), deploys a `PadToken` (1B minted to the pad), sends 5%
+  to `dropRecipient`, initializes the token's IMD pool at the current `startTick` and adds the other 95% (less a
+  1e9-wei rounding buffer, burned) as single-sided liquidity owned by the pad. Name 1–32 bytes, symbol 1–12,
+  metadata ≤ 2048. The permit path mirrors SkinsStampSale's audited fix: the permit is for `maxStampFee`, and a
+  failed permit with no allowance to fall back on passes its error on.
+- The hook code (`beforeSwap`/`afterSwap`, the 4% fee on the IMD side in all four swap kinds, rounding up, full
+  fills only, fees held as PoolManager claims until `collectProtocolFees`) is StampHook's unchanged, audited in
+  ea514609 and ca28d248, now keyed per pool (`tokenOfPool`). `beforeInitialize` and `beforeAddLiquidity` revert
+  for anyone but the pad itself, so nobody else can create a pool with this hook or add liquidity; there is no
+  remove function, so launch liquidity is locked forever.
+- Each launch keeps the start tick it launched at (`launchTick`), so `sellPriceLimit`, `price` and `marketCap`
+  don't move when the owner changes `startTick`. `launches(token)` has the same shape as StampHook's, so
+  StampRouter and StampEthRouter are reused unchanged (deployed by the pad's constructor).
+- Start ticks are bounded to [-300,000, 400,000] (tokens per IMD): within them the launch liquidity is above
+  zero and about 12× below v4's per-tick cap for 950M tokens; a test launches and trades at both ends.
+- `PadToken`: OpenZeppelin ERC20 + ERC20Permit, no owner (`owner()` returns 0), no mint after the constructor,
+  no tax, no blocklist; stores `pad`, `creator` and `metadata`.
+- Owner (two-step, renounceable at any time): `setStampFee`, `setStartTick` (bounded, future launches only),
+  `setDropRecipient`, `setFeeRecipient`. The recipients can also move their own address. None of it touches
+  launched tokens, pools or anyone's balances.
+
+Trust and known limits:
+- The treasury receives 5% of every launch and can sell it into the pool like any holder (the owner's
+  choice: drops are run by hand). A sell is bounded by the IMD in the pool.
+- Names, symbols and metadata are not filtered on-chain; the game hides tokens on its own list. A token can
+  copy another's name (including $STAMP's); the game shows the contract address.
+- No launch-and-buy in one transaction: the creator buys after launching. Robinhood Chain's sequencer is
+  first-come first-served, without a public mempool.
+- Sells before the first buy can't fill (the pool holds no IMD yet), as for $STAMP.
+
+Tests: `test/CourierPad.t.sol`, 34 tests run twice (IMD as currency0 and as currency1): launch split, fee burn
+and bound, permit paths, limits, every allowed start price, independent pools, the 4% in all four swap kinds,
+partial fills, ETH routing, fee collection, admin, and a fuzz that every token bought sells back with the fees
+adding up. `test/CourierPad.fork.t.sol` launches and trades on Robinhood Chain state (real PoolManager, IMD,
+$STAMP burn, post office check, IMD/ETH pool).

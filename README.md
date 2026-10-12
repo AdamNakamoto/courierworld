@@ -159,6 +159,28 @@ The collection's page on OpenSea comes from `contractURI()`: name, description (
 add the X link (https://x.com/PlayCourierWld) to the collection's links and turn on creator earnings
 (the registry is already the transfer validator). `./dev.sh` deploys local skins with the sale open; "Reveal skins" in the panel reveals them.
 
+## The launchpad
+
+Any player with a post office can launch their own token, inside the game (`CourierPad.sol`, not deployed
+yet). A launch burns a $STAMP fee (500 at launch; the owner can change it, and launchers name the most
+they'll pay) and creates a `PadToken`: 1,000,000,000 supply, plain ERC-20 with permit, no owner, no tax.
+
+- 95% goes into the token's Uniswap v4 pool against IMD as single-sided liquidity, locked forever (the pad
+  has no way to remove it). The starting market cap is the same for every launch (about $5,000 at deploy;
+  the owner can change it for future launches).
+- 5% goes to the treasury, for drops to players with a post office.
+- Every trade pays 4% of its IMD side to the protocol, through any router: the pad is every pool's hook,
+  with the same fee code as $STAMP's `StampHook`. Buy and sell with IMD, or with ETH in one transaction
+  (the same routers as $STAMP).
+
+Learned from PepesFamily (fixed-supply v4 launches, locked liquidity, hook fees), without its holder rewards.
+
+```bash
+cd contracts
+./script/deploy-pad.sh --sender 0x7221…                                   # dry run on a fork
+./script/deploy-pad.sh --broadcast --browser --browser-disable-open      # PAD_STAMP_FEE, PAD_START_MCAP_USD in launch.env
+```
+
 ## Ads on the Orb
 
 The Orb (`web/orb.js`) is a giant LED globe near the main post office that shows paid ads. Booking is
@@ -260,10 +282,11 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 | `CourierSkins.sol` | 999 cosmetic skins: blind mint, commit-reveal shuffle, on-chain metadata, enforced 5% royalty (ERC721-C) |
 | `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
+| `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
-cd contracts && forge test                                             # 168 tests
-forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
+cd contracts && forge test                                             # 237 tests
+forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 
 ## Deploying to Robinhood Chain

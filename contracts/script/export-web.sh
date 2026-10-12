@@ -68,6 +68,14 @@ if [ -f "$GAME" ]; then
     jq --slurpfile s "$SALE" --argjson saleAbi "$(abi SkinsStampSale)" \
       '.contracts.skinsStamp = $s[0].sale | .abis.skinsStamp = $saleAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
+  # The launchpad, once deployed (script/deploy-pad.sh writes deployments/robinhood-pad.json).
+  PAD=deployments/robinhood-pad.json
+  if [ -f "$PAD" ]; then
+    tmp=$(mktemp)
+    jq --slurpfile p "$PAD" --argjson padAbi "$(abi CourierPad)" --argjson padTokenAbi "$(abi PadToken)" \
+      '.contracts.pad = $p[0].pad | .contracts.padRouter = $p[0].router | .contracts.padEthRouter = $p[0].ethRouter
+       | .padBlock = $p[0].block | .abis.pad = $padAbi | .abis.padToken = $padTokenAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else
   jq -n \
