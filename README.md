@@ -99,7 +99,8 @@ the finds or the day after, all drops in one transaction from the Post Office pa
 Only the treasury (the contract's owner) starts drops, from that same section: a launchpad token (its 5% of
 each launch) or $STAMP, which pays for the golden stamps. Each drop sets the tokens per coin, how many coins are
 out a day (1 to 48; 24 golden stamps for $STAMP), how many one wallet is paid for a day, how many are paid a day
-across everyone (required: every player can collect each coin, so this caps a day), and for how many days. The treasury can top a drop up, end it after today, take what's left
+across everyone (required, up to 10,000: every player can collect each coin, so this caps a day, and it's the most a
+leaked server key could take from a drop a day), and for how many days. The treasury can top a drop up, end it after today, take what's left
 back once nobody can claim, and pause every claim (if the server's key leaks, say). Times Square's ticker
 announces the drops that are running.
 
@@ -306,7 +307,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
-cd contracts && forge test                                             # 338 tests
+cd contracts && forge test                                             # 347 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 

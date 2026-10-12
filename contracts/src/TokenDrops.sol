@@ -44,6 +44,8 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
     /// @notice The most coins a token drop puts out in a day.
     uint16 public constant MAX_SPOTS = 48;
     uint32 public constant MAX_DAYS = 365;
+    /// @notice The most coins a drop pays a day across everyone: with `perCoin`, the most a day can ever pay out.
+    uint256 public constant MAX_DAILY_COINS = 10_000;
     /// @notice A day's finds can be claimed that day and the next.
     uint32 public constant CLAIM_DAYS = 2;
 
@@ -162,11 +164,14 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
     }
 
     /// @notice What `player` would be paid for a voucher saying they found `coins` of drop `id` on `day`: nothing while
-    ///         paused, or for a day the drop wasn't running or that can't be claimed now.
+    ///         paused, for a wallet without a post office, or for a day the drop wasn't running or that can't be
+    ///         claimed now.
     function claimable(uint256 id, address player, uint32 day, uint16 coins) public view returns (uint16 n, uint256 amount) {
         if (id >= _drops.length || paused) return (0, 0);
         Drop storage d = _drops[id];
         if (!_open(d, day)) return (0, 0);
+        (bool open,,,,,,,,) = postOffice.offices(player);
+        if (!open) return (0, 0);
         return _payable(id, d, player, day, coins);
     }
 
@@ -235,7 +240,9 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         if (id >= _drops.length) revert UnknownDrop();
         Drop storage d = _drops[id];
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(FINDS_TYPEHASH, msg.sender, id, day, coins, deadline)));
-        if (ECDSA.recover(digest, signature) != signer) revert BadSignature();
+        // (a malformed signature counts as forged too)
+        (address who, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, signature);
+        if (err != ECDSA.RecoverError.NoError || who != signer) revert BadSignature();
         uint32 now_ = today();
         bytes4 stale;
         if (block.timestamp > deadline) stale = Expired.selector;
@@ -268,7 +275,9 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
     /// @param spots Coins out each day (1 to MAX_SPOTS; a $STAMP drop always has the 24 golden stamps).
     /// @param maxPerWallet Coins one wallet is paid for per day (1 to `spots`).
     /// @param dailyCoins Coins paid per day across everyone (every player can collect each coin, so this is what
-    ///        bounds a day's payout; at least `maxPerWallet`).
+    ///        bounds a day's payout: `dailyCoins * perCoin` is the most a day can pay; `maxPerWallet` to
+    ///        MAX_DAILY_COINS).
+    /// @param startDay Today, or up to a year ahead.
     function createDrop(
         address token,
         uint256 perCoin,
@@ -287,7 +296,8 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         if (isStamp) spots = GOLDEN_SPOTS;
         if (
             perCoin == 0 || spots == 0 || spots > MAX_SPOTS || maxPerWallet == 0 || maxPerWallet > spots
-                || dailyCoins < maxPerWallet || days_ == 0 || days_ > MAX_DAYS || startDay < today()
+                || dailyCoins < maxPerWallet || dailyCoins > MAX_DAILY_COINS || days_ == 0 || days_ > MAX_DAYS
+                || startDay < today() || startDay > today() + MAX_DAYS
         ) revert BadDrop();
         uint256 got = _pull(token, amount);
         id = _drops.length;
@@ -333,14 +343,16 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
 
     /// @notice Take a drop's remaining tokens back once nobody can claim from it any more (its last day and the
     ///         day after are over, or it was cancelled before it started), or at any time while paused. A drop
-    ///         emptied while it's still running ends after today, so its coins stop going out.
-    function withdraw(uint256 id, address to) external onlyOwner nonReentrant {
+    ///         emptied while it's still running ends after `lastDay` (today: as for `endDrop`, a transaction mined
+    ///         after it reverts, so the emptied drop's coins can't stay out a day longer than meant).
+    function withdraw(uint256 id, address to, uint32 lastDay) external onlyOwner nonReentrant {
         if (id >= _drops.length) revert UnknownDrop();
         if (to == address(0)) revert ZeroAddress();
+        if (lastDay < today()) revert TooLate();
         Drop storage d = _drops[id];
         bool cancelled = d.endDay < d.startDay; // (no day is in its range, so no claim can ever pass)
         if (!paused && !cancelled && today() < d.endDay + CLAIM_DAYS) revert StillRunning();
-        _end(id, today());
+        _end(id, lastDay);
         uint256 amount = d.left;
         d.left = 0;
         held[d.token] -= amount;

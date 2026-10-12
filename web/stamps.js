@@ -136,7 +136,8 @@ export function createStamps(W, spots) {
       mesh.add(halo);
       mesh.scale.setScalar(1.5);
       W.noNormals.push(halo);
-      mesh.visible = !(kind === "golden" ? found : coinsFound).has(i);
+      const empty = kind === "coin" && running.find((r) => r.id === drop)?.empty;
+      mesh.visible = !empty && !(kind === "golden" ? found : coinsFound).has(i);
       mesh.position.copy(d).multiplyScalar(R + sp.h);
       mesh.quaternion.copy(W.frameAt(d, rng() * 6));
       W.world.add(mesh);
@@ -158,7 +159,7 @@ export function createStamps(W, spots) {
     /// The token drops running today, oldest first ({ id, token, symbol, spots, picture }): their coins go out.
     setDrops(d, list) {
       if (d !== day) return;
-      const key = (l) => l.map((x) => `${x.id}:${x.spots}:${x.picture ? 1 : 0}`).join(",");
+      const key = (l) => l.map((x) => `${x.id}:${x.spots}:${x.picture ? 1 : 0}:${x.empty ? 1 : 0}`).join(",");
       if (key(list) === key(running)) return;
       for (const x of list) if (running.find((r) => r.id === x.id)?.picture !== x.picture) faces.delete(x.id);
       running = list;
@@ -171,7 +172,10 @@ export function createStamps(W, spots) {
       coinsFound = new Set(Object.values(coinIds).flat());
       saveFound(day, found);
       saveCoins(day, coinsFound);
-      for (const s of stamps) s.mesh.visible = !(s.kind === "golden" ? found : coinsFound).has(s.id);
+      for (const s of stamps) {
+        const empty = s.kind === "coin" && running.find((r) => r.id === s.drop)?.empty;
+        s.mesh.visible = !empty && !(s.kind === "golden" ? found : coinsFound).has(s.id);
+      }
     },
     /// Spin and bob; collect any stamp or coin the courier reaches. Returns what was collected, if anything:
     /// { id (its spot), kind ("golden" or "coin"), drop (a coin's drop id), mesh, d }.

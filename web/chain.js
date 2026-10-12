@@ -56,7 +56,7 @@ const ERROR_TEXT = {
   IsPaused: "Treasure claims are paused right now. Your finds stay claimable until the day after.",
   TooLate: "Those finds are too old to claim: claim by the end of the next day (UTC).",
   NotRunning: "That drop isn't running.",
-  BadDrop: "Check the drop's settings: coins out (1 to 48), a wallet's daily coins (up to that), coins paid a day across everyone (at least a wallet's), and days (1 to 365).",
+  BadDrop: "Check the drop's settings: coins out (1 to 48), a wallet's daily coins (up to that), coins paid a day across everyone (a wallet's to 10,000), days (1 to 365), starting within a year.",
   StillRunning: "Players can still claim from this drop: withdraw the day after it ends.",
 };
 
@@ -572,10 +572,11 @@ export async function connectChain() {
       const ids = await read(C.drops, "activeDrops", [day]);
       return Promise.all(ids.map(async (id) => ({ ...(await dropOf(id)), paid: await read(C.drops, "paidCoins", [id, day]) })));
     },
-    /// Every drop (for the treasury's list), newest first.
-    async all() {
+    /// Every drop (for the treasury's list), newest first, with the coins each has paid today.
+    async all(day) {
       const n = Number(await read(C.drops, "dropCount"));
-      return (await Promise.all(Array.from({ length: n }, (_, i) => dropOf(i)))).reverse();
+      const list = await Promise.all(Array.from({ length: n }, async (_, i) => ({ ...(await dropOf(i)), paidToday: await read(C.drops, "paidCoins", [BigInt(i), day]) })));
+      return list.reverse();
     },
     async owner() {
       const [owner, paused] = await Promise.all([read(C.drops, "owner"), read(C.drops, "paused")]);
@@ -604,7 +605,8 @@ export async function connectChain() {
       },
       /// Stop a drop after `lastDay` (today: its coins stay out until midnight UTC).
       endDrop: (id, lastDay) => send(C.drops, "endDrop", [BigInt(id), lastDay]),
-      withdraw: (id) => send(C.drops, "withdraw", [BigInt(id), account]),
+      /// Take a drop's tokens back (once claims have closed, or while paused); a running one ends after `lastDay`.
+      withdraw: (id, lastDay) => send(C.drops, "withdraw", [BigInt(id), account, lastDay]),
       setPaused: (on) => send(C.drops, "setPaused", [on]),
     },
   } : null;

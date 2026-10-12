@@ -106,7 +106,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     }
     const out = { day, running, ...own };
     if (own.isOwner) {
-      out.all = await chain.drops.all();
+      out.all = await chain.drops.all(day);
       const launched = chain.pad ? await chain.pad.tokens((await chain.pad.info()).count) : [];
       out.tokens = [{ address: "stamp", symbol: "STAMP" }, ...launched.map((t) => ({ address: t.address, symbol: t.symbol }))];
     }
@@ -147,7 +147,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<h4>Drops</h4>`;
       for (const d of h.all) {
         const live = d.startDay <= h.day && h.day <= d.endDay, over = h.day > d.endDay + 1 || d.endDay < d.startDay;
-        html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)} · ${fmt(d.perCoin, 0)}/coin · ${live ? "running" : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
+        html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)} · ${fmt(d.perCoin, 0)}/coin · ${live ? `running · paid today ${d.paidToday}/${d.dailyCoins}` : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
           <div class="row2">${live || h.day < d.startDay ? `<button class="pbtn" data-act="dropEnd" data-id="${d.id}" ${busy ? "disabled" : ""}>End</button>` : ""}
           ${!over ? `<button class="pbtn" data-act="dropTopUp" data-id="${d.id}" data-token="${d.token}" ${busy ? "disabled" : ""}>Top up</button>` : ""}
           ${(over || h.paused) && d.left > 0n ? `<button class="pbtn" data-act="dropWithdraw" data-id="${d.id}" ${busy ? "disabled" : ""}>Withdraw</button>` : ""}</div>`;
@@ -155,7 +155,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<label class="field">Tokens to top up with<input data-act="dropTopUpAmount" value="${esc(f.topUp)}" inputmode="decimal" placeholder="e.g. 50000"></label>`;
     }
     html += `<button class="pbtn wide" data-act="dropPause" ${busy ? "disabled" : ""}>${h.paused ? "Resume claims" : "Pause all claims"}</button>
-      <p class="note">${h.paused ? "Claims are paused: you can withdraw any drop." : "Pause if anything looks wrong (the server's key leaks, say): claims stop and you can take every drop's tokens back."}</p></div>`;
+      <p class="note">${h.paused ? "Claims are paused: you can withdraw any drop." : "Watch each drop's paid-today count: if it fills up unusually fast (the server's key leaked, say), pause. Claims stop at once and you can take every drop's tokens back. A drop can lose at most its daily cap a day."}</p></div>`;
     return html;
   }
   /// Tokens that cover a drop's daily limit for all its days.
@@ -553,8 +553,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
           return toast("Enter the tokens per coin and how many to put in.", "error");
         }
         const spots = stampDrop ? 24 : Number(f.spots), max = Number(f.maxPerWallet), daily = BigInt(f.dailyCoins || "0"), days = Number(f.days);
-        if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || daily < BigInt(max) || !(days >= 1 && days <= 365)) {
-          return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), coins a day for everyone (at least a wallet's), days (1 to 365), and the tokens to put in.", "error");
+        if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || daily < BigInt(max) || daily > 10_000n || !(days >= 1 && days <= 365)) {
+          return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), coins a day for everyone (a wallet's to 10,000), days (1 to 365), and the tokens to put in.", "error");
         }
         const token = stampDrop ? chain.stampAddress : f.token;
         return run(`Starting a drop`, async () => {
@@ -568,7 +568,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         huntAt = 0;
       });
       case "dropWithdraw": return run(`Taking drop #${b.dataset.id}'s tokens back`, async () => {
-        await chain.drops.admin.withdraw(Number(b.dataset.id));
+        await chain.drops.admin.withdraw(Number(b.dataset.id), huntDay());
         huntAt = 0;
       });
       case "dropTopUp": {

@@ -445,9 +445,9 @@ claim what they find.
 
 - `createDrop(token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount)`, owner only: the token must
   be $STAMP or launched by the launchpad (`CourierPad.launches(token).createdAt != 0`); `perCoin > 0`, 1 to 48
-  spots (always 24 for $STAMP: the golden stamps), 1 ≤ `maxPerWallet` ≤ spots, `dailyCoins` ≥ `maxPerWallet` (required:
+  spots (always 24 for $STAMP: the golden stamps), 1 ≤ `maxPerWallet` ≤ spots, `maxPerWallet` ≤ `dailyCoins` ≤ 10,000 (required:
   every player can collect each coin, as with golden stamps, so `spots` is how many are out, not how many a day
-  pays; `dailyCoins` is what bounds a day), 1 to 365 days, from today or later.
+  pays; `dailyCoins` is what bounds a day), 1 to 365 days, starting today or up to a year ahead.
   The drop's balance is what actually arrived (balance difference), and each drop's tokens are its own
   (`left`), never mixed with another's.
 - `claim(id, day, coins, deadline, sig)` / `claimMany(Claim[])`: not while paused, post office open, `day` not in the
@@ -455,21 +455,28 @@ claim what they find.
   `Finds(player, drop, day, coins, deadline)` signed by `signer` (the multiplayer room). Pays for the coins not yet
   claimed, capped by `maxPerWallet` per wallet per day, `dailyCoins` per day across everyone, and the drop's
   tokens. `claimMany` skips claims that would pay nothing, whose voucher has expired or whose day can't be
-  claimed now (a batch sent just before midnight), and reverts if all do; a forged voucher or unknown drop still
-  reverts it. `claimable` quotes nothing where a claim would fail (paused, outside the drop's days or the window).
+  claimed now (a batch sent just before midnight), and reverts if all do; a forged or malformed voucher, or an
+  unknown drop, still reverts it. `claimable` quotes nothing where a claim would fail (paused, no post office,
+  outside the drop's days or the window).
   `nonReentrant`.
 - Owner (Ownable2Step, never renounceable, since drops need it): `topUp`; `endDrop(id, lastDay)` (stops after
   `lastDay`, today or later, so nobody's coins move mid-day, and reverts if mined after it; a drop that hasn't
   started is cancelled); `withdraw` a drop's remaining tokens once nobody can claim (its last day and the day after
-  are over, or it was cancelled), or at any time while paused, which also ends a running drop after today;
+  are over, or it was cancelled), or at any time while paused, which also ends a running drop after `lastDay`
+  (today; reverts if mined after it, as `endDrop` does);
   `sweep` tokens above the drops' own balances (`held`); `setSigner` (the event records the previous key);
   `setPaused`.
 - The room (`multiplayer/src/index.js`) reads the running drops from the chain, places coins with
   `web/drop-pick.js` (the same as the game), checks each find against the player's reported path as it did for
   golden stamps, and signs per-drop vouchers for today and yesterday.
 
-Trust: the room's key decides finds: a leaked key could claim, for wallets with a post office, up to each drop's
-`dailyCoins` a day (for today and yesterday) until the owner pauses. The owner can take a running drop's tokens
+Trust: the room's key decides finds. A leaked key can only claim from running drops, for wallets with a post office
+(0.005 ETH each), at most `dailyCoins × perCoin` per drop per day and never more than the drop holds; timed at
+midnight it can fill three days' caps per drop within a second (yesterday's, today's and, a second later,
+tomorrow's), then one a day until the owner pauses. It can't pull from the treasury (only the owner's own
+`createDrop`/`topUp` pull, from the owner), move one drop's tokens through another, or block the owner's pause,
+key change or withdrawals (confirmed by re-check 147b18fe). The treasury's drop list shows each running drop's
+coins paid today against its cap, so a leak shows as caps filling fast. The owner can take a running drop's tokens
 back at any time (pause, withdraw, unpause, even in one block), which voids finds not yet claimed, and can install
 its own signer: the drops are the treasury's own deposit, and the signer is no check on the owner.
 
@@ -485,5 +492,17 @@ treasury); (8) tests now cover the day edges to the second, many wallets sharing
 stale and a forged voucher, same-token drops, and a $STAMP drop's golden stamps. The proofs for (2) and (3) pass.
 Report: https://explorer.imd.fun/jobs/9755203f-4263-447d-b876-007724cd321b
 
-Tests: `test/TokenDrops.t.sol`, 33 tests against the real post office and $STAMP and a fuzz that no sequence of
-claims pays more than a drop holds or its limits allow.
+Re-check: IMD's audit of `d59c2ab` (2 low, 6 info) answered the leaked-key question as above and found: (1) no ceiling
+on `dailyCoins` (a units slip, tokens typed for coins, would void it): capped at 10,000; (2) a withdraw while paused
+mined after midnight ended the drop a day late: `withdraw(id, to, lastDay)` reverts `TooLate` like `endDrop`; (3)
+`claimable` quoted wallets without a post office: zero; (4) the midnight three-cap bound, now stated above; (5) a
+drop scheduled near the end of `uint32` days overflowed: starts are limited to a year ahead; (6) malformed signatures
+surfaced OpenZeppelin's errors: `tryRecover`, all `BadSignature`; (7) a drop emptied by claims kept its coins out:
+the game hides an empty drop's coins (its spots stay reserved, so no one else's move); (8) tests: added.
+Report: https://explorer.imd.fun/jobs/147b18fe-465a-4578-b366-7dfb5a6a512c
+
+Tests: `test/TokenDrops.t.sol`, 40 tests against the real post office and $STAMP (including a leaked key timed at
+midnight, which takes exactly three days' caps and nothing else), a fuzz that no sequence of claims overpays, and
+`test/TokenDrops.invariant.t.sol`: random creates, top-ups, claims (today's and yesterday's, single and batched,
+several wallets), ends, paused withdrawals, stray transfers, sweeps and time across midnights, checking that each
+token's `held` is exactly its drops' tokens, the contract holds it, and no day ever pays more than its cap.

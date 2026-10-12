@@ -413,6 +413,7 @@ async function refreshDrops() {
     goldenPays = running.some((d) => d.isStamp && d.left >= d.perCoin);
     const tokens = running.filter((d) => !d.isStamp);
     for (const d of tokens) {
+      d.empty = d.left < d.perCoin; // paid out: its coins stay off the map (their spots stay reserved, so nothing moves)
       const url = parseMeta(d.metadata, PICTURE_HOSTS).image;
       d.pictureUrl = url ?? null;
       if (url && !coinPictures.has(url)) {
@@ -430,7 +431,7 @@ async function refreshDrops() {
     droppingToday = tokens;
     dropsDay = day;
     stamps.setDrops(day, tokens);
-    W.square?.showDrops?.(tokens.map((d) => d.symbol));
+    W.square?.showDrops?.(tokens.filter((d) => !d.empty).map((d) => d.symbol));
   } catch (e) {
     console.warn("drops: couldn't read today's", e);
   }
