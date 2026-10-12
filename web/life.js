@@ -275,7 +275,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
     const step = Math.max(1, Math.floor(W.addresses.length / (12 * K)));
     for (let i = 3, n = 0; i < W.addresses.length && n < 12 * K; i += step, n++) {
       const a = W.addresses[i];
-      if (a.landmark) continue;
+      if (a.landmark || a.cleared) continue;
       const ch = createCharacter(villager(i * 7919 + 13));
       ch.root.position.copy(a.dir).multiplyScalar(R + 0.16);
       ch.root.quaternion.copy(W.frameAt(a.dir, a.spin));
@@ -326,7 +326,7 @@ export function createLife(W, { onFlutter, onMeow } = {}) {
   const cats = [];
   for (let i = 0, n = 0; i < W.addresses.length * 2 && n < 7 * K; i += 3) {
     const a = W.addresses[(i * 7 + 2) % W.addresses.length];
-    if (a.landmark) continue;
+    if (a.landmark || a.cleared) continue;
     const q = W.frameAt(a.dir, a.spin);
     const side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
     const d = offsetOnSphere(a.dir, side, rng() < 0.5 ? -1.6 : 1.6);

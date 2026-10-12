@@ -491,8 +491,8 @@ const POST_FRAG = /* glsl */ `
 
 // ---------------------------------------------------------------- world
 
-/// opts.keepClear: spots ({ x, y, z } directions) the Orb must leave outside its globe (the golden stamp
-/// spots), so they stay in sight and in reach.
+/// opts.keepClear: spots ({ x, y, z } directions) that must stay outside the Orb's globe (the golden stamp
+/// spots); a warning if one doesn't.
 export function createWorld(canvas, { keepClear = [] } = {}) {
   const gl = new THREE.WebGLRenderer({ canvas, antialias: false });
   let dpr = Math.min(window.devicePixelRatio || 1, 2); // capped lower by the graphics settings
@@ -831,6 +831,20 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     spawn = { dir: offsetOnSphere(best.p, side, -0.4), tangent: tan, post: door, postSpin: spin, office: { d, spin, hd: spec.d / 2 } };
   }
 
+  // ---- where the Orb stands (it's built at the very end): open ground 14 m out from the start. Everything
+  // within ORB.clear of it (houses, players' lots, park trees) is left out of the town, so the globe stands
+  // alone on its plaza and the street sees it clearly. Left out means its random draws and footprint are
+  // still taken, so the rest of the town comes out exactly as it would without the Orb.
+  const ORB = { foot: 4.2, ball: 3.6, lift: 3.9, clear: 12 }; // pedestal reach, globe radius, globe centre height, cleared radius
+  const orbAt = (() => {
+    const dir = spawn.dir, t = spawn.tangent.clone().sub(dir.clone().multiplyScalar(spawn.tangent.dot(dir))).normalize();
+    const side = new THREE.Vector3().crossVectors(dir, t).normalize();
+    return dir.clone().multiplyScalar(R).addScaledVector(t, -3.761).addScaledVector(side, -14.3647).normalize();
+  })();
+  const inOrbClear = (d, r = 0) => arc(d, orbAt) < ORB.clear + r;
+  const offOrb = []; // obstacles of what was left out, dropped once the town is laid out
+  const leaveOut = (g) => g.traverse((o) => o.geometry?.dispose());
+
   // ---- the seaside, Falls Hill, the woods, the works and the footbridge (before the houses, so
   // the houses keep out of their way)
   const npcs = [], stampSpots = [], animators = [], ambient = {};
@@ -919,16 +933,24 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
           if (nearestRoad(dir, ri) > ROAD_HW + WALK + 0.3 + r && clearOf(dir, r * 0.92) && (inTown(dir) || (k === TOWER && inNeon(dir))) && !wetNear(dir, r + 0.6)) {
             const spin = spinToward(dir, p);
             const b = k.f(spec);
-            bake(b.g, dir, spin);
-            if (b.extras) {
-              b.extras.position.copy(dir).multiplyScalar(R);
-              b.extras.quaternion.copy(frameAt(dir, spin));
-              world.add(b.extras);
+            const gone = inOrbClear(dir, r * 0.6); // on the Orb's plaza: left out
+            if (gone) {
+              leaveOut(b.g);
+              if (b.extras) leaveOut(b.extras);
+            } else {
+              bake(b.g, dir, spin);
+              if (b.extras) {
+                b.extras.position.copy(dir).multiplyScalar(R);
+                b.extras.quaternion.copy(frameAt(dir, spin));
+                world.add(b.extras);
+              }
             }
             addRect(dir, spin, spec.w / 2 + 0.05, spec.d / 2 + 0.6, { h: b.h, hd: spec.d / 2 + 0.1 });
+            if (gone) offOrb.push(obstacles[obstacles.length - 1]);
             if (extra) {
               const q = frameAt(dir, spin);
               addCircle(dir.clone().multiplyScalar(R).add(new THREE.Vector3(spec.w / 2 + 0.6, 0, spec.d / 2 - 0.9).applyQuaternion(q)).normalize(), 0.65);
+              if (gone) offOrb.push(obstacles[obstacles.length - 1]);
             }
             taken.push({ d: dir, r });
             const q = frameAt(dir, spin);
@@ -938,6 +960,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
               markerDir: dir.clone().multiplyScalar(R).add(new THREE.Vector3(b.doorX, 0, spec.d / 2 + 0.3).applyQuaternion(q)).normalize(),
               markerH: Math.min(b.h, 4.2) + 0.9,
               spin, kind: k.f.name,
+              ...(gone ? { cleared: true } : {}), // no house there any more: never a delivery, nobody at the door
             });
             s += spec.w + extra + range(0.5, 1.4);
           } else s += 1.3;
@@ -1067,12 +1090,15 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       cands.push({ d, far });
     }
     cands.sort((a, b) => a.far - b.far);
+    const placed = []; // every lot laid out, including those left out for the Orb
     for (const c of cands) {
-      if (lots.length >= 48) break;
-      if (lots.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
+      if (placed.length >= 48) break;
+      if (placed.some((l) => arc(l.d, c.d) < 4.6) || !clearOf(c.d, 1.9)) continue;
       const spin = faceStreet(c.d);
-      lots.push({ d: c.d, spin });
+      placed.push({ d: c.d, spin });
       taken.push({ d: c.d, r: 2.3 });
+      if (inOrbClear(c.d, 2.3)) continue; // on the Orb's plaza: the office that would stand here takes the next lot
+      lots.push({ d: c.d, spin });
       const g = new THREE.Group();
       box(g, 3.8, 0.06, 3.8, C.walk, 0, 0.03, 0);
       bake(g, c.d, spin);
@@ -1080,41 +1106,11 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   }
 
   // ---- parks: trees, bushes and benches fill the blocks between streets
-  // Where the Orb will stand (it's built at the very end): the nearest open ground to the post office,
-  // chosen before the parks are planted. The park is planted exactly as before, so nothing else in the town
-  // moves; the trees, bushes and benches that land on the Orb's plaza are just left out.
-  const ORB = { foot: 4.2, ball: 3.6, lift: 3.9 }; // plaza radius, globe radius, globe centre height
-  const orbAt = (() => {
-    // Searched from where everyone starts, on the street by the post office, and only where no building
-    // stands between there and the Orb, so its screen faces the street rather than hiding behind a roof.
-    const s0 = spawn.dir;
-    const inBuilding = (p) => obstacles.some((o) => {
-      if (o.kind !== "rect" || !o.wall || o.wall.h < 3 || p.dot(o.d) < o.cos) return false;
-      const v = p.clone().sub(o.d).multiplyScalar(R);
-      return Math.abs(v.dot(o.right)) < o.hw && Math.abs(v.dot(o.front)) < o.hd;
-    });
-    const inView = (d) => {
-      for (let k = 1; k < 16; k++) {
-        const p = s0.clone().lerp(d, k / 16).normalize();
-        if (arc(p, d) > ORB.foot && inBuilding(p)) return false;
-      }
-      return true;
-    };
-    const t1 = new THREE.Vector3().crossVectors(s0, new THREE.Vector3(0.3, 1, 0.2)).normalize(), t2 = new THREE.Vector3().crossVectors(s0, t1);
-    for (let m = 10; m <= 45; m += 1) {
-      for (let i = 0; i < 60; i++) {
-        const a = (i / 60) * Math.PI * 2, sn = Math.sin(m / R);
-        const d = s0.clone().multiplyScalar(Math.cos(m / R)).addScaledVector(t1, Math.cos(a) * sn).addScaledVector(t2, Math.sin(a) * sn).normalize();
-        if (nearestRoad(d) > ROAD_HW + WALK + ORB.foot && inTown(d) && !wetNear(d, ORB.foot) && clearOf(d, ORB.foot) && !blocked(d, ORB.foot) &&
-          keepClear.every((k) => arc(d, new THREE.Vector3(k.x, k.y, k.z)) > ORB.ball + 0.3) && inView(d)) return d;
-      }
-    }
-    return null;
-  })();
-  const onOrb = (d, r) => !!orbAt && arc(d, orbAt) < ORB.foot + r;
-  const offOrb = []; // the obstacles of park props left out, removed once the park is planted
+  // Trees, bushes and benches that would grow on the Orb's plaza are left out (still drawn at random, so
+  // the rest of the parks come out the same).
+  const onOrb = (d, r) => inOrbClear(d, r);
   const plant = (g, d, spin, r) => {
-    if (onOrb(d, r)) g.traverse((o) => o.geometry?.dispose());
+    if (onOrb(d, r)) leaveOut(g);
     else bake(g, d, spin);
   };
   for (let n = 0, placed = 0; placed < 260 * K && n < 9000 * K; n++) {
@@ -1199,33 +1195,62 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   let orb = null;
   {
     const { foot: FOOT, ball: BALL, lift: LIFT } = ORB;
-    const best = orbAt && { d: orbAt };
-    if (best) {
-      const d = best.d, spin = faceStreet(d), q = frameAt(d, spin);
-      const g = new THREE.Group();
-      part(g, new THREE.CylinderGeometry(FOOT, FOOT, 0.06, 40), 0xd9d2c3, 0, 0.03, 0); // the plaza
-      part(g, new THREE.CylinderGeometry(FOOT - 0.25, FOOT - 0.25, 0.08, 40), 0xc9c1b0, 0, 0.07, 0);
-      part(g, new THREE.CylinderGeometry(2.7, 3.0, 0.7, 32), 0x2b2f45, 0, 0.42, 0); // the pedestal
-      part(g, new THREE.TorusGeometry(2.86, 0.07, 6, 48), 0x5ff3ff, 0, 0.78, 0, Math.PI / 2);
-      // Its own little group (the town mesh is already built by now).
-      g.position.copy(d).multiplyScalar(R);
-      g.quaternion.copy(q);
-      world.add(g);
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL, 72, 48), new THREE.MeshBasicMaterial({ color: 0x0b1024 }));
-      mesh.position.copy(d).multiplyScalar(R).addScaledVector(d, LIFT);
-      mesh.quaternion.copy(q);
-      world.add(mesh);
-      addCircle(d, BALL - 0.3, { wall: { h: LIFT + BALL } });
-      taken.push({ d, r: FOOT + 0.4 });
-      orb = { d, spin, mesh, radius: BALL, reach: BALL + 2.6 };
-      // Grass doesn't grow through the plaza.
-      const m = new THREE.Matrix4(), p = new THREE.Vector3(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
-      for (let i = 0; i < tuftsMesh.count; i++) {
-        tuftsMesh.getMatrixAt(i, m);
-        if (arc(p.setFromMatrixPosition(m).normalize(), d) < FOOT) tuftsMesh.setMatrixAt(i, zero);
-      }
-      tuftsMesh.instanceMatrix.needsUpdate = true;
+    const d = orbAt, spin = faceStreet(d), q = frameAt(d, spin);
+    for (const k of keepClear) {
+      if (arc(d, new THREE.Vector3(k.x, k.y, k.z)) < BALL + 0.3) console.warn("A golden stamp spot is inside the Orb", k);
     }
+    // The plaza: paving that follows the planet's curve, out to the pavement of the nearest street.
+    const PLAZA = Math.min(ORB.clear - 1.5, nearestRoad(d) - ROAD_HW - WALK - 0.3);
+    {
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), front = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+      const rings = 16, segs = 64, pos = [], idx = [];
+      const at = (x, z) => {
+        const u = d.clone().multiplyScalar(R).addScaledVector(right, x).addScaledVector(front, z).normalize();
+        return u.multiplyScalar(R + terrain.landAt(u) + 0.045);
+      };
+      pos.push(...at(0, 0).toArray());
+      for (let i = 1; i <= rings; i++) {
+        for (let j = 0; j < segs; j++) {
+          const a = (j / segs) * Math.PI * 2, rr = (PLAZA * i) / rings;
+          pos.push(...at(Math.cos(a) * rr, Math.sin(a) * rr).toArray());
+        }
+      }
+      for (let j = 0; j < segs; j++) idx.push(0, 1 + ((j + 1) % segs), 1 + j);
+      for (let i = 1; i < rings; i++) {
+        const r0 = 1 + (i - 1) * segs, r1 = 1 + i * segs;
+        for (let j = 0; j < segs; j++) {
+          const j1 = (j + 1) % segs;
+          idx.push(r0 + j, r0 + j1, r1 + j, r0 + j1, r1 + j1, r1 + j);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      const plaza = new THREE.Mesh(geo, toon(0xd9d2c3));
+      plaza.receiveShadow = true;
+      world.add(plaza);
+    }
+    // The pedestal and its neon ring (its own little group: the town mesh is already built by now).
+    const g = new THREE.Group();
+    part(g, new THREE.CylinderGeometry(2.7, 3.0, 0.95, 32), 0x2b2f45, 0, 0.3, 0);
+    part(g, new THREE.TorusGeometry(2.86, 0.07, 6, 48), 0x5ff3ff, 0, 0.78, 0, Math.PI / 2);
+    g.position.copy(d).multiplyScalar(R);
+    g.quaternion.copy(q);
+    world.add(g);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL, 72, 48), new THREE.MeshBasicMaterial({ color: 0x0b1024 }));
+    mesh.position.copy(d).multiplyScalar(R).addScaledVector(d, LIFT);
+    mesh.quaternion.copy(q);
+    world.add(mesh);
+    addCircle(d, BALL - 0.3, { wall: { h: LIFT + BALL } });
+    orb = { d, spin, mesh, radius: BALL, reach: BALL + 2.6 };
+    // Grass doesn't grow through the plaza.
+    const m = new THREE.Matrix4(), p = new THREE.Vector3(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    for (let i = 0; i < tuftsMesh.count; i++) {
+      tuftsMesh.getMatrixAt(i, m);
+      if (arc(p.setFromMatrixPosition(m).normalize(), d) < PLAZA + 0.2) tuftsMesh.setMatrixAt(i, zero);
+    }
+    tuftsMesh.instanceMatrix.needsUpdate = true;
   }
 
   // ---------------------------------------------------------------- rendering

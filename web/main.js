@@ -435,7 +435,9 @@ const random = (n) => Math.floor(Math.random() * n);
 
 function fillBag() {
   const picks = new Set();
-  while (picks.size < Math.min(3, W.addresses.length)) picks.add(random(W.addresses.length));
+  // Every house still standing (the ones cleared for the Orb's plaza get no letters).
+  const open = W.addresses.flatMap((a, i) => (a.cleared ? [] : [i]));
+  while (picks.size < Math.min(3, open.length)) picks.add(open[random(open.length)]);
   bag = [...picks];
   bag.forEach(showMarker);
   hud();
