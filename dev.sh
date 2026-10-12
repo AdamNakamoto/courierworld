@@ -42,7 +42,9 @@ for port in "$RPC_PORT" "$WEB_PORT"; do
 done
 
 ANVIL_ARGS=(--silent --port "$RPC_PORT" --block-time 1)
-[ "$FORK" = 1 ] && ANVIL_ARGS+=(--fork-url "$FORK_URL")
+# (Cancun, as the contracts are compiled: later forks make Anvil read EIP-2935's block-hash contract every block,
+# and the public RPCs refuse that old state after a minute or two.)
+[ "$FORK" = 1 ] && ANVIL_ARGS+=(--fork-url "$FORK_URL" --hardfork cancun)
 [ "$WALLET" = 1 ] && ANVIL_ARGS+=(--chain-id "$PRACTICE_CHAIN_ID")
 anvil "${ANVIL_ARGS[@]}" &
 ANVIL_PID=$!

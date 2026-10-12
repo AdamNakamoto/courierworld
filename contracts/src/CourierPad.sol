@@ -73,6 +73,13 @@ contract CourierPad is IHooks, IUnlockCallback {
     error BadMetadata();
     /// @notice The launch fee is now `stampFee`, more than the launcher agreed to pay.
     error FeeChanged(uint256 stampFee);
+    /// @notice New launches now start at `startTick`, not the one the launcher saw.
+    error StartTickChanged(int24 startTick);
+    error FeeTooHigh();
+    error BadRecipient();
+    error NotPendingRecipient();
+    /// @notice An exact-in buy so small that the 4% fee (rounded up) is all of it: nothing would be swapped.
+    error DustSwap();
 
     event TokenLaunched(
         address indexed token,
@@ -81,7 +88,7 @@ contract CourierPad is IHooks, IUnlockCallback {
         string symbol,
         string metadata,
         PoolId poolId,
-        int24 tick,
+        int24 startTick,
         uint256 stampBurned
     );
     /// @param quoteAmount IMD paid by the buyer / received by the seller, fee included
@@ -97,6 +104,8 @@ contract CourierPad is IHooks, IUnlockCallback {
     event ProtocolFeesCollected(address indexed quote, address indexed to, uint256 amount);
     event FeeRecipientUpdated(address feeRecipient);
     event DropRecipientUpdated(address dropRecipient);
+    event FeeRecipientProposed(address indexed proposed);
+    event DropRecipientProposed(address indexed proposed);
     event StampFeeSet(uint256 stampFee);
     event StartTickSet(int24 startTick);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
@@ -120,6 +129,8 @@ contract CourierPad is IHooks, IUnlockCallback {
     uint256 public constant MAX_NAME = 32;
     uint256 public constant MAX_SYMBOL = 12;
     uint256 public constant MAX_METADATA = 2048;
+    /// @notice The most $STAMP a launch can cost (about 0.5% of the 21M cap), so the fee can't be set out of reach.
+    uint256 public constant MAX_STAMP_FEE = 100_000e18;
 
     address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
     /// @dev Kept out of the liquidity calculation so rounding can never ask for more than the allocation; burned.
@@ -144,6 +155,9 @@ contract CourierPad is IHooks, IUnlockCallback {
     address public feeRecipient;
     /// @notice Receives 5% of every launch's supply, for drops to players.
     address public dropRecipient;
+    /// @notice Proposed new recipients: each takes over only by accepting, so a typo can't capture fees or drops.
+    address public pendingFeeRecipient;
+    address public pendingDropRecipient;
     /// @notice $STAMP burned from the launcher for each launch.
     uint256 public stampFee;
     /// @notice Start tick for new launches, as the tick of (tokens per IMD). Sets the starting price.
@@ -193,10 +207,12 @@ contract CourierPad is IHooks, IUnlockCallback {
         int24 startTick_,
         ImdEthPool memory imdEthPool
     ) {
-        if (
-            imd == address(0) || stamp == address(0) || address(postOffice_) == address(0) || owner_ == address(0)
-                || feeRecipient_ == address(0) || dropRecipient_ == address(0)
-        ) revert ZeroAddress();
+        if (imd == address(0) || stamp == address(0) || address(postOffice_) == address(0) || owner_ == address(0)) {
+            revert ZeroAddress();
+        }
+        if (stampFee_ > MAX_STAMP_FEE) revert FeeTooHigh();
+        _checkRecipient(feeRecipient_, address(poolManager_));
+        _checkRecipient(dropRecipient_, address(poolManager_));
         Hooks.validateHookPermissions(
             IHooks(address(this)),
             Hooks.Permissions({
@@ -238,14 +254,18 @@ contract CourierPad is IHooks, IUnlockCallback {
     // --------------------------------------------------------------- Launch
 
     /// @notice Launch a token: needs an open post office, and burns `stampFee` $STAMP from you (approve this
-    ///         contract first, or use `launchWithPermit`), never more than `maxStampFee`.
+    ///         contract first, or use `launchWithPermit`), never more than `maxStampFee`. `expectedStartTick` is the
+    ///         start price you saw (`startTick`): if the owner has changed it since, the launch reverts.
     /// @param name 1 to 32 bytes. @param symbol 1 to 12 bytes.
     /// @param metadata JSON, at most 2048 bytes: {"image":"ipfs://…","description":"…","website":"…","x":"…","telegram":"…"}
-    function launch(string calldata name, string calldata symbol, string calldata metadata, uint256 maxStampFee)
-        external
-        returns (address token)
-    {
-        return _launch(name, symbol, metadata, maxStampFee);
+    function launch(
+        string calldata name,
+        string calldata symbol,
+        string calldata metadata,
+        uint256 maxStampFee,
+        int24 expectedStartTick
+    ) external returns (address token) {
+        return _launch(name, symbol, metadata, maxStampFee, expectedStartTick);
     }
 
     /// @notice `launch`, with a signed $STAMP permit for `maxStampFee` instead of an approval. If someone submits
@@ -256,6 +276,7 @@ contract CourierPad is IHooks, IUnlockCallback {
         string calldata symbol,
         string calldata metadata,
         uint256 maxStampFee,
+        int24 expectedStartTick,
         uint256 deadline,
         uint8 v,
         bytes32 r,
@@ -269,13 +290,16 @@ contract CourierPad is IHooks, IUnlockCallback {
                 }
             }
         }
-        return _launch(name, symbol, metadata, maxStampFee);
+        return _launch(name, symbol, metadata, maxStampFee, expectedStartTick);
     }
 
-    function _launch(string calldata name, string calldata symbol, string calldata metadata, uint256 maxStampFee)
-        internal
-        returns (address token)
-    {
+    function _launch(
+        string calldata name,
+        string calldata symbol,
+        string calldata metadata,
+        uint256 maxStampFee,
+        int24 expectedStartTick
+    ) internal returns (address token) {
         uint256 nameLen = bytes(name).length;
         uint256 symLen = bytes(symbol).length;
         if (nameLen == 0 || nameLen > MAX_NAME || symLen == 0 || symLen > MAX_SYMBOL || bytes(metadata).length > MAX_METADATA)
@@ -286,13 +310,14 @@ contract CourierPad is IHooks, IUnlockCallback {
         if (!open) revert NoPostOffice();
         uint256 fee = stampFee;
         if (fee > maxStampFee) revert FeeChanged(fee);
+        int24 st = startTick;
+        if (st != expectedStartTick) revert StartTickChanged(st);
         if (fee != 0) IStampBurnable(STAMP).burnFrom(msg.sender, fee);
 
         token = address(new PadToken(name, symbol, metadata, msg.sender));
         token.transferOut(dropRecipient, TOTAL_SUPPLY - POOL_SUPPLY);
 
         bool quoteIs0 = uint160(IMD) < uint160(token);
-        int24 st = startTick;
         launches[token] = Launch({
             quote: IMD,
             creator: msg.sender,
@@ -313,7 +338,7 @@ contract CourierPad is IHooks, IUnlockCallback {
         poolManager.initialize(key, TickMath.getSqrtPriceAtTick(tick));
         poolManager.unlock(abi.encode(ACTION_ADD_LIQUIDITY, abi.encode(key, token, tick, quoteIs0)));
 
-        emit TokenLaunched(token, msg.sender, name, symbol, metadata, id, tick, fee);
+        emit TokenLaunched(token, msg.sender, name, symbol, metadata, id, st, fee);
     }
 
     /// @dev Single-sided token liquidity across the rest of the curve: [MIN, start] when the token is currency1,
@@ -359,6 +384,8 @@ contract CourierPad is IHooks, IUnlockCallback {
         uint256 fee = exactIn
             ? FullMath.mulDivRoundingUp(amount, FEE_BPS, BPS)
             : FullMath.mulDivRoundingUp(amount, FEE_BPS, BPS - FEE_BPS);
+        // (1 wei in: the fee would take it all and the pool would swap nothing.)
+        if (exactIn && fee >= amount) revert DustSwap();
         _chargeFee(fee);
         assembly ("memory-safe") {
             tstore(FEE_SLOT, fee)
@@ -458,31 +485,58 @@ contract CourierPad is IHooks, IUnlockCallback {
 
     // ---------------------------------------------------------------- Admin
 
-    /// @notice The owner (until renounced) or the fee recipient itself can point the fees somewhere new. After the
-    ///         renounce only the recipient can move its own fees; nobody else can redirect them.
-    function setFeeRecipient(address feeRecipient_) external {
+    /// @notice Propose a new fee recipient: the owner (until renounced) or the fee recipient itself can, and the
+    ///         proposed address takes over by calling `acceptFeeRecipient`. After the renounce only the recipient
+    ///         can move its own fees; nobody else can redirect them.
+    function setFeeRecipient(address next) external {
         if (msg.sender != owner && msg.sender != feeRecipient) revert NotOwner();
-        if (feeRecipient_ == address(0)) revert ZeroAddress();
-        feeRecipient = feeRecipient_;
-        emit FeeRecipientUpdated(feeRecipient_);
+        _checkRecipient(next, address(poolManager));
+        pendingFeeRecipient = next;
+        emit FeeRecipientProposed(next);
     }
 
-    /// @notice Where future launches send their 5%: the owner or the current drop recipient can change it.
-    function setDropRecipient(address dropRecipient_) external {
+    /// @notice The proposed fee recipient takes over. Fees already earned go to the outgoing recipient first (or,
+    ///         if they can't be paid to it, for example because IMD's issuer blocks it, they move along).
+    function acceptFeeRecipient() external {
+        if (msg.sender != pendingFeeRecipient) revert NotPendingRecipient();
+        try this.collectProtocolFees(IMD) {} catch {}
+        feeRecipient = msg.sender;
+        pendingFeeRecipient = address(0);
+        emit FeeRecipientUpdated(msg.sender);
+    }
+
+    /// @notice Propose where future launches send their 5%: the owner or the current drop recipient can, and the
+    ///         proposed address takes over by calling `acceptDropRecipient`.
+    function setDropRecipient(address next) external {
         if (msg.sender != owner && msg.sender != dropRecipient) revert NotOwner();
-        if (dropRecipient_ == address(0)) revert ZeroAddress();
-        dropRecipient = dropRecipient_;
-        emit DropRecipientUpdated(dropRecipient_);
+        _checkRecipient(next, address(poolManager));
+        pendingDropRecipient = next;
+        emit DropRecipientProposed(next);
     }
 
-    /// @notice The $STAMP burned per launch (0: free). Launchers name the most they'll pay, so a change can't
-    ///         charge a pending launch more.
+    function acceptDropRecipient() external {
+        if (msg.sender != pendingDropRecipient) revert NotPendingRecipient();
+        dropRecipient = msg.sender;
+        pendingDropRecipient = address(0);
+        emit DropRecipientUpdated(msg.sender);
+    }
+
+    /// @dev Not nobody, and not an address where tokens would be burned or stranded.
+    function _checkRecipient(address a, address pm) internal view {
+        if (a == address(0)) revert ZeroAddress();
+        if (a == address(this) || a == pm || a == DEAD) revert BadRecipient();
+    }
+
+    /// @notice The $STAMP burned per launch (0: free, at most MAX_STAMP_FEE). Launchers name the most they'll pay,
+    ///         so a change can't charge a pending launch more.
     function setStampFee(uint256 stampFee_) external onlyOwner {
+        if (stampFee_ > MAX_STAMP_FEE) revert FeeTooHigh();
         stampFee = stampFee_;
         emit StampFeeSet(stampFee_);
     }
 
-    /// @notice The starting price of future launches (tokens per IMD, as a tick). Launched tokens keep theirs.
+    /// @notice The starting price of future launches (tokens per IMD, as a tick). Launched tokens keep theirs, and a
+    ///         launch already on its way reverts (StartTickChanged) rather than open at a price its launcher didn't see.
     function setStartTick(int24 startTick_) external onlyOwner {
         _setStartTick(startTick_);
     }
@@ -507,7 +561,8 @@ contract CourierPad is IHooks, IUnlockCallback {
     }
 
     /// @notice Gives up ownership for good: the launch fee, the start price and (except by the recipients
-    ///         themselves) where the fees and drops go can never change again. Launching keeps working.
+    ///         themselves) where the fees and drops go can never change again. Launching keeps working (the fee
+    ///         is at most MAX_STAMP_FEE).
     function renounceOwnership() external onlyOwner {
         emit OwnershipTransferred(owner, address(0));
         owner = address(0);
@@ -550,20 +605,26 @@ contract CourierPad is IHooks, IUnlockCallback {
     /// @notice The token's price in IMD wei per whole token, at the current pool price. A sell that runs past the
     ///         launch price (possible through other routers) leaves the pool price in the empty range beyond it;
     ///         the next trade starts from the launch price again, so that is the price reported.
+    ///         (Whole IMD wei: near the top of the allowed start ticks a token is worth only a few wei, so this rounds.)
     function price(address t) public view returns (uint256) {
+        return _valueOf(t, 1e18);
+    }
+
+    /// @notice Market cap in IMD wei at the current pool price: every token that isn't burned, the treasury's 5%
+    ///         included. Worked out from the pool price directly, so it doesn't inherit `price`'s rounding.
+    function marketCap(address t) external view returns (uint256) {
+        return _valueOf(t, TOTAL_SUPPLY - PadToken(t).balanceOf(DEAD));
+    }
+
+    /// @dev IMD wei for `amount` token wei at the current pool price (the launch price at most, see `price`).
+    function _valueOf(address t, uint256 amount) internal view returns (uint256) {
         (uint160 sqrtP,,,) = poolManager.getSlot0(poolKey(t).toId());
         bool quoteIs0 = launches[t].quoteIsCurrency0;
         uint160 top = launchSqrtPrice(t);
         if (quoteIs0 ? sqrtP > top : sqrtP < top) sqrtP = top;
         return quoteIs0
-            ? FullMath.mulDiv(FullMath.mulDiv(1e18, Q96, sqrtP), Q96, sqrtP)
-            : FullMath.mulDiv(FullMath.mulDiv(1e18, sqrtP, Q96), sqrtP, Q96);
-    }
-
-    /// @notice Market cap in IMD wei at the current pool price: every token that isn't burned, the treasury's 5%
-    ///         included.
-    function marketCap(address t) external view returns (uint256) {
-        return FullMath.mulDiv(price(t), TOTAL_SUPPLY - PadToken(t).balanceOf(DEAD), 1e18);
+            ? FullMath.mulDiv(FullMath.mulDiv(amount, Q96, sqrtP), Q96, sqrtP)
+            : FullMath.mulDiv(FullMath.mulDiv(amount, sqrtP, Q96), sqrtP, Q96);
     }
 
     // ------------------------------------------------- Disabled hook paths

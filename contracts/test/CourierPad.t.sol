@@ -15,6 +15,7 @@ import {SwapParams, ModifyLiquidityParams} from "v4-core/src/types/PoolOperation
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 
+import {Vm} from "forge-std/Vm.sol";
 import {CourierPad, IPostOfficeOpen} from "../src/CourierPad.sol";
 import {PadToken} from "../src/PadToken.sol";
 import {StampRouter} from "../src/StampRouter.sol";
@@ -55,6 +56,7 @@ abstract contract CourierPadTest is Test {
     PoolSwapTest extRouter;
     PoolModifyLiquidityTest lp;
     PadToken token; // alice's launch
+    int24 ST; // the start tick launches use (as the game shows it to the launcher)
 
     address owner = makeAddr("owner");
     address feeRecipient = makeAddr("feeRecipient");
@@ -98,6 +100,7 @@ abstract contract CourierPadTest is Test {
         offices = new MockOffices();
 
         pad = CourierPad(_padWith(feeRecipient));
+        ST = pad.startTick();
         router = StampRouter(pad.router());
         ethRouter = StampEthRouter(payable(pad.ethRouter()));
 
@@ -151,7 +154,7 @@ abstract contract CourierPadTest is Test {
     function _launch(address who, string memory name, string memory symbol) internal returns (PadToken t) {
         vm.startPrank(who);
         stamp.approve(address(pad), pad.stampFee());
-        t = PadToken(pad.launch(name, symbol, META, pad.stampFee()));
+        t = PadToken(pad.launch(name, symbol, META, pad.stampFee(), pad.startTick()));
         vm.stopPrank();
     }
 
@@ -206,9 +209,10 @@ abstract contract CourierPadTest is Test {
         assertEq(token.totalSupply(), SUPPLY);
         assertEq(token.balanceOf(treasury), DROP, "5% to the treasury for drops");
         assertEq(token.balanceOf(address(pad)), 0);
-        // The other 95% went into the pool, except a rounding buffer (< 1.1e9 wei) that was burned.
+        // The other 95% went into the pool, except a rounding remainder that was burned (under 2e9 wei at every
+        // allowed start price).
         assertEq(token.balanceOf(address(pm)) + token.balanceOf(DEAD), SUPPLY - DROP);
-        assertLt(token.balanceOf(DEAD), 1.1e9);
+        assertLt(token.balanceOf(DEAD), 2e9);
     }
 
     function test_TheTokenIsPlainAndOwnerless() public view {
@@ -252,21 +256,21 @@ abstract contract CourierPadTest is Test {
         vm.startPrank(carol);
         stamp.approve(address(pad), STAMP_FEE);
         vm.expectRevert(CourierPad.NoPostOffice.selector);
-        pad.launch("Carol", "CAR", META, STAMP_FEE);
+        pad.launch("Carol", "CAR", META, STAMP_FEE, ST);
         vm.stopPrank();
     }
 
     function test_LaunchNeedsTheStamp() public {
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pad), 0, STAMP_FEE));
-        pad.launch("Bob Coin", "BOB", META, STAMP_FEE);
+        pad.launch("Bob Coin", "BOB", META, STAMP_FEE, ST);
         address poor = makeAddr("poor");
         offices.setOpen(poor, true);
         stamp.mint(poor, 1e18);
         vm.startPrank(poor);
         stamp.approve(address(pad), type(uint256).max);
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, poor, 1e18, STAMP_FEE));
-        pad.launch("Poor", "POOR", META, STAMP_FEE);
+        pad.launch("Poor", "POOR", META, STAMP_FEE, ST);
         vm.stopPrank();
         assertEq(pad.tokenCount(), 1);
     }
@@ -279,13 +283,13 @@ abstract contract CourierPadTest is Test {
         pad.setStampFee(2_000e18);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(CourierPad.FeeChanged.selector, 2_000e18));
-        pad.launch("Bob Coin", "BOB", META, STAMP_FEE);
+        pad.launch("Bob Coin", "BOB", META, STAMP_FEE, ST);
         assertEq(stamp.balanceOf(bob), 10_000e18);
         // A cut is fine: it charges the new, lower fee.
         vm.prank(owner);
         pad.setStampFee(100e18);
         vm.prank(bob);
-        pad.launch("Bob Coin", "BOB", META, STAMP_FEE);
+        pad.launch("Bob Coin", "BOB", META, STAMP_FEE, ST);
         assertEq(stamp.balanceOf(bob), 10_000e18 - 100e18);
     }
 
@@ -293,7 +297,7 @@ abstract contract CourierPadTest is Test {
         vm.prank(owner);
         pad.setStampFee(0);
         vm.prank(bob);
-        PadToken t = PadToken(pad.launch("Bob Coin", "BOB", META, 0));
+        PadToken t = PadToken(pad.launch("Bob Coin", "BOB", META, 0, ST));
         assertEq(t.balanceOf(treasury), DROP);
         assertEq(stamp.balanceOf(bob), 10_000e18);
     }
@@ -302,7 +306,7 @@ abstract contract CourierPadTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
         (uint8 v, bytes32 r, bytes32 s) = _stampPermit(aliceKey, STAMP_FEE, deadline);
         vm.prank(alice);
-        PadToken t = PadToken(pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, deadline, v, r, s));
+        PadToken t = PadToken(pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, ST, deadline, v, r, s));
         assertEq(t.creator(), alice);
         assertEq(stamp.balanceOf(alice), 10_000e18 - 2 * STAMP_FEE);
         assertEq(stamp.allowance(alice, address(pad)), 0);
@@ -314,7 +318,7 @@ abstract contract CourierPadTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = _stampPermit(aliceKey, STAMP_FEE, deadline);
         stamp.permit(alice, address(pad), STAMP_FEE, deadline, v, r, s);
         vm.prank(alice);
-        pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, deadline, v, r, s);
+        pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, ST, deadline, v, r, s);
         assertEq(pad.tokenCount(), 2);
     }
 
@@ -325,24 +329,24 @@ abstract contract CourierPadTest is Test {
         vm.warp(deadline + 1);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ERC20Permit.ERC2612ExpiredSignature.selector, deadline));
-        pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, deadline, v, r, s);
+        pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, ST, deadline, v, r, s);
     }
 
     function test_NameSymbolAndMetadataLimits() public {
         vm.startPrank(bob);
         stamp.approve(address(pad), type(uint256).max);
         vm.expectRevert(CourierPad.BadMetadata.selector);
-        pad.launch("", "BOB", META, STAMP_FEE);
+        pad.launch("", "BOB", META, STAMP_FEE, ST);
         vm.expectRevert(CourierPad.BadMetadata.selector);
-        pad.launch("Bob", "", META, STAMP_FEE);
+        pad.launch("Bob", "", META, STAMP_FEE, ST);
         vm.expectRevert(CourierPad.BadMetadata.selector);
-        pad.launch("123456789012345678901234567890123", "BOB", META, STAMP_FEE); // 33 bytes
+        pad.launch("123456789012345678901234567890123", "BOB", META, STAMP_FEE, ST); // 33 bytes
         vm.expectRevert(CourierPad.BadMetadata.selector);
-        pad.launch("Bob", "1234567890123", META, STAMP_FEE); // 13 bytes
+        pad.launch("Bob", "1234567890123", META, STAMP_FEE, ST); // 13 bytes
         vm.expectRevert(CourierPad.BadMetadata.selector);
-        pad.launch("Bob", "BOB", string(new bytes(2049)), STAMP_FEE);
+        pad.launch("Bob", "BOB", string(new bytes(2049)), STAMP_FEE, ST);
         // The limits themselves are fine.
-        pad.launch("12345678901234567890123456789012", "123456789012", string(new bytes(2048)), STAMP_FEE);
+        pad.launch("12345678901234567890123456789012", "123456789012", string(new bytes(2048)), STAMP_FEE, ST);
         vm.stopPrank();
         assertEq(pad.tokenCount(), 2);
     }
@@ -368,6 +372,8 @@ abstract contract CourierPadTest is Test {
             PadToken t = _launch(bob, "Edge", "EDGE");
             assertEq(t.balanceOf(treasury), DROP);
             assertEq(t.balanceOf(address(pm)) + t.balanceOf(DEAD), SUPPLY - DROP);
+            assertEq(t.balanceOf(address(pad)), 0);
+            assertLt(t.balanceOf(DEAD), 2e9);
             vm.startPrank(bob);
             uint256 got = router.buy(address(t), buys[i], 1, block.timestamp);
             assertGt(got, 0);
@@ -584,10 +590,12 @@ abstract contract CourierPadTest is Test {
         vm.expectRevert(CourierPad.ZeroAddress.selector);
         pad.setFeeRecipient(address(0));
         vm.stopPrank();
+        vm.prank(vault);
+        pad.acceptDropRecipient();
         assertEq(pad.stampFee(), 1_000e18);
         vm.startPrank(bob);
         stamp.approve(address(pad), 1_000e18);
-        PadToken t = PadToken(pad.launch("Bob Coin", "BOB", META, 1_000e18));
+        PadToken t = PadToken(pad.launch("Bob Coin", "BOB", META, 1_000e18, ST));
         vm.stopPrank();
         assertEq(t.balanceOf(vault), DROP);
     }
@@ -617,6 +625,10 @@ abstract contract CourierPadTest is Test {
         pad.setFeeRecipient(bob);
         vm.prank(treasury);
         pad.setDropRecipient(bob);
+        vm.startPrank(bob);
+        pad.acceptFeeRecipient();
+        pad.acceptDropRecipient();
+        vm.stopPrank();
         assertEq(pad.feeRecipient(), bob);
         assertEq(pad.dropRecipient(), bob);
         // And launching keeps working without an owner.
@@ -645,6 +657,191 @@ abstract contract CourierPadTest is Test {
         new CourierPad(pm, address(imd), address(stamp), po, owner, feeRecipient, address(0), 0, 0, ie);
         vm.expectRevert(CourierPad.ZeroAddress.selector);
         new CourierPad(pm, address(imd), address(0), po, owner, feeRecipient, treasury, 0, 0, ie);
+        vm.expectRevert(CourierPad.BadRecipient.selector);
+        new CourierPad(pm, address(imd), address(stamp), po, owner, feeRecipient, address(pm), 0, 0, ie);
+        vm.expectRevert(CourierPad.BadRecipient.selector);
+        new CourierPad(pm, address(imd), address(stamp), po, owner, DEAD, treasury, 0, 0, ie);
+        vm.expectRevert(CourierPad.FeeTooHigh.selector);
+        new CourierPad(pm, address(imd), address(stamp), po, owner, feeRecipient, treasury, 100_000e18 + 1, 0, ie);
+    }
+
+    // ------------------------------------------------------------------ audit 59db1445 (on 0b01b0c)
+
+    /// #1: a start price changed before a launch lands reverts it, burning nothing; a launch at the new price works.
+    function test_StartPriceChangeRevertsAPendingLaunch() public {
+        vm.prank(bob);
+        stamp.approve(address(pad), type(uint256).max);
+        vm.prank(owner);
+        pad.setStartTick(400_000);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(CourierPad.StartTickChanged.selector, int24(400_000)));
+        pad.launch("Bob Coin", "BOB", META, STAMP_FEE, ST);
+        assertEq(stamp.balanceOf(bob), 10_000e18);
+        assertEq(pad.tokenCount(), 1);
+        vm.prank(bob);
+        PadToken t = PadToken(pad.launch("Bob Coin", "BOB", META, STAMP_FEE, 400_000));
+        assertEq(pad.launchTick(address(t)), 400_000);
+    }
+
+    /// #1, the permit path: the same check, before the permit's allowance is spent.
+    function test_StartPriceChangeRevertsAPermitLaunch() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _stampPermit(aliceKey, STAMP_FEE, deadline);
+        vm.prank(owner);
+        pad.setStartTick(0);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(CourierPad.StartTickChanged.selector, int24(0)));
+        pad.launchWithPermit("Second", "SEC", META, STAMP_FEE, ST, deadline, v, r, s);
+        assertEq(stamp.balanceOf(alice), 10_000e18 - STAMP_FEE); // only her first launch's fee
+    }
+
+    /// #2: the fee can't be set out of reach, so launching keeps working after the renounce.
+    function test_StampFeeIsCapped() public {
+        vm.startPrank(owner);
+        vm.expectRevert(CourierPad.FeeTooHigh.selector);
+        pad.setStampFee(100_000e18 + 1);
+        pad.setStampFee(100_000e18);
+        pad.renounceOwnership();
+        vm.stopPrank();
+        stamp.mint(bob, 100_000e18);
+        PadToken t = _launch(bob, "Dear", "DEAR");
+        assertEq(t.balanceOf(treasury), DROP);
+    }
+
+    /// #3: the launch event carries the launch's own start tick (tokens per IMD), in either currency order.
+    function test_LaunchEventCarriesTheStartTick() public {
+        vm.recordLogs();
+        PadToken t = _launch(bob, "Bob Coin", "BOB");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("TokenLaunched(address,address,string,string,string,bytes32,int24,uint256)");
+        bool seen;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter != address(pad) || logs[i].topics[0] != sig) continue;
+            (,,,, int24 tick, uint256 burned) = abi.decode(logs[i].data, (string, string, string, bytes32, int24, uint256));
+            assertEq(tick, pad.launchTick(address(t)));
+            assertEq(tick, ST);
+            assertEq(burned, STAMP_FEE);
+            seen = true;
+        }
+        assertTrue(seen);
+    }
+
+    /// #4: a recipient only takes over by accepting, so a typo can't capture anything.
+    function test_RecipientsMoveInTwoSteps() public {
+        address typo = address(0x1234);
+        vm.prank(feeRecipient);
+        pad.setFeeRecipient(typo);
+        assertEq(pad.feeRecipient(), feeRecipient);
+        assertEq(pad.pendingFeeRecipient(), typo);
+        vm.prank(bob);
+        vm.expectRevert(CourierPad.NotPendingRecipient.selector);
+        pad.acceptFeeRecipient();
+        // Proposing again replaces the typo.
+        vm.prank(feeRecipient);
+        pad.setFeeRecipient(bob);
+        vm.prank(typo);
+        vm.expectRevert(CourierPad.NotPendingRecipient.selector);
+        pad.acceptFeeRecipient();
+        vm.prank(treasury);
+        pad.setDropRecipient(typo);
+        assertEq(pad.dropRecipient(), treasury);
+        PadToken t = _launch(alice, "Still Here", "HERE");
+        assertEq(t.balanceOf(treasury), DROP);
+    }
+
+    /// #4: fees earned before a change go to the outgoing recipient.
+    function test_AcceptingPaysTheOutgoingRecipientFirst() public {
+        vm.prank(carol);
+        router.buy(address(token), 1_000e18, 1, block.timestamp);
+        vm.prank(owner);
+        pad.setFeeRecipient(bob);
+        uint256 bobBefore = imd.balanceOf(bob);
+        vm.prank(bob);
+        pad.acceptFeeRecipient();
+        assertEq(imd.balanceOf(feeRecipient), 40e18);
+        assertEq(_fees(), 0);
+        vm.prank(carol);
+        router.buy(address(token), 1_000e18, 1, block.timestamp);
+        pad.collectProtocolFees(address(imd));
+        assertEq(imd.balanceOf(bob) - bobBefore, 40e18);
+    }
+
+    /// #4: if the outgoing recipient can't be paid (its IMD blocked), the change still goes through and the fees
+    /// move along.
+    function test_AcceptingWorksWhenTheOutgoingRecipientIsBlocked() public {
+        vm.prank(carol);
+        router.buy(address(token), 1_000e18, 1, block.timestamp);
+        vm.prank(feeRecipient);
+        pad.setFeeRecipient(bob);
+        vm.mockCallRevert(address(imd), abi.encodeWithSelector(MockIMD.transfer.selector, feeRecipient), "blocked");
+        uint256 bobBefore = imd.balanceOf(bob);
+        vm.prank(bob);
+        pad.acceptFeeRecipient();
+        assertEq(pad.feeRecipient(), bob);
+        assertEq(_fees(), 40e18);
+        vm.clearMockedCalls();
+        pad.collectProtocolFees(address(imd));
+        assertEq(imd.balanceOf(bob) - bobBefore, 40e18);
+    }
+
+    /// #5: no recipient where tokens would be burned or stranded.
+    function test_NoRecipientThatBurnsOrStrands() public {
+        address[3] memory bad = [address(pad), address(pm), DEAD];
+        vm.startPrank(owner);
+        for (uint256 i; i < 3; i++) {
+            vm.expectRevert(CourierPad.BadRecipient.selector);
+            pad.setDropRecipient(bad[i]);
+            vm.expectRevert(CourierPad.BadRecipient.selector);
+            pad.setFeeRecipient(bad[i]);
+        }
+        vm.stopPrank();
+    }
+
+    /// #6: a buy so small the fee is all of it is refused, rather than swapping nothing.
+    function test_DustBuyIsRefused() public {
+        PoolKey memory key = _key();
+        bool zeroForOne = _imdIs0();
+        vm.prank(bob, bob);
+        vm.expectRevert();
+        extRouter.swap(
+            key,
+            SwapParams(zeroForOne, -1, zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        );
+        uint256 before = _fees();
+        _extSwap(bob, true, -2); // 1 wei of fee, 1 wei swapped
+        assertEq(_fees() - before, 1);
+    }
+
+    /// #7: the market cap is worked out from the pool price, so it stays accurate at the top of the range.
+    function test_MarketCapIsPreciseAtTheTopOfTheRange() public {
+        vm.prank(owner);
+        pad.setStartTick(400_000);
+        PadToken t = _launch(bob, "Tiny", "TINY");
+        assertEq(pad.price(address(t)), 4); // 1.0001^-400000 = 4.2567e-18 IMD per token unit: 4.26 wei, in whole wei
+        assertApproxEqRel(pad.marketCap(address(t)), 4.2567e9, 0.001e18); // not 4e9: no rounding carried over
+    }
+
+    /// #8: many pools on one pad, the fee ledger always matches the pad's IMD claims and pays out exactly.
+    function test_FeesAddUpAcrossManyPools() public {
+        uint256 n = 8;
+        PadToken[] memory ts = new PadToken[](n);
+        for (uint256 i; i < n; i++) ts[i] = _launch(bob, "Many", "MANY");
+        for (uint256 i; i < n; i++) {
+            uint256 before = _fees();
+            vm.prank(carol);
+            uint256 got = router.buy(address(ts[i]), 100e18 * (i + 1), 1, block.timestamp);
+            assertEq(_fees() - before, 4e18 * (i + 1));
+            vm.startPrank(carol);
+            ts[i].approve(address(router), got / 2);
+            router.sell(address(ts[i]), got / 2, 1, block.timestamp);
+            vm.stopPrank();
+        }
+        assertEq(_fees(), pm.balanceOf(address(pad), uint256(uint160(address(imd)))));
+        uint256 owed = _fees();
+        pad.collectProtocolFees(address(imd));
+        assertEq(imd.balanceOf(feeRecipient), owed);
     }
 }
 
@@ -657,5 +854,33 @@ contract CourierPadImdFirstTest is CourierPadTest {
 contract CourierPadImdSecondTest is CourierPadTest {
     function _imdAddress() internal pure override returns (address) {
         return address(uint160(type(uint160).max) - 0x1000);
+    }
+}
+
+/// IMD mid-range, as on mainnet (0x5F7B…): one pad holds pools of both currency orders, sharing one fee ledger,
+/// one transient fee slot and one IMD claim balance (audit 59db1445 #8).
+contract CourierPadMixedOrderTest is CourierPadTest {
+    function _imdAddress() internal pure override returns (address) {
+        return address(uint160(1) << 159);
+    }
+
+    function test_BothOrdersOnOnePad() public {
+        uint256 imdFirst;
+        uint256 n = 12;
+        for (uint256 i; i < n; i++) {
+            PadToken t = _launch(bob, "Mixed", "MIX");
+            (,,,, bool quoteIs0) = pad.launches(address(t));
+            if (quoteIs0) imdFirst++;
+            uint256 before = _fees();
+            vm.prank(carol);
+            router.buy(address(t), 100e18, 1, block.timestamp);
+            assertEq(_fees() - before, 4e18);
+        }
+        assertGt(imdFirst, 0, "some pools with IMD as currency0");
+        assertLt(imdFirst, n, "some with IMD as currency1");
+        assertEq(_fees(), pm.balanceOf(address(pad), uint256(uint160(address(imd)))));
+        uint256 owed = _fees();
+        pad.collectProtocolFees(address(imd));
+        assertEq(imd.balanceOf(feeRecipient), owed);
     }
 }

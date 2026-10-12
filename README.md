@@ -298,7 +298,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
-cd contracts && forge test                                             # 237 tests
+cd contracts && forge test                                             # 305 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 

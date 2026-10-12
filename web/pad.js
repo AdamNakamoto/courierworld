@@ -198,6 +198,7 @@ export function createPad(chain, { toast, snap, onLogin, openOffice, imageApi, i
           <li><b>1,000,000,000</b> tokens: 95% locked in its pool against IMD for good, so it can always be traded</li>
           <li><b>5%</b> to the Courier World treasury, for drops to post offices</li>
           <li>Every trade pays <b>4%</b> to Courier World</li>
+          <li>Starts at a market cap of about <b data-r="start">—</b></li>
           <li>Launching burns <b data-r="fee">—</b> $STAMP</li>
         </ul>
         <p class="note warn" data-r="problem"></p>
@@ -284,6 +285,7 @@ export function createPad(chain, { toast, snap, onLogin, openOffice, imageApi, i
     }
     if (view === "launch" && r.go) {
       r.fee.textContent = info ? whole(info.stampFee) : "—";
+      r.start.textContent = info ? usd(mcapAt(info.startTick) * imdUsd) : "—";
       r.left.textContent = `${r.desc.value.length}/${DESCRIPTION_MAX}`;
       const p = formProblem(s);
       r.problem.textContent = p ?? "";
@@ -315,13 +317,15 @@ export function createPad(chain, { toast, snap, onLogin, openOffice, imageApi, i
     const s = snap();
     if (!s?.account) return onLogin();
     if (!s.office?.open) return openOffice();
+    if (!info) return toast("Still loading the launchpad. Try again in a moment.");
     const name = r.name.value.trim(), symbol = r.symbol.value.trim();
     const fields = { description: r.desc.value, website: r.website.value, x: r.x.value, telegram: r.telegram.value };
+    const shown = { fee: info.stampFee, startTick: info.startTick }; // what the form showed: the launch can't cost more or start elsewhere
     await run(`Launching $${symbol}`, async () => {
       const image = pic ? await upload(s.account) : null;
       const metadata = buildMeta({ image, ...fields });
       if (new TextEncoder().encode(metadata).length > 2048) throw new Error("The description and links are too long together.");
-      const address = await P.launch({ name, symbol, metadata });
+      const address = await P.launch({ name, symbol, metadata, ...shown });
       const t = { address, name, symbol, metadata, creator: s.account, createdAt: Math.floor(Date.now() / 1000), meta: parseMeta(metadata, imageHosts) };
       if (!list.some((x) => x.address.toLowerCase() === address.toLowerCase())) list.push(t);
       pic = null;

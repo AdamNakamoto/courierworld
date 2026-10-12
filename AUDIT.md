@@ -380,9 +380,10 @@ edge the audit listed) and the fork test.
 `contracts/src/CourierPad.sol` and `contracts/src/PadToken.sol` (not deployed yet). Players launch their own
 tokens inside the game.
 
-- `launch(name, symbol, metadata, maxStampFee)` / `launchWithPermit(..., deadline, v, r, s)`: needs an open post
-  office (`PostOffice.offices(msg.sender).open`), burns `stampFee` $STAMP from the launcher (`burnFrom`; reverts
-  `FeeChanged(stampFee)` if that's more than `maxStampFee`), deploys a `PadToken` (1B minted to the pad), sends 5%
+- `launch(name, symbol, metadata, maxStampFee, expectedStartTick)` / `launchWithPermit(..., deadline, v, r, s)`:
+  needs an open post office (`PostOffice.offices(msg.sender).open`), reverts `FeeChanged(stampFee)` if the fee is
+  more than `maxStampFee` and `StartTickChanged(startTick)` if the start price isn't the one the launcher saw (both
+  before anything is burned), burns `stampFee` $STAMP from the launcher (`burnFrom`), deploys a `PadToken` (1B minted to the pad), sends 5%
   to `dropRecipient`, initializes the token's IMD pool at the current `startTick` and adds the other 95% (less a
   1e9-wei rounding buffer, burned) as single-sided liquidity owned by the pad. Name 1–32 bytes, symbol 1–12,
   metadata ≤ 2048. The permit path mirrors SkinsStampSale's audited fix: the permit is for `maxStampFee`, and a
@@ -399,8 +400,11 @@ tokens inside the game.
   zero and about 12× below v4's per-tick cap for 950M tokens; a test launches and trades at both ends.
 - `PadToken`: OpenZeppelin ERC20 + ERC20Permit, no owner (`owner()` returns 0), no mint after the constructor,
   no tax, no blocklist; stores `pad`, `creator` and `metadata`.
-- Owner (two-step, renounceable at any time): `setStampFee`, `setStartTick` (bounded, future launches only),
-  `setDropRecipient`, `setFeeRecipient`. The recipients can also move their own address. None of it touches
+- Owner (two-step, renounceable at any time): `setStampFee` (at most `MAX_STAMP_FEE`, 100,000 $STAMP),
+  `setStartTick` (bounded, future launches only), and proposing a new fee or drop recipient. The recipients can also
+  propose their own replacement; either way the proposed address takes over only by accepting
+  (`acceptFeeRecipient` / `acceptDropRecipient`), fees earned until then go to the outgoing recipient (or move along
+  if it can't be paid), and the pad, the PoolManager and the burn address are refused. None of it touches
   launched tokens, pools or anyone's balances.
 
 Trust and known limits:
@@ -412,8 +416,22 @@ Trust and known limits:
   first-come first-served, without a public mempool.
 - Sells before the first buy can't fill (the pool holds no IMD yet), as for $STAMP.
 
-Tests: `test/CourierPad.t.sol`, 34 tests run twice (IMD as currency0 and as currency1): launch split, fee burn
-and bound, permit paths, limits, every allowed start price, independent pools, the 4% in all four swap kinds,
-partial fills, ETH routing, fee collection, admin, and a fuzz that every token bought sells back with the fees
-adding up. `test/CourierPad.fork.t.sol` launches and trades on Robinhood Chain state (real PoolManager, IMD,
-$STAMP burn, post office check, IMD/ETH pool).
+Independent review: IMD's audit of `0b01b0c` (four specialists and a judge, 4 low and 5 info, nothing above low)
+found, and the fix covers: (1) the launcher bounded the fee but not the start price, so a `setStartTick` sequenced
+first could reprice a launch: `expectedStartTick`, checked before the burn; (2) an unbounded `setStampFee` then a
+renounce could stop launching for good: `MAX_STAMP_FEE`; (3) `TokenLaunched` carried the pool's tick, the inverse
+for tokens that sort below IMD: it carries the launch's start tick now; (4) one-step recipient changes made a typo
+after the renounce permanent: propose and accept; (5) a recipient could be the pad or the PoolManager (tokens
+burned or stranded): refused; (6) a 1-wei exact-in buy ran a zero swap: refused (`DustSwap`); (7) `marketCap`
+carried `price`'s whole-wei rounding at the top of the range: worked out from the pool price; (8) no suite mixed
+both currency orders on one pad: a mid-range IMD fixture now does, and the burned remainder is asserted against
+the supply. (9) lists the owner and recipient powers above; the deployer keeps FEE_RECIPIENT and TREASURY on one
+key, as for the rest of the game.
+Report: https://explorer.imd.fun/jobs/59db1445-68d3-4495-bd02-087f2c6c768a
+
+Tests: `test/CourierPad.t.sol`, 45 tests run in three setups (IMD as currency0, as currency1, and mid-range as on
+mainnet, where one pad holds pools of both orders): launch split, fee burn and bound, start price check, permit
+paths, limits, every allowed start price, independent pools, the 4% in all four swap kinds, dust and partial
+fills, ETH routing, fee collection, two-step recipients, admin, and a fuzz that every token bought sells back with
+the fees adding up. `test/CourierPad.fork.t.sol` launches and trades on Robinhood Chain state (real PoolManager,
+IMD, $STAMP burn, post office check, IMD/ETH pool).

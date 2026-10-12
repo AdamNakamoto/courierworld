@@ -47,13 +47,15 @@ contract CourierPadForkTest is Test {
             pad := create2(0, add(initCode, 0x20), mload(initCode), salt)
         }
 
+        int24 startTick = pad.startTick();
+
         // Someone without a post office can't launch.
         address stranger = makeAddr("stranger");
         deal(STAMP, stranger, 1_000e18);
         vm.startPrank(stranger);
         IERC20(STAMP).approve(address(pad), 500e18);
         vm.expectRevert(CourierPad.NoPostOffice.selector);
-        pad.launch("Nope", "NOPE", "{}", 500e18);
+        pad.launch("Nope", "NOPE", "{}", 500e18, startTick);
         vm.stopPrank();
 
         // A player with one launches, burning the real $STAMP fee.
@@ -61,7 +63,7 @@ contract CourierPadForkTest is Test {
         uint256 supply = IERC20(STAMP).totalSupply();
         vm.startPrank(PLAYER);
         IERC20(STAMP).approve(address(pad), 500e18);
-        PadToken t = PadToken(pad.launch("Fork Cat", "FCAT", '{"description":"fork"}', 500e18));
+        PadToken t = PadToken(pad.launch("Fork Cat", "FCAT", '{"description":"fork"}', 500e18, startTick));
         vm.stopPrank();
         assertEq(IERC20(STAMP).totalSupply(), supply - 500e18, "fee burned");
         assertEq(t.balanceOf(drops), 50_000_000e18, "5% for drops");

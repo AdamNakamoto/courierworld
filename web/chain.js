@@ -35,6 +35,9 @@ const ERROR_TEXT = {
   // The launchpad (CourierPad)
   NoPostOffice: "Open a post office first: only post office owners can launch.",
   FeeChanged: "The launch fee just went up. Check the new fee and try again.",
+  StartTickChanged: "The starting price for new tokens just changed. Check it and try again.",
+  DustSwap: "That amount is too small to trade.",
+  FeeTooHigh: "That fee is above the launchpad's limit (100,000 $STAMP).",
   BadMetadata: "Check the name (up to 32 characters), symbol (up to 12) and description.",
   Slippage: "The price moved past your slippage limit. Try again, or allow more slippage.",
   Expired: "The trade took too long and expired. Try again.",
@@ -499,11 +502,11 @@ export async function connectChain() {
     market: (token) => market(padVenue(token)),
     trade: (token, args) => trade(args, padVenue(token)),
     /// Launch a token, burning the $STAMP fee (one permit signature, or an approval); resolves to its address.
-    async launch({ name, symbol, metadata }) {
-      const fee = await read(P.pad, "stampFee");
+    /// `fee` and `startTick` are what the launcher was shown: if either has changed, the launch reverts.
+    async launch({ name, symbol, metadata, fee, startTick }) {
       let receipt;
       if (fee === 0n || (await read(C.stamp, "allowance", [account, P.pad.address])) >= fee) {
-        receipt = await send(P.pad, "launch", [name, symbol, metadata, fee]);
+        receipt = await send(P.pad, "launch", [name, symbol, metadata, fee, startTick]);
       } else {
         const deadline = (await pub.getBlock()).timestamp + 600n;
         let sig = null;
@@ -512,10 +515,10 @@ export async function connectChain() {
         } catch (e) {
           if (rejected(e)) throw e;
         }
-        if (sig) receipt = await send(P.pad, "launchWithPermit", [name, symbol, metadata, fee, deadline, sig.v, sig.r, sig.s]);
+        if (sig) receipt = await send(P.pad, "launchWithPermit", [name, symbol, metadata, fee, startTick, deadline, sig.v, sig.r, sig.s]);
         else {
           await send(C.stamp, "approve", [P.pad.address, fee]);
-          receipt = await send(P.pad, "launch", [name, symbol, metadata, fee]);
+          receipt = await send(P.pad, "launch", [name, symbol, metadata, fee, startTick]);
         }
       }
       const [ev] = parseEventLogs({ abi: P.pad.abi, logs: receipt.logs, eventName: "TokenLaunched" });
