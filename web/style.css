@@ -181,6 +181,7 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .chat-btn { top: 158px; font-size: 18px; padding: 0; }
 .set-btn { top: 206px; font-size: 22px; padding: 0; }
 .full-btn { top: 254px; display: grid; place-items: center; padding: 0; }
+.photo-btn { top: 302px; font-size: 19px; padding: 0; }
 .full-btn.on { background: var(--yellow); }
 .settings { position: absolute; top: 200px; right: 64px; width: 250px; padding: 10px 12px 12px; transform: rotate(-.5deg); }
 .settings h3 { margin: 8px 0 5px; font: 400 13px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; }
@@ -293,7 +294,13 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
   .office { top: auto; height: 62vh; left: 8px; right: 8px; width: auto; bottom: 8px; }
   .office-btn { top: 108px; right: 10px; }
   .music-btn { top: 156px; right: 10px; }
+  /* (each its own spot down the right-hand side; they used to stack on one) */
   .sounds-btn { top: 204px; }
+  .chat-btn { top: 252px; }
+  .set-btn { top: 300px; }
+  .full-btn { top: 348px; }
+  .photo-btn { top: 396px; }
+  .settings { top: 296px; right: 58px; }
 }
 
 /* ---------------------------------------------------------------- wallet login */
@@ -391,3 +398,47 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .pickname .namerow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .pickname .namerow input { flex: 1 1 160px; min-width: 0; }
 .pickname .note { margin: 8px 0; }
+
+/* ---------------------------------------------------------------- photo mode */
+
+/* Everything on screen steps aside but the walking stick (on phones) and the photo controls. */
+body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card { display: none !important; }
+.photo { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
+.photo > * { pointer-events: auto; }
+.photo-bar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%) rotate(-.4deg); display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: center; gap: 8px; padding: 8px 10px; max-width: calc(100% - 24px); box-sizing: border-box;
+}
+.photo-bar .pbtn { padding: 7px 12px; }
+.photo-bar .pbtn[aria-pressed="true"] { background: var(--yellow); }
+.photo-time { display: flex; align-items: center; gap: 6px; font-size: 16px; }
+.photo-time input { width: 140px; accent-color: #3f6fbf; }
+.photo-time b { min-width: 44px; font: 700 14px ui-monospace, Menlo, monospace; }
+.photo-zoom { display: flex; gap: 4px; }
+.photo-zoom .pbtn { width: 38px; padding: 7px 0; font-size: 18px; }
+.photo-hint {
+  position: absolute; bottom: 112px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 12px; width: max-content; max-width: min(560px, calc(100% - 32px));
+  box-sizing: border-box; text-align: center; font-size: 16px; pointer-events: none; animation: photoHint 8s forwards;
+}
+@keyframes photoHint { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
+.photo-shoot {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); width: 70px; height: 70px; border-radius: 50%;
+  background: #fbf8ef; border: 5px solid var(--ink); box-shadow: 0 0 0 4px #fbf8ef, 3px 5px 0 6px rgba(40, 48, 51, 0.6); cursor: pointer;
+}
+.photo-shoot:active { transform: translateX(-50%) scale(.92); }
+.photo-flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 40; }
+.photo-flash.go { animation: photoFlash .35s ease-out; }
+@keyframes photoFlash { 0% { opacity: .85; } 100% { opacity: 0; } }
+.photo-card {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-.6deg); z-index: 45; width: min(560px, calc(100% - 32px));
+  padding: 12px; box-sizing: border-box;
+}
+.photo-card img { display: block; width: 100%; border: 2.5px solid var(--ink); border-radius: 2px; background: #e8e2d2; }
+.photo-actions .pbtn.busy { opacity: .6; pointer-events: none; }
+.photo-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.photo-actions .pbtn { flex: 1 1 auto; text-align: center; text-decoration: none; }
+@media (max-width: 640px) {
+  .photo-time input { width: 110px; }
+  .photo-shoot { width: 64px; height: 64px; bottom: 28px; }
+  .photo-hint { bottom: auto; top: 192px; } /* (under the bar, clear of the stick) */
+}

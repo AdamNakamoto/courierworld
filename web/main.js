@@ -513,6 +513,24 @@ const keys = new Set();
 const typing = (e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
 addEventListener("keydown", (e) => {
   if (typing(e)) return;
+  // Photo mode: C in and out, Space takes the picture, Escape steps back; walking and emotes still work.
+  if (e.key.toLowerCase() === "c" && !e.metaKey && !e.ctrlKey && mode === "play" && !dialog) {
+    photoMode(!photo);
+    return;
+  }
+  if (photo) {
+    if (e.key === "Escape") {
+      if (!$("photoCard").hidden) closePhoto();
+      else photoMode(false);
+      return;
+    }
+    if (e.key === " ") {
+      e.preventDefault();
+      if (!e.repeat) shoot();
+      return;
+    }
+    if (["p", "t", "e", "enter"].includes(e.key.toLowerCase())) return;
+  }
   if (e.key === "Escape" && !$("orbCard").hidden) {
     hideAd();
     return;
@@ -563,20 +581,38 @@ let pitch = 0.56, dist = 8;
 const canvas = $("c");
 let drag = null;
 let tap = null; // where and when a press began, to tell a tap from a drag
+const presses = new Map(); // pointer id -> where it is, for pinching to zoom in photo mode
+let pinch = null;
 canvas.addEventListener("pointerdown", (e) => {
   if (mode !== "play") return;
   drag = { x: e.clientX, y: e.clientY };
   tap = { x: e.clientX, y: e.clientY, t: performance.now() };
+  presses.set(e.pointerId, { x: e.clientX, y: e.clientY });
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener("pointermove", (e) => {
+  if (presses.has(e.pointerId)) presses.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (photo && presses.size === 2) {
+    const [a, b] = [...presses.values()], apart = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch) photoZoom(pinch / apart);
+    pinch = apart;
+    tap = null;
+    return;
+  }
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   drag = { x: e.clientX, y: e.clientY };
   yaw(-dx * 0.006);
-  pitch = Math.min(0.95, Math.max(0.06, pitch + dy * 0.004));
+  if (photo) photo.pitch = Math.min(1.5, Math.max(-1.35, photo.pitch + dy * 0.004));
+  else pitch = Math.min(0.95, Math.max(0.06, pitch + dy * 0.004));
+});
+canvas.addEventListener("pointercancel", (e) => {
+  presses.delete(e.pointerId);
+  pinch = null;
 });
 canvas.addEventListener("pointerup", (e) => {
+  presses.delete(e.pointerId);
+  pinch = null;
   drag = null;
   // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad.
   if (tap && W.orb && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
@@ -588,6 +624,7 @@ canvas.addEventListener("pointerup", (e) => {
 });
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
+  if (photo) return photoZoom(Math.exp(e.deltaY * 0.0015));
   dist = Math.min(12, Math.max(4.5, dist * Math.exp(e.deltaY * 0.001)));
 }, { passive: false });
 
@@ -611,7 +648,7 @@ const joy = { x: 0, y: 0, id: null };
     pad.hidden = false;
     $("jumpBtn").hidden = false;
     $("talkBtn").hidden = false;
-    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk or wave · drag the world to look";
+    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk or wave · drag the world to look · 📷 for photos";
   }
   $("jumpBtn").addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -792,6 +829,141 @@ function steerCamera(dt) {
   const back = camDodge > 0 ? 1.5 : 10;
   camPitch += (p - camPitch) * (1 - Math.exp(-dt * (p > camPitch ? 5 : back)));
   camDist += (d - camDist) * (1 - Math.exp(-dt * (d < camDist ? 5 : back)));
+}
+
+// ---------------------------------------------------------------- photo mode
+
+// Look round freely and take a picture. The camera leaves its spot behind the courier and circles them
+// at any height (from overhead down to the ground, looking up at the sky) and any distance (out to the
+// planet's curve, or right in, through their eyes). The buttons and panels step aside, the clock can be
+// turned to any hour, and the shutter saves the view (with the game's address in the corner).
+let photo = null; // { pitch, dist, hide, time, shoot } while in photo mode
+const PHOTO_FAR = 45;
+let photoUrl = null;
+const HINT_KEYS = "Drag to look around · scroll to zoom (all the way in to see through your courier's eyes) · WASD to walk · Space for a photo · C or Esc when you're done";
+const HINT_TOUCH = "Drag to look around · pinch or +/− to zoom (all the way in to see through your courier's eyes) · the stick to walk";
+function photoMode(on) {
+  if (on && (photo || mode !== "play" || dialog)) return;
+  if (on) {
+    photo = { pitch: camPitch, dist: camDist, hide: false, time: ((timeOfDay % 1) + 1) % 1, shoot: 0 };
+    chatUI.close();
+    office?.show(false);
+    hideAd();
+    $("photoTime").value = photo.time;
+    photoClock();
+    $("photoMe").setAttribute("aria-pressed", "false");
+    $("photoHint").textContent = matchMedia("(pointer: coarse)").matches ? HINT_TOUCH : HINT_KEYS;
+    $("photoHint").style.animation = "none";
+    void $("photoHint").offsetWidth; // (restart its fade)
+    $("photoHint").style.animation = "";
+  } else {
+    if (!photo) return;
+    closePhoto();
+    photo = null;
+    player.group.visible = true;
+  }
+  document.body.classList.toggle("photo-on", !!photo);
+  $("photo").hidden = !photo;
+}
+/// Zoom by `f` (above 1: out). All the way in is the view through the courier's eyes.
+function photoZoom(f) {
+  if (!photo) return;
+  if (photo.dist === 0) photo.dist = f > 1 ? 0.9 : 0;
+  else photo.dist = Math.min(PHOTO_FAR, photo.dist * f);
+  if (photo.dist < 0.8 && f < 1) photo.dist = 0;
+}
+/// The photo camera, in the courier's frame (they stand at the top of the planet).
+function photoCam() {
+  const base = R + camLift;
+  if (photo.dist === 0) {
+    // Through their eyes: drag down to look down, up to look up at the sky.
+    const head = new THREE.Vector3(0, base + 1.3, 0), up = -photo.pitch;
+    return { pos: head, look: head.clone().add(new THREE.Vector3(0, Math.sin(up), -Math.cos(up))) };
+  }
+  const p = photo.pitch, d = photo.dist, target = new THREE.Vector3(0, base + 1.0, 0);
+  const pos = target.clone().add(new THREE.Vector3(0, Math.sin(p) * d, Math.cos(p) * d));
+  // No lower than just above the ground; from down there, look up past the courier into the sky.
+  const under = pos.clone().normalize().applyQuaternion(world.quaternion.clone().invert()); // (on the planet itself)
+  const floor = R + Math.min(camLift, W.terrain.surfaceAt(under, camLift + 0.5)) + 0.35;
+  if (pos.length() < floor) pos.setLength(floor);
+  const look = target.clone();
+  if (p < 0) look.y += -Math.sin(p) * d * 1.1;
+  return { pos, look };
+}
+function shoot() {
+  if (!photo || photo.shoot) return;
+  // Draw the picture at full resolution (Auto may have lowered it), then put it back.
+  W.setQuality(1);
+  photo.shoot = 2;
+  sounds.shutter();
+}
+/// Right after a frame is drawn: copy it, with the game's address in the corner, and show it.
+function capture() {
+  W.setQuality(quality);
+  const w = canvas.width, h = canvas.height, c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d");
+  g.drawImage(canvas, 0, 0);
+  const s = Math.max(14, Math.round(h * 0.03));
+  g.font = `400 ${s}px Bungee, Impact, sans-serif`;
+  g.textAlign = "right";
+  g.textBaseline = "bottom";
+  g.fillStyle = "rgba(40, 48, 51, 0.55)";
+  g.fillText("courierworld.fun", w - s * 0.75 + s * 0.08, h - s * 0.55 + s * 0.08);
+  g.fillStyle = "#fbf8ef";
+  g.fillText("courierworld.fun", w - s * 0.75, h - s * 0.55);
+  $("photoFlash").classList.remove("go");
+  void $("photoFlash").offsetWidth;
+  $("photoFlash").classList.add("go");
+  // The card comes up at once; the picture fills in when it's ready.
+  const img = $("photoImg"), save = $("photoSave");
+  img.removeAttribute("src");
+  img.style.aspectRatio = `${w} / ${h}`;
+  save.classList.add("busy");
+  save.textContent = "Developing…";
+  $("photoShare").hidden = true;
+  $("photoCard").hidden = false;
+  c.toBlob((blob) => {
+    if (!blob) {
+      closePhoto();
+      return toast("Couldn't take that photo. Try again.", "error");
+    }
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    photoUrl = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+    const file = new File([blob], `courier-world-${stamp}.jpg`, { type: "image/jpeg" });
+    img.src = photoUrl;
+    save.href = photoUrl;
+    save.download = file.name;
+    save.textContent = "⬇ Save photo";
+    save.classList.remove("busy");
+    $("photoShare").hidden = !navigator.canShare?.({ files: [file] });
+    $("photoShare").onclick = () => navigator.share({ files: [file], text: "A picture from Courier World 📮 courierworld.fun" }).catch(() => {});
+  }, "image/jpeg", 0.92);
+}
+function closePhoto() {
+  $("photoCard").hidden = true;
+}
+$("photoBtn").addEventListener("click", () => photoMode(true));
+$("photoExit").addEventListener("click", () => photoMode(false));
+$("photoShoot").addEventListener("click", shoot);
+$("photoClose").addEventListener("click", closePhoto);
+$("photoIn").addEventListener("click", () => photoZoom(0.8));
+$("photoOut").addEventListener("click", () => photoZoom(1.25));
+$("photoMe").addEventListener("click", () => {
+  if (!photo) return;
+  photo.hide = !photo.hide;
+  $("photoMe").setAttribute("aria-pressed", String(photo.hide));
+});
+$("photoTime").addEventListener("input", (e) => {
+  if (photo) photo.time = Number(e.target.value);
+  photoClock();
+});
+/// The hour the time slider is at (the day starts at midnight).
+function photoClock() {
+  const m = Math.round(Number($("photoTime").value) * 24 * 60) % (24 * 60);
+  $("photoClock").textContent = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
 let mode = "title"; // title | intro | play
@@ -1102,11 +1274,16 @@ function frame() {
     compass(p);
     placeTitle(p, dt);
 
-    steerCamera(dt);
-    const f = followCam();
-    const k = 1 - Math.exp(-dt * 8);
+    let f;
+    if (photo) f = photoCam();
+    else {
+      steerCamera(dt);
+      f = followCam();
+    }
+    const k = 1 - Math.exp(-dt * (photo ? 12 : 8));
     camPos.lerp(f.pos, k);
     camLook.lerp(f.look, k);
+    if (photo) player.group.visible = !photo.hide && photo.dist > 0;
   }
 
   const stepped = player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4), dist);
@@ -1129,11 +1306,11 @@ function frame() {
   waveT = Math.max(0, waveT - dt);
   player.ch.setWave(waveT > 0 ? Math.min(1, waveT * 3, (1.6 - waveT) * 6) : 0);
   if (mode !== "title") {
-    timeOfDay += dt / DAY_SECONDS;
+    if (!photo) timeOfDay += dt / DAY_SECONDS; // (photo mode holds the clock where you set it)
     stepWeather(dt);
   }
   W.setRain(weather.rain);
-  W.setTimeOfDay(timeOfDay);
+  W.setTimeOfDay(photo ? photo.time : timeOfDay);
   sounds.update(dt, {
     speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, step: stepped && mode === "play" && !wading,
     ...(mode === "play" ? nearby(localPos()) : {}),
@@ -1149,8 +1326,9 @@ function frame() {
 
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  W.setCutaway(mode === "play" ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
+  W.setCutaway(mode === "play" && !photo ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
   W.render(t);
+  if (photo?.shoot && --photo.shoot === 0) capture();
   requestAnimationFrame(tick);
 }
 

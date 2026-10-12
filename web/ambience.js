@@ -426,6 +426,15 @@ export function createAmbience() {
       tone(t, "sine", 330, 0.12, 0.16, out, 640);
       burst(t, 0.14, "bandpass", 1300, 0.9, 0.08, out, 1.2);
     },
+    /// A camera shutter: a crisp click and the curtain closing.
+    shutter() {
+      if (!live()) return;
+      const t = ctx.currentTime + 0.005;
+      const out = panner(0);
+      out.connect(master);
+      burst(t, 0.025, "highpass", 3200, 0.8, 0.16, out, 1.4);
+      burst(t + 0.06, 0.04, "bandpass", 1700, 1.6, 0.12, out, 1);
+    },
     /// Touching down; level 0..1 is how hard.
     land(level = 1) {
       if (!live()) return;

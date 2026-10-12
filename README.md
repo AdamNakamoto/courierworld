@@ -167,6 +167,15 @@ up unapproved. Nothing is named "ad…", because ad blockers hide such files and
 The globe is placed last in `world.js`, on open ground in sight of the start, and the park trees that
 would stand on its plaza are simply left out, so nothing else in the town moves for it.
 
+## Photo mode
+
+📷 in the corner (or C) frees the camera for pictures (`main.js`, "photo mode"): drag to circle the
+courier from overhead down to the ground looking up at the sky, scroll or pinch to zoom from the
+planet's curve right in to the view through their eyes (the courier is hidden there), walk with the
+usual keys or stick, set the time of day, or hide the courier. The HUD and panels step aside. The
+shutter (or Space) draws a frame at full resolution, adds "courierworld.fun" in the corner and offers it
+as a JPEG to save, or to share on phones (Web Share). Esc, C or Done goes back to playing.
+
 ## Times Square
 
 The town crossing farthest from the main post office (well clear of the sea and the other places) is

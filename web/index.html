@@ -39,7 +39,7 @@
     <div class="card bag"><span class="env" aria-hidden="true"></span><b id="bagN">0</b> in bag <span class="sep"></span> delivered <b id="doneN">0</b> <span class="sep"></span> <span class="gold" aria-label="Golden stamps">★</span> <b id="stampN">0</b></div>
     <div id="compass" class="card"><span id="arrow">▲</span><span id="target"></span></div>
     <div id="online" class="card online" hidden title="Couriers on the planet right now">👥 <b id="onlineN">1</b> online</div>
-    <div id="help" class="card help">WASD / arrows to walk · Shift to run · Space to jump · E to talk or wave · 1–9, 0 to emote · Enter to chat · drag to look</div>
+    <div id="help" class="card help">WASD / arrows to walk · Shift to run · Space to jump · E to talk or wave · 1–9, 0 to emote · Enter to chat · C for photos · drag to look</div>
     <button id="officeBtn" class="office-btn" hidden>Post office <kbd>P</kbd></button>
     <button id="skinMintHud" class="skin-mint-hud" hidden><span class="em" aria-hidden="true">👕</span><span class="long">Mint Limited Courier Skin</span><span class="short">Mint Skin</span></button>
     <button id="musicBtn" class="music-btn" aria-label="Music" title="Music (M)">♪</button>
@@ -55,6 +55,7 @@
       </form>
     </div>
     <button id="setBtn" class="music-btn set-btn" aria-label="Settings" title="Graphics and frame rate" aria-expanded="false">⚙︎</button>
+    <button id="photoBtn" class="music-btn photo-btn" aria-label="Photo mode" title="Photo mode (C)">📷</button>
     <button id="fullBtn" class="music-btn full-btn" aria-label="Fullscreen" title="Fullscreen (F)"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div id="settings" class="settings card" hidden>
       <h3>Graphics</h3>
@@ -74,6 +75,27 @@
     <button id="jumpBtn" class="jump-btn" hidden aria-label="Jump">Jump</button>
     <button id="talkBtn" class="jump-btn talk-btn" hidden aria-label="Talk or wave">Hi</button>
     <div id="place" class="place" aria-live="polite"></div>
+  </div>
+
+  <!-- Photo mode: look round freely and take a picture (main.js). -->
+  <div id="photo" class="photo" hidden>
+    <div class="photo-bar card">
+      <button id="photoExit" class="pbtn" type="button">✕ Done</button>
+      <button id="photoMe" class="pbtn" type="button" aria-pressed="false">Hide courier</button>
+      <label class="photo-time" title="Time of day"><span aria-hidden="true">🕐</span><input id="photoTime" type="range" min="0" max="1" step="0.002" aria-label="Time of day"><b id="photoClock">12:00</b></label>
+      <span class="photo-zoom"><button id="photoOut" class="pbtn" type="button" aria-label="Zoom out">−</button><button id="photoIn" class="pbtn" type="button" aria-label="Zoom in">+</button></span>
+    </div>
+    <p id="photoHint" class="photo-hint card"></p>
+    <button id="photoShoot" class="photo-shoot" type="button" aria-label="Take a photo" title="Take a photo (Space)"></button>
+  </div>
+  <div id="photoFlash" class="photo-flash" aria-hidden="true"></div>
+  <div id="photoCard" class="photo-card card" hidden role="dialog" aria-label="Your photo">
+    <img id="photoImg" alt="Your photo of Courier World">
+    <div class="photo-actions">
+      <a id="photoSave" class="pbtn primary" download>⬇ Save photo</a>
+      <button id="photoShare" class="pbtn" type="button" hidden>Share</button>
+      <button id="photoClose" class="pbtn" type="button">Keep shooting</button>
+    </div>
   </div>
 
   <div id="orbCard" class="orb-card card" hidden role="dialog" aria-labelledby="orbName">
