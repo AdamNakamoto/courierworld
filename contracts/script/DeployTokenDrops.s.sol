@@ -26,6 +26,9 @@ contract DeployTokenDrops is Script {
         address signer = vm.envAddress("DROPS_SIGNER");
         require(office.code.length > 0 && IGameOffice(office).stamp() == stamp, "OFFICE is not STAMP's post office");
 
+        // On Robinhood Chain the owner (the treasury, which funds the drops) must be named: no defaulting to the deployer.
+        bool live = block.chainid == 4663 && !vm.envOr("DEV_CHAIN", false);
+        require(!live || vm.envOr("DROPS_OWNER", address(0)) != address(0), "set DROPS_OWNER (the treasury) on Robinhood Chain");
         vm.startBroadcast();
         address owner = vm.envOr("DROPS_OWNER", msg.sender);
         if (pad == address(0)) {

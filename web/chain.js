@@ -56,7 +56,7 @@ const ERROR_TEXT = {
   IsPaused: "Treasure claims are paused right now. Your finds stay claimable until the day after.",
   TooLate: "Those finds are too old to claim: claim by the end of the next day (UTC).",
   NotRunning: "That drop isn't running.",
-  BadDrop: "Check the drop's settings: coins out (1 to 48), a wallet's daily coins (up to that), and days (1 to 365).",
+  BadDrop: "Check the drop's settings: coins out (1 to 48), a wallet's daily coins (up to that), coins paid a day across everyone (at least a wallet's), and days (1 to 365).",
   StillRunning: "Players can still claim from this drop: withdraw the day after it ends.",
 };
 
@@ -602,7 +602,8 @@ export async function connectChain() {
         if ((await read(t, "allowance", [account, C.drops.address])) < amount) await send(t, "approve", [C.drops.address, amount]);
         await send(C.drops, "topUp", [BigInt(id), amount]);
       },
-      endDrop: (id) => send(C.drops, "endDrop", [BigInt(id)]),
+      /// Stop a drop after `lastDay` (today: its coins stay out until midnight UTC).
+      endDrop: (id, lastDay) => send(C.drops, "endDrop", [BigInt(id), lastDay]),
       withdraw: (id) => send(C.drops, "withdraw", [BigInt(id), account]),
       setPaused: (on) => send(C.drops, "setPaused", [on]),
     },

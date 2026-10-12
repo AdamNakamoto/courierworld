@@ -28,6 +28,8 @@ interface IDropsPad {
 /// @notice Coins scattered round the planet for players to find, paid in a token. The treasury (the owner) funds
 ///         each drop with a launchpad token or $STAMP: how much each coin is worth, how many coins are out each day,
 ///         how many one wallet is paid for a day, how many are paid a day across everyone, and for how many days.
+///         Every player sees the same coins and can collect each one (as with golden stamps), so a day pays more
+///         coins than it puts out: the cap across everyone (`dailyCoins`, required) bounds a day's payout.
 ///         A $STAMP drop pays for the golden stamps. The game's server checks every find against the player's path
 ///         and signs a voucher for how many coins of a drop they've found that day; this contract pays it from that
 ///         drop's own tokens. Nothing here mints: every token paid was deposited first. Only wallets with an open
@@ -61,7 +63,7 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         uint32 startDay;
         uint32 endDay; // the last day coins are out (inclusive); before startDay: cancelled
         uint256 perCoin; // tokens paid per coin
-        uint256 dailyCoins; // coins paid per day across everyone (0: only the pool limits it)
+        uint256 dailyCoins; // coins paid per day across everyone (at least 1: it bounds what a day can pay)
         uint256 left; // tokens still in the drop
     }
 
@@ -78,6 +80,8 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
     mapping(uint256 => mapping(uint32 => mapping(address => uint16))) public claimed;
     /// @notice Coins paid for each drop's day, across everyone.
     mapping(uint256 => mapping(uint32 => uint256)) public paidCoins;
+    /// @notice Each token's balance that belongs to drops (the sum of their `left`); anything above it can be swept.
+    mapping(address => uint256) public held;
 
     event DropCreated(
         uint256 indexed drop,
@@ -93,8 +97,9 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
     event DropToppedUp(uint256 indexed drop, uint256 amount);
     event DropEnded(uint256 indexed drop, uint32 endDay);
     event Withdrawn(uint256 indexed drop, address indexed to, uint256 amount);
+    event Swept(address indexed token, address indexed to, uint256 amount);
     event Claimed(address indexed player, uint256 indexed drop, uint32 indexed day, uint16 coins, uint256 amount);
-    event SignerSet(address signer);
+    event SignerSet(address indexed previous, address indexed signer);
     event PausedSet(bool paused);
 
     error ZeroAddress();
@@ -124,7 +129,7 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         pad = pad_;
         postOffice = postOffice_;
         signer = signer_;
-        emit SignerSet(signer_);
+        emit SignerSet(address(0), signer_);
     }
 
     // ---------------------------------------------------------------- views
@@ -156,20 +161,35 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         }
     }
 
-    /// @notice What `player` would be paid for a voucher saying they found `coins` of drop `id` on `day`.
+    /// @notice What `player` would be paid for a voucher saying they found `coins` of drop `id` on `day`: nothing while
+    ///         paused, or for a day the drop wasn't running or that can't be claimed now.
     function claimable(uint256 id, address player, uint32 day, uint16 coins) public view returns (uint16 n, uint256 amount) {
-        if (id >= _drops.length) return (0, 0);
+        if (id >= _drops.length || paused) return (0, 0);
         Drop storage d = _drops[id];
+        if (!_open(d, day)) return (0, 0);
+        return _payable(id, d, player, day, coins);
+    }
+
+    /// @dev Whether `day`'s finds of drop `d` can be claimed now: one of its days, not in the future, not too old.
+    function _open(Drop storage d, uint32 day) internal view returns (bool) {
+        uint32 now_ = today();
+        return day >= d.startDay && day <= d.endDay && day <= now_ && now_ < day + CLAIM_DAYS;
+    }
+
+    /// @dev The caps: a wallet's coins a day, the day's coins across everyone, and the drop's tokens.
+    function _payable(uint256 id, Drop storage d, address player, uint32 day, uint16 coins)
+        internal
+        view
+        returns (uint16 n, uint256 amount)
+    {
         uint16 cap = coins > d.maxPerWallet ? d.maxPerWallet : coins;
         uint16 done = claimed[id][day][player];
         if (cap <= done) return (0, 0);
         uint256 want = cap - done;
         // As many as the drop's tokens, and the day's coins, can cover; the rest stays claimable if they grow.
         uint256 room = d.left / d.perCoin;
-        if (d.dailyCoins != 0) {
-            uint256 dayLeft = d.dailyCoins > paidCoins[id][day] ? d.dailyCoins - paidCoins[id][day] : 0;
-            if (dayLeft < room) room = dayLeft;
-        }
+        uint256 dayLeft = d.dailyCoins > paidCoins[id][day] ? d.dailyCoins - paidCoins[id][day] : 0;
+        if (dayLeft < room) room = dayLeft;
         if (want > room) want = room;
         return (uint16(want), want * d.perCoin);
     }
@@ -184,16 +204,18 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         returns (uint256 amount)
     {
         _checkClaimer();
-        amount = _claim(id, day, coins, deadline, signature);
+        amount = _claim(id, day, coins, deadline, signature, false);
         if (amount == 0) revert NothingToClaim();
     }
 
-    /// @notice Claim several drops (or days) in one go; any that would pay nothing are skipped.
+    /// @notice Claim several drops (or days) in one go. Any that would pay nothing, or whose voucher has expired or
+    ///         whose day can't be claimed any more (a batch sent just before midnight, say), are skipped; a forged
+    ///         voucher or an unknown drop still reverts the lot.
     function claimMany(Claim[] calldata claims) external nonReentrant returns (uint256 total) {
         _checkClaimer();
         for (uint256 i; i < claims.length; i++) {
             Claim calldata c = claims[i];
-            total += _claim(c.drop, c.day, c.coins, c.deadline, c.signature);
+            total += _claim(c.drop, c.day, c.coins, c.deadline, c.signature, true);
         }
         if (total == 0) revert NothingToClaim();
     }
@@ -204,26 +226,37 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         if (!open) revert NoOffice();
     }
 
-    function _claim(uint256 id, uint32 day, uint16 coins, uint64 deadline, bytes calldata signature)
+    /// @dev `skipStale`: in a batch, an expired voucher or a day that can't be claimed now pays nothing instead of
+    ///      reverting.
+    function _claim(uint256 id, uint32 day, uint16 coins, uint64 deadline, bytes calldata signature, bool skipStale)
         internal
         returns (uint256 amount)
     {
         if (id >= _drops.length) revert UnknownDrop();
-        if (block.timestamp > deadline) revert Expired();
-        uint32 now_ = today();
-        if (day > now_) revert FutureDay();
-        if (now_ >= day + CLAIM_DAYS) revert TooLate();
         Drop storage d = _drops[id];
-        if (day < d.startDay || day > d.endDay) revert NotRunning();
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(FINDS_TYPEHASH, msg.sender, id, day, coins, deadline)));
         if (ECDSA.recover(digest, signature) != signer) revert BadSignature();
+        uint32 now_ = today();
+        bytes4 stale;
+        if (block.timestamp > deadline) stale = Expired.selector;
+        else if (day > now_) stale = FutureDay.selector;
+        else if (now_ >= day + CLAIM_DAYS) stale = TooLate.selector;
+        else if (day < d.startDay || day > d.endDay) stale = NotRunning.selector;
+        if (stale != 0) {
+            if (skipStale) return 0;
+            assembly ("memory-safe") {
+                mstore(0, stale)
+                revert(0, 4)
+            }
+        }
 
         uint16 n;
-        (n, amount) = claimable(id, msg.sender, day, coins);
+        (n, amount) = _payable(id, d, msg.sender, day, coins);
         if (n == 0) return 0;
         claimed[id][day][msg.sender] += n;
         paidCoins[id][day] += n;
         d.left -= amount;
+        held[d.token] -= amount;
         IERC20(d.token).safeTransfer(msg.sender, amount);
         emit Claimed(msg.sender, id, day, n, amount);
     }
@@ -234,7 +267,8 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
     ///         you (approve it first). Coins are out from `startDay` (today or later) for `days` days.
     /// @param spots Coins out each day (1 to MAX_SPOTS; a $STAMP drop always has the 24 golden stamps).
     /// @param maxPerWallet Coins one wallet is paid for per day (1 to `spots`).
-    /// @param dailyCoins Coins paid per day across everyone (0: no limit but the drop's tokens).
+    /// @param dailyCoins Coins paid per day across everyone (every player can collect each coin, so this is what
+    ///        bounds a day's payout; at least `maxPerWallet`).
     function createDrop(
         address token,
         uint256 perCoin,
@@ -252,8 +286,8 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         }
         if (isStamp) spots = GOLDEN_SPOTS;
         if (
-            perCoin == 0 || spots == 0 || spots > MAX_SPOTS || maxPerWallet == 0 || maxPerWallet > spots || days_ == 0
-                || days_ > MAX_DAYS || startDay < today()
+            perCoin == 0 || spots == 0 || spots > MAX_SPOTS || maxPerWallet == 0 || maxPerWallet > spots
+                || dailyCoins < maxPerWallet || days_ == 0 || days_ > MAX_DAYS || startDay < today()
         ) revert BadDrop();
         uint256 got = _pull(token, amount);
         id = _drops.length;
@@ -279,36 +313,55 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         emit DropToppedUp(id, got);
     }
 
-    /// @notice Stop a drop after today (its coins stay out until the day ends, so nobody's finds move); a drop that
-    ///         hasn't started is cancelled.
-    function endDrop(uint256 id) external onlyOwner {
+    /// @notice Stop a drop after `lastDay` (today or later: coins already out stay out until their day ends, so nobody's
+    ///         finds move); one that hasn't started by then is cancelled. Reverts if `lastDay` has already passed, so a
+    ///         transaction mined after midnight can't run the drop a day longer than meant.
+    function endDrop(uint256 id, uint32 lastDay) external onlyOwner {
         if (id >= _drops.length) revert UnknownDrop();
+        if (lastDay < today()) revert TooLate();
+        _end(id, lastDay);
+    }
+
+    function _end(uint256 id, uint32 lastDay) internal {
         Drop storage d = _drops[id];
-        uint32 now_ = today();
-        uint32 last = d.startDay > now_ ? d.startDay - 1 : now_;
-        if (last < d.endDay) d.endDay = last;
-        emit DropEnded(id, d.endDay);
+        uint32 last = d.startDay > lastDay ? d.startDay - 1 : lastDay;
+        if (last < d.endDay) {
+            d.endDay = last;
+            emit DropEnded(id, last);
+        }
     }
 
     /// @notice Take a drop's remaining tokens back once nobody can claim from it any more (its last day and the
-    ///         day after are over, or it was cancelled before it started), or at any time while paused.
+    ///         day after are over, or it was cancelled before it started), or at any time while paused. A drop
+    ///         emptied while it's still running ends after today, so its coins stop going out.
     function withdraw(uint256 id, address to) external onlyOwner nonReentrant {
         if (id >= _drops.length) revert UnknownDrop();
         if (to == address(0)) revert ZeroAddress();
         Drop storage d = _drops[id];
         bool cancelled = d.endDay < d.startDay; // (no day is in its range, so no claim can ever pass)
         if (!paused && !cancelled && today() < d.endDay + CLAIM_DAYS) revert StillRunning();
+        _end(id, today());
         uint256 amount = d.left;
         d.left = 0;
+        held[d.token] -= amount;
         IERC20(d.token).safeTransfer(to, amount);
         emit Withdrawn(id, to, amount);
+    }
+
+    /// @notice Recover tokens that reached this contract without going into a drop (sent straight here, say): only
+    ///         what's above the drops' own balances of that token.
+    function sweep(address token, address to) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = IERC20(token).balanceOf(address(this)) - held[token];
+        IERC20(token).safeTransfer(to, amount);
+        emit Swept(token, to, amount);
     }
 
     /// @notice Change the server key (if it's ever replaced or exposed).
     function setSigner(address signer_) external onlyOwner {
         if (signer_ == address(0)) revert ZeroAddress();
+        emit SignerSet(signer, signer_);
         signer = signer_;
-        emit SignerSet(signer_);
     }
 
     /// @notice Stop every claim (if the server key leaks, say); the owner can then take the drops' tokens back.
@@ -322,10 +375,11 @@ contract TokenDrops is Ownable2Step, EIP712, ReentrancyGuard {
         revert NotAllowed();
     }
 
-    /// @dev What actually arrived (a plain token sends the full amount).
-    function _pull(address token, uint256 amount) internal returns (uint256) {
+    /// @dev What actually arrived (a plain token sends the full amount), now held for a drop.
+    function _pull(address token, uint256 amount) internal returns (uint256 got) {
         uint256 before = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        return IERC20(token).balanceOf(address(this)) - before;
+        got = IERC20(token).balanceOf(address(this)) - before;
+        held[token] += got;
     }
 }

@@ -139,7 +139,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       <label class="field">Tokens per coin<input data-act="dropPerCoin" value="${esc(f.perCoin)}" inputmode="decimal" placeholder="e.g. ${isStamp ? "10" : "100000"}"></label>
       ${isStamp ? `<p class="note">$STAMP pays for the 24 golden stamps.</p>` : `<label class="field">Coins out each day (1 to 48)<input data-act="dropSpots" value="${esc(f.spots)}" inputmode="numeric"></label>`}
       <label class="field">Coins one wallet is paid for, per day<input data-act="dropMax" value="${esc(f.maxPerWallet)}" inputmode="numeric"></label>
-      <label class="field">Coins paid per day, everyone together (0: no limit)<input data-act="dropDaily" value="${esc(f.dailyCoins)}" inputmode="numeric"></label>
+      <label class="field">Coins paid per day, everyone together (every player can collect each coin, so this caps a day)<input data-act="dropDaily" value="${esc(f.dailyCoins)}" inputmode="numeric"></label>
       <label class="field">Days (from today)<input data-act="dropDays" value="${esc(f.days)}" inputmode="numeric"></label>
       <label class="field">Tokens to put in${dropSuggest() ? ` <span class="muted">(${fmt(dropSuggest(), 0)} covers every day's limit)</span>` : ""}<input data-act="dropAmount" value="${esc(f.amount)}" inputmode="decimal" placeholder="${dropSuggest() ? formatEther(dropSuggest()) : ""}"></label>
       <button class="pbtn wide" data-act="dropCreate" ${busy ? "disabled" : ""}>Start the drop</button>`;
@@ -553,8 +553,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
           return toast("Enter the tokens per coin and how many to put in.", "error");
         }
         const spots = stampDrop ? 24 : Number(f.spots), max = Number(f.maxPerWallet), daily = BigInt(f.dailyCoins || "0"), days = Number(f.days);
-        if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || !(days >= 1 && days <= 365)) {
-          return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), days (1 to 365), and the tokens to put in.", "error");
+        if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || daily < BigInt(max) || !(days >= 1 && days <= 365)) {
+          return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), coins a day for everyone (at least a wallet's), days (1 to 365), and the tokens to put in.", "error");
         }
         const token = stampDrop ? chain.stampAddress : f.token;
         return run(`Starting a drop`, async () => {
@@ -564,7 +564,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         });
       }
       case "dropEnd": return run(`Ending drop #${b.dataset.id} after today`, async () => {
-        await chain.drops.admin.endDrop(Number(b.dataset.id));
+        await chain.drops.admin.endDrop(Number(b.dataset.id), huntDay());
         huntAt = 0;
       });
       case "dropWithdraw": return run(`Taking drop #${b.dataset.id}'s tokens back`, async () => {

@@ -161,9 +161,9 @@ contract TokenDropsTest is CourierFixture {
         vm.startPrank(treasury);
         other.approve(address(drops), type(uint256).max);
         vm.expectRevert(TokenDrops.BadToken.selector);
-        drops.createDrop(address(other), PER, 10, 5, 0, day, 1, 1e18);
+        drops.createDrop(address(other), PER, 10, 5, 1000, day, 1, 1e18);
         // $STAMP always lays out the golden stamps, whatever spots it's given.
-        uint256 id = drops.createDrop(address(stamp), 10e18, 3, 24, 0, day, 7, 10_000e18);
+        uint256 id = drops.createDrop(address(stamp), 10e18, 3, 24, 1000, day, 7, 10_000e18);
         vm.stopPrank();
         assertEq(drops.drop(id).spots, 24);
     }
@@ -172,28 +172,32 @@ contract TokenDropsTest is CourierFixture {
         uint32 day = drops.today();
         vm.startPrank(treasury);
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), 0, 10, 5, 0, day, 1, 1e18); // worth nothing
+        drops.createDrop(address(coin), 0, 10, 5, 1000, day, 1, 1e18); // worth nothing
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), PER, 0, 0, 0, day, 1, 1e18); // no coins
+        drops.createDrop(address(coin), PER, 0, 0, 1000, day, 1, 1e18); // no coins
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), PER, 49, 5, 0, day, 1, 1e18); // more than MAX_SPOTS
+        drops.createDrop(address(coin), PER, 10, 5, 0, day, 1, 1e18); // no cap across everyone (audit 9755203f #1)
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), PER, 10, 11, 0, day, 1, 1e18); // a wallet paid for more than are out
+        drops.createDrop(address(coin), PER, 10, 5, 4, day, 1, 1e18); // a cap below one wallet's coins
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), PER, 10, 5, 0, day, 0, 1e18); // no days
+        drops.createDrop(address(coin), PER, 49, 5, 1000, day, 1, 1e18); // more than MAX_SPOTS
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), PER, 10, 5, 0, day, 366, 1e18); // more than a year
+        drops.createDrop(address(coin), PER, 10, 11, 1000, day, 1, 1e18); // a wallet paid for more than are out
         vm.expectRevert(TokenDrops.BadDrop.selector);
-        drops.createDrop(address(coin), PER, 10, 5, 0, day - 1, 1, 1e18); // in the past
+        drops.createDrop(address(coin), PER, 10, 5, 1000, day, 0, 1e18); // no days
+        vm.expectRevert(TokenDrops.BadDrop.selector);
+        drops.createDrop(address(coin), PER, 10, 5, 1000, day, 366, 1e18); // more than a year
+        vm.expectRevert(TokenDrops.BadDrop.selector);
+        drops.createDrop(address(coin), PER, 10, 5, 1000, day - 1, 1, 1e18); // in the past
         vm.stopPrank();
     }
 
     function test_ActiveDropsInOrder() public {
         uint32 day = drops.today();
         vm.startPrank(treasury);
-        drops.createDrop(address(coin), PER, 10, 5, 0, day, 3, 1e24); // 0: today to day+2
-        drops.createDrop(address(coin), PER, 10, 5, 0, day + 1, 1, 1e24); // 1: tomorrow only
-        drops.createDrop(address(stamp), 10e18, 24, 24, 0, day, 1, 1e21); // 2: today only
+        drops.createDrop(address(coin), PER, 10, 5, 1000, day, 3, 1e24); // 0: today to day+2
+        drops.createDrop(address(coin), PER, 10, 5, 1000, day + 1, 1, 1e24); // 1: tomorrow only
+        drops.createDrop(address(stamp), 10e18, 24, 24, 1000, day, 1, 1e21); // 2: today only
         vm.stopPrank();
         uint256[] memory a = drops.activeDrops(day);
         assertEq(a.length, 2);
@@ -209,7 +213,7 @@ contract TokenDropsTest is CourierFixture {
     // ---------------------------------------------------------------- claiming
 
     function test_PaysForTheDaysFinds() public {
-        uint256 id = _drop(10, 5, 0, 7, 500_000e18);
+        uint256 id = _drop(10, 5, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         assertEq(_claim(alice, id, day, 3), 3_000e18);
         assertEq(coin.balanceOf(alice), 3_000e18);
@@ -219,7 +223,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_ClaimingAgainPaysOnlyTheNewFinds() public {
-        uint256 id = _drop(10, 10, 0, 7, 500_000e18);
+        uint256 id = _drop(10, 10, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         _claim(alice, id, day, 3);
         assertEq(_claim(alice, id, day, 5), 2_000e18);
@@ -228,7 +232,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_CapsCoinsPerWalletPerDay() public {
-        uint256 id = _drop(10, 4, 0, 7, 500_000e18);
+        uint256 id = _drop(10, 4, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         assertEq(_claim(alice, id, day, 10), 4_000e18);
         vm.expectRevert(TokenDrops.NothingToClaim.selector);
@@ -239,7 +243,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_DailyCoinsAcrossEveryone() public {
-        uint256 id = _drop(10, 10, 6, 7, 500_000e18);
+        uint256 id = _drop(10, 4, 6, 7, 500_000e18); // a wallet takes 4, everyone together 6
         uint32 day = drops.today();
         assertEq(_claim(alice, id, day, 4), 4_000e18);
         assertEq(_claim(bob, id, day, 4), 2_000e18); // only 2 of the day's 6 left
@@ -248,7 +252,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_PaysWhatTheDropCoversAndTheRestAfterATopUp() public {
-        uint256 id = _drop(10, 10, 0, 7, 2_500e18); // two and a half coins
+        uint256 id = _drop(10, 10, 1000, 7, 2_500e18); // two and a half coins
         uint32 day = drops.today();
         assertEq(_claim(alice, id, day, 5), 2_000e18);
         assertEq(drops.drop(id).left, 500e18);
@@ -258,14 +262,14 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_OnlyOfficesCanClaim() public {
-        uint256 id = _drop(10, 5, 0, 7, 500_000e18);
+        uint256 id = _drop(10, 5, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         vm.expectRevert(TokenDrops.NoOffice.selector);
         this.claimAs(carol, id, day, 1);
     }
 
     function test_RejectsForgedOrChangedVouchers() public {
-        uint256 id = _drop(10, 10, 0, 7, 500_000e18);
+        uint256 id = _drop(10, 10, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         uint64 deadline = uint64(block.timestamp + 1 hours);
         bytes memory forged = _voucherBy(0xBAD, alice, id, day, 3, deadline);
@@ -281,14 +285,14 @@ contract TokenDropsTest is CourierFixture {
         vm.expectRevert(TokenDrops.BadSignature.selector);
         drops.claim(id, day, 3, deadline, sig); // someone else's voucher
         // Another drop's voucher doesn't pay this one.
-        uint256 other = _drop(10, 10, 0, 7, 500_000e18);
+        uint256 other = _drop(10, 10, 1000, 7, 500_000e18);
         vm.prank(alice);
         vm.expectRevert(TokenDrops.BadSignature.selector);
         drops.claim(other, day, 3, deadline, sig);
     }
 
     function test_DaysAndDeadlines() public {
-        uint256 id = _drop(10, 10, 0, 3, 500_000e18);
+        uint256 id = _drop(10, 10, 1000, 3, 500_000e18);
         uint32 day = drops.today();
         uint64 deadline = uint64(block.timestamp + 1 hours);
         bytes memory sig = _voucher(alice, id, day + 1, 1, deadline);
@@ -312,7 +316,7 @@ contract TokenDropsTest is CourierFixture {
     function test_OnlyOnTheDropsDays() public {
         uint32 day = drops.today();
         vm.prank(treasury);
-        uint256 id = drops.createDrop(address(coin), PER, 10, 10, 0, day + 1, 1, 500_000e18);
+        uint256 id = drops.createDrop(address(coin), PER, 10, 10, 1000, day + 1, 1, 500_000e18);
         vm.expectRevert(TokenDrops.NotRunning.selector);
         this.claimAs(alice, id, day, 1);
         vm.warp(vm.getBlockTimestamp() + 2 days);
@@ -322,10 +326,10 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_ClaimManyAcrossDrops() public {
-        uint256 a = _drop(10, 10, 0, 7, 500_000e18);
+        uint256 a = _drop(10, 10, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         vm.prank(treasury);
-        uint256 g = drops.createDrop(address(stamp), 10e18, 24, 24, 0, day, 7, 10_000e18);
+        uint256 g = drops.createDrop(address(stamp), 10e18, 24, 24, 1000, day, 7, 10_000e18);
         uint64 deadline = uint64(block.timestamp + 1 hours);
         TokenDrops.Claim[] memory cs = new TokenDrops.Claim[](3);
         cs[0] = TokenDrops.Claim(a, day, 3, deadline, _voucher(alice, a, day, 3, deadline));
@@ -346,7 +350,7 @@ contract TokenDropsTest is CourierFixture {
         uint32 day = drops.today();
         vm.startPrank(treasury);
         greedy.approve(address(drops), type(uint256).max);
-        uint256 id = drops.createDrop(address(greedy), PER, 10, 10, 0, day, 7, 100_000e18);
+        uint256 id = drops.createDrop(address(greedy), PER, 10, 10, 1000, day, 7, 100_000e18);
         vm.stopPrank();
         uint64 deadline = uint64(block.timestamp + 1 hours);
         bytes memory sig = _voucher(alice, id, day, 3, deadline);
@@ -360,10 +364,10 @@ contract TokenDropsTest is CourierFixture {
     // ---------------------------------------------------------------- ending and the owner
 
     function test_EndDropAfterToday() public {
-        uint256 id = _drop(10, 10, 0, 30, 500_000e18);
+        uint256 id = _drop(10, 10, 1000, 30, 500_000e18);
         uint32 day = drops.today();
         vm.prank(treasury);
-        drops.endDrop(id);
+        drops.endDrop(id, day);
         assertEq(drops.drop(id).endDay, day);
         assertEq(_claim(alice, id, day, 2), 2_000e18); // today's coins still count
         vm.warp(vm.getBlockTimestamp() + 1 days);
@@ -374,8 +378,8 @@ contract TokenDropsTest is CourierFixture {
     function test_EndingADropThatHasntStartedCancelsIt() public {
         uint32 day = drops.today();
         vm.startPrank(treasury);
-        uint256 id = drops.createDrop(address(coin), PER, 10, 10, 0, day + 3, 5, 500_000e18);
-        drops.endDrop(id);
+        uint256 id = drops.createDrop(address(coin), PER, 10, 10, 1000, day + 3, 5, 500_000e18);
+        drops.endDrop(id, day);
         vm.stopPrank();
         assertLt(drops.drop(id).endDay, drops.drop(id).startDay);
         for (uint32 d = day; d < day + 10; d++) assertEq(drops.activeDrops(d).length, 0);
@@ -386,7 +390,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_WithdrawOnlyOnceNobodyCanClaim() public {
-        uint256 id = _drop(10, 10, 0, 2, 500_000e18); // today and tomorrow
+        uint256 id = _drop(10, 10, 1000, 2, 500_000e18); // today and tomorrow
         vm.startPrank(treasury);
         vm.expectRevert(TokenDrops.StillRunning.selector);
         drops.withdraw(id, treasury);
@@ -401,7 +405,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_PauseStopsClaimsAndFreesTheTokens() public {
-        uint256 id = _drop(10, 10, 0, 30, 500_000e18);
+        uint256 id = _drop(10, 10, 1000, 30, 500_000e18);
         uint32 day = drops.today();
         vm.prank(treasury);
         drops.setPaused(true);
@@ -417,7 +421,7 @@ contract TokenDropsTest is CourierFixture {
     }
 
     function test_NewSignerOnly() public {
-        uint256 id = _drop(10, 10, 0, 7, 500_000e18);
+        uint256 id = _drop(10, 10, 1000, 7, 500_000e18);
         uint32 day = drops.today();
         vm.prank(treasury);
         drops.setSigner(vm.addr(0xF00D));
@@ -434,11 +438,11 @@ contract TokenDropsTest is CourierFixture {
         uint32 day = drops.today();
         vm.startPrank(alice);
         vm.expectRevert(notOwner);
-        drops.createDrop(address(coin), PER, 10, 10, 0, day, 1, 0);
+        drops.createDrop(address(coin), PER, 10, 10, 1000, day, 1, 0);
         vm.expectRevert(notOwner);
         drops.topUp(0, 1);
         vm.expectRevert(notOwner);
-        drops.endDrop(0);
+        drops.endDrop(0, day);
         vm.expectRevert(notOwner);
         drops.withdraw(0, alice);
         vm.expectRevert(notOwner);
@@ -464,9 +468,178 @@ contract TokenDropsTest is CourierFixture {
         new TokenDrops(stamp, IDropsPad(address(0)), IDropsPostOffice(address(office)), signer, treasury);
     }
 
+    // ---------------------------------------------------------------- audit 9755203f (on 30ade10)
+
+    /// A wallet with a post office.
+    function _player(string memory name) internal returns (address who) {
+        who = makeAddr(name);
+        vm.deal(who, 1 ether);
+        vm.prank(who);
+        office.openOffice{value: OFFICE}(address(0));
+    }
+
+    /// #1: every player can collect every coin, so the cap across everyone is what bounds a day (it's required).
+    function test_ManyWalletsShareTheDailyCap() public {
+        uint256 id = _drop(10, 5, 12, 7, 500_000e18);
+        uint32 day = drops.today();
+        address[4] memory who = [alice, bob, _player("dan"), _player("eve")];
+        uint256 paid;
+        for (uint256 i; i < 4; i++) {
+            (uint16 n,) = drops.claimable(id, who[i], day, 5);
+            if (n > 0) paid += this.claimAs(who[i], id, day, 5);
+        }
+        assertEq(drops.paidCoins(id, day), 12);
+        assertEq(paid, 12 * PER);
+    }
+
+    /// #2: in a batch, a voucher whose day just closed (sent before midnight, mined after) is skipped, not fatal.
+    function test_BatchSkipsAStaleVoucher() public {
+        uint32 start = drops.today();
+        vm.prank(treasury);
+        uint256 id = drops.createDrop(address(coin), PER, 10, 10, 1000, start, 7, 100_000e18);
+        uint32 day = start + 1;
+        vm.warp(uint256(day + 1) * 1 days - 30); // 23:59:30 on `day`
+        uint64 deadline = uint64(vm.getBlockTimestamp() + 1 hours);
+        TokenDrops.Claim[] memory cs = new TokenDrops.Claim[](2);
+        cs[0] = TokenDrops.Claim(id, day - 1, 3, deadline, _voucher(alice, id, day - 1, 3, deadline));
+        cs[1] = TokenDrops.Claim(id, day, 2, deadline, _voucher(alice, id, day, 2, deadline));
+        vm.warp(uint256(day + 1) * 1 days + 10); // 00:00:10 the next day
+        vm.prank(alice);
+        assertEq(drops.claimMany(cs), 2 * PER);
+        // An expired voucher in a batch is skipped too; a forged one still sinks it.
+        cs[0] = TokenDrops.Claim(id, day, 5, deadline, _voucher(alice, id, day, 5, deadline));
+        cs[1] = TokenDrops.Claim(id, day, 9, deadline, _voucherBy(0xBAD, alice, id, day, 9, deadline));
+        vm.prank(alice);
+        vm.expectRevert(TokenDrops.BadSignature.selector);
+        drops.claimMany(cs);
+        vm.warp(uint256(deadline) + 1);
+        cs[1] = TokenDrops.Claim(id, day + 1, 1, uint64(vm.getBlockTimestamp() + 1 hours), _voucher(alice, id, day + 1, 1, uint64(vm.getBlockTimestamp() + 1 hours)));
+        vm.prank(alice);
+        assertEq(drops.claimMany(cs), PER); // the expired one skipped, the fresh one paid
+    }
+
+    /// #3: a running drop emptied while paused ends after today, so its coins stop going out.
+    function test_WithdrawWhilePausedEndsTheDrop() public {
+        uint256 id = _drop(10, 5, 1000, 30, 100_000e18);
+        uint32 day = drops.today();
+        vm.startPrank(treasury);
+        drops.setPaused(true);
+        drops.withdraw(id, treasury);
+        drops.setPaused(false);
+        vm.stopPrank();
+        assertEq(drops.drop(id).left, 0);
+        assertEq(drops.drop(id).endDay, day);
+        assertEq(drops.activeDrops(day + 1).length, 0);
+    }
+
+    /// #4: the quote says nothing where a claim would fail.
+    function test_ClaimableQuotesNothingOutsideTheWindow() public {
+        uint32 day = drops.today();
+        vm.prank(treasury);
+        uint256 id = drops.createDrop(address(coin), PER, 10, 10, 1000, day, 1, 100_000e18);
+        (uint16 n,) = drops.claimable(id, alice, day, 3);
+        assertEq(n, 3);
+        (n,) = drops.claimable(id, alice, day + 1, 3); // not one of its days (and in the future)
+        assertEq(n, 0);
+        vm.prank(treasury);
+        drops.setPaused(true);
+        (n,) = drops.claimable(id, alice, day, 3);
+        assertEq(n, 0);
+        vm.prank(treasury);
+        drops.setPaused(false);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        (n,) = drops.claimable(id, alice, day, 3); // too old
+        assertEq(n, 0);
+    }
+
+    /// #5: an end mined after the intended last day reverts instead of running a day longer.
+    function test_EndDropMinedLateReverts() public {
+        uint256 id = _drop(10, 5, 1000, 30, 100_000e18);
+        uint32 day = drops.today();
+        vm.warp(uint256(day + 1) * 1 days + 1); // 00:00:01 the next day
+        vm.prank(treasury);
+        vm.expectRevert(TokenDrops.TooLate.selector);
+        drops.endDrop(id, day);
+        vm.prank(treasury);
+        drops.endDrop(id, day + 1);
+        assertEq(drops.drop(id).endDay, day + 1);
+    }
+
+    /// #5: a signer change records the old key.
+    function test_SignerChangeRecordsThePrevious() public {
+        vm.expectEmit(true, true, false, false, address(drops));
+        emit TokenDrops.SignerSet(signer, address(0xF00D));
+        vm.prank(treasury);
+        drops.setSigner(address(0xF00D));
+    }
+
+    /// #6: tokens sent straight here can be swept; the drops' own balances can't.
+    function test_SweepTakesOnlyStrays() public {
+        uint256 id = _drop(10, 5, 1000, 7, 10_000e18);
+        vm.prank(treasury);
+        coin.transfer(address(drops), 5_000e18);
+        assertEq(drops.held(address(coin)), 10_000e18);
+        uint256 before = coin.balanceOf(treasury);
+        vm.prank(treasury);
+        drops.sweep(address(coin), treasury);
+        assertEq(coin.balanceOf(treasury) - before, 5_000e18);
+        assertEq(drops.drop(id).left, 10_000e18);
+        assertEq(coin.balanceOf(address(drops)), 10_000e18);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        drops.sweep(address(coin), alice);
+    }
+
+    /// #8: two drops of one token keep their tokens apart through claims, a withdraw and a sweep.
+    function test_SameTokenDropsStayApart() public {
+        uint256 a = _drop(10, 10, 1000, 7, 3_000e18);
+        uint256 b = _drop(10, 10, 1000, 7, 7_000e18);
+        uint32 day = drops.today();
+        assertEq(_claim(alice, a, day, 10), 3_000e18); // drains a
+        vm.expectRevert(TokenDrops.NothingToClaim.selector);
+        this.claimAs(bob, a, day, 1);
+        assertEq(drops.drop(b).left, 7_000e18);
+        vm.startPrank(treasury);
+        drops.setPaused(true);
+        uint256 before = coin.balanceOf(treasury);
+        drops.withdraw(b, treasury);
+        assertEq(coin.balanceOf(treasury) - before, 7_000e18);
+        drops.sweep(address(coin), treasury); // nothing stray
+        vm.stopPrank();
+        assertEq(coin.balanceOf(address(drops)), 0);
+        assertEq(drops.held(address(coin)), 0);
+    }
+
+    /// #8: the day edges, to the second.
+    function test_DayEdgesToTheSecond() public {
+        uint256 id = _drop(10, 10, 1000, 1, 100_000e18); // today only
+        uint32 day = drops.today();
+        vm.warp(uint256(day + 2) * 1 days - 1); // 23:59:59 the day after: still claimable
+        assertEq(this.claimAs(alice, id, day, 1), PER);
+        vm.prank(treasury);
+        vm.expectRevert(TokenDrops.StillRunning.selector);
+        drops.withdraw(id, treasury);
+        vm.warp(uint256(day + 2) * 1 days); // 00:00:00 two days on: closed, and the rest can come back
+        vm.expectRevert(TokenDrops.TooLate.selector);
+        this.claimAs(alice, id, day, 2);
+        vm.prank(treasury);
+        drops.withdraw(id, treasury);
+        assertEq(drops.drop(id).left, 0);
+    }
+
+    /// #8: a $STAMP drop pays for the golden stamps.
+    function test_StampDropPaysTheGoldenStamps() public {
+        uint32 day = drops.today();
+        vm.prank(treasury);
+        uint256 id = drops.createDrop(address(stamp), 10e18, 3, 24, 1000, day, 7, 10_000e18);
+        assertEq(drops.drop(id).spots, 24);
+        assertEq(_claim(alice, id, day, 30), 240e18); // a voucher for more than 24 pays 24
+        assertEq(stamp.balanceOf(alice), 240e18);
+    }
+
     /// Whatever wallets claim, in any order, a drop never pays more than it holds or than its limits allow.
     function testFuzz_NeverOverpays(uint16[6] memory finds, uint8 daily) public {
-        uint256 limit = bound(daily, 0, 20);
+        uint256 limit = bound(daily, 8, 30);
         uint256 id = _drop(10, 8, limit, 7, 15_500e18); // 15.5 coins
         uint32 day = drops.today();
         address[2] memory who = [alice, bob];
@@ -482,7 +655,7 @@ contract TokenDropsTest is CourierFixture {
         assertEq(drops.drop(id).left, 15_500e18 - paid);
         assertLe(drops.claimed(id, day, alice), 8);
         assertLe(drops.claimed(id, day, bob), 8);
-        if (limit != 0) assertLe(drops.paidCoins(id, day), limit);
+        assertLe(drops.paidCoins(id, day), limit);
         assertLe(paid, 15_000e18);
     }
 }

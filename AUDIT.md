@@ -445,24 +445,45 @@ claim what they find.
 
 - `createDrop(token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount)`, owner only: the token must
   be $STAMP or launched by the launchpad (`CourierPad.launches(token).createdAt != 0`); `perCoin > 0`, 1 to 48
-  spots (always 24 for $STAMP: the golden stamps), 1 ≤ `maxPerWallet` ≤ spots, 1 to 365 days, from today or later.
+  spots (always 24 for $STAMP: the golden stamps), 1 ≤ `maxPerWallet` ≤ spots, `dailyCoins` ≥ `maxPerWallet` (required:
+  every player can collect each coin, as with golden stamps, so `spots` is how many are out, not how many a day
+  pays; `dailyCoins` is what bounds a day), 1 to 365 days, from today or later.
   The drop's balance is what actually arrived (balance difference), and each drop's tokens are its own
   (`left`), never mixed with another's.
 - `claim(id, day, coins, deadline, sig)` / `claimMany(Claim[])`: not while paused, post office open, `day` not in the
   future, claimed that day or the next (`CLAIM_DAYS = 2`), within the drop's days, and an EIP-712 voucher
   `Finds(player, drop, day, coins, deadline)` signed by `signer` (the multiplayer room). Pays for the coins not yet
-  claimed, capped by `maxPerWallet` per wallet per day, `dailyCoins` per day across everyone (0: none), and the
-  drop's tokens. `claimMany` skips claims that would pay nothing and reverts only if all do. `nonReentrant`.
-- Owner (Ownable2Step, never renounceable, since drops need it): `topUp`; `endDrop` (stops after today, so nobody's
-  coins move mid-day; a drop that hasn't started is cancelled); `withdraw` a drop's remaining tokens once nobody
-  can claim (its last day and the day after are over, or it was cancelled), or at any time while paused;
-  `setSigner`; `setPaused`.
+  claimed, capped by `maxPerWallet` per wallet per day, `dailyCoins` per day across everyone, and the drop's
+  tokens. `claimMany` skips claims that would pay nothing, whose voucher has expired or whose day can't be
+  claimed now (a batch sent just before midnight), and reverts if all do; a forged voucher or unknown drop still
+  reverts it. `claimable` quotes nothing where a claim would fail (paused, outside the drop's days or the window).
+  `nonReentrant`.
+- Owner (Ownable2Step, never renounceable, since drops need it): `topUp`; `endDrop(id, lastDay)` (stops after
+  `lastDay`, today or later, so nobody's coins move mid-day, and reverts if mined after it; a drop that hasn't
+  started is cancelled); `withdraw` a drop's remaining tokens once nobody can claim (its last day and the day after
+  are over, or it was cancelled), or at any time while paused, which also ends a running drop after today;
+  `sweep` tokens above the drops' own balances (`held`); `setSigner` (the event records the previous key);
+  `setPaused`.
 - The room (`multiplayer/src/index.js`) reads the running drops from the chain, places coins with
   `web/drop-pick.js` (the same as the game), checks each find against the player's reported path as it did for
   golden stamps, and signs per-drop vouchers for today and yesterday.
 
-Trust: the room's key decides finds (a leaked key could claim up to each drop's daily limits for wallets with a
-post office until the owner pauses); the owner can withdraw a running drop only by pausing first, which stops
-all claims, so players see it happen. Tests: `test/TokenDrops.t.sol`, 23 tests against the real post office and
-$STAMP (creating, limits, every claim path, days and deadlines, re-entry, ending, withdrawing, pausing, signer
-change, owner-only) and a fuzz that no sequence of claims pays more than a drop holds or its limits allow.
+Trust: the room's key decides finds: a leaked key could claim, for wallets with a post office, up to each drop's
+`dailyCoins` a day (for today and yesterday) until the owner pauses. The owner can take a running drop's tokens
+back at any time (pause, withdraw, unpause, even in one block), which voids finds not yet claimed, and can install
+its own signer: the drops are the treasury's own deposit, and the signer is no check on the owner.
+
+Independent review: IMD's audit of `30ade10` (four specialists and a judge, 1 medium, 2 low, 5 info) found: (1) a
+day's payout wasn't bounded by `spots`, and `dailyCoins` = 0 meant no daily bound, so a leaked key could drain a
+drop: `dailyCoins` is now required (≥ `maxPerWallet`). We kept `spots` as coins out, not a payout cap, because
+every player can collect each coin (the auditors assumed a coin can be found once); (2) `claimMany` reverted on one
+stale voucher: stale ones are skipped; (3) a drop withdrawn while paused stayed listed: withdraw ends it; (4)
+`claimable` ignored the windows and pause: fixed; (5) trust notes, above, plus `endDrop` takes the intended last
+day and `SignerSet` records the previous key; (6) stray tokens were stuck: `sweep`; (7) the deploy script could
+default the owner to the deployer: on Robinhood Chain `DROPS_OWNER` is required (deploy-drops.sh passes the
+treasury); (8) tests now cover the day edges to the second, many wallets sharing a day's cap, a batch with a
+stale and a forged voucher, same-token drops, and a $STAMP drop's golden stamps. The proofs for (2) and (3) pass.
+Report: https://explorer.imd.fun/jobs/9755203f-4263-447d-b876-007724cd321b
+
+Tests: `test/TokenDrops.t.sol`, 33 tests against the real post office and $STAMP and a fuzz that no sequence of
+claims pays more than a drop holds or its limits allow.

@@ -12,10 +12,14 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
 
 [ -n "${DROPS_SIGNER:-}" ] || { echo "Set DROPS_SIGNER to the voucher key's address." >&2; exit 1; }
+set -a
+source ./launch.env
+set +a
+DROPS_OWNER=${DROPS_OWNER:-$TREASURY} # the treasury funds and runs the drops
 STAMP=$(jq -r .stamp deployments/robinhood.json)
 OFFICE=$(jq -r .office deployments/robinhood.json)
 PAD=$(jq -r .pad deployments/robinhood-pad.json)
-export STAMP OFFICE PAD DROPS_SIGNER
+export STAMP OFFICE PAD DROPS_SIGNER DROPS_OWNER
 
 BROADCAST=0
 for a in "$@"; do [ "$a" = "--broadcast" ] && BROADCAST=1; done
@@ -26,6 +30,7 @@ if [ "$BROADCAST" = 1 ]; then
   echo "  OFFICE=$OFFICE"
   echo "  PAD=$PAD"
   echo "  DROPS_SIGNER=$DROPS_SIGNER"
+  echo "  DROPS_OWNER=$DROPS_OWNER"
   read -r -p "Type DEPLOY to continue: " ok
   [ "$ok" = "DEPLOY" ] || { echo "Cancelled."; exit 1; }
   forge script script/DeployTokenDrops.s.sol --tc DeployTokenDrops --rpc-url "${RPC_URL:-robinhood}" "$@"
