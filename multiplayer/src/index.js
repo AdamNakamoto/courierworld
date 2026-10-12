@@ -2,9 +2,10 @@
 // are (their courier's look and ride, and a name), then sends where they are a few times a second
 // while moving. The room passes that on to the players near them, and now and then to everyone
 // else, so the far side of the planet still knows who's about. Waves and preset phrases go to the
-// players nearby, and chat lines (text only: no links) to everyone. It also runs the golden stamp
-// hunt: a hunter signs in with their wallet, the room checks each find against where they've
-// actually been, and signs vouchers the StampHunt contract pays $STAMP for. Positions and emotes are just for show; only the vouchers touch the chain. A player
+// players nearby, and chat lines (text only: no links) to everyone. It also runs the treasure hunt:
+// golden stamps and the treasury's token drops (coins scattered round the planet, web/drop-pick.js). A
+// hunter signs in with their wallet, the room checks each find against where they've actually been, and
+// signs vouchers the TokenDrops contract pays for. Positions and emotes are just for show; only the vouchers touch the chain. A player
 // wearing a Courier Skin is shown in it only once the room has read on-chain that their wallet owns it.
 // Players can pick a name (web/name-rules.js): their wallet signs for it, and the room shows it instead of
 // their wallet address from then on.
@@ -12,7 +13,8 @@ import { DurableObject } from "cloudflare:workers";
 import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import SPOTS from "../../web/hunt-spots.json";
-import { HUNT_STAMPS, huntDay, pickSpots, authMessage } from "../../web/hunt-pick.js";
+import { HUNT_STAMPS, huntDay, authMessage } from "../../web/hunt-pick.js";
+import { layDrops } from "../../web/drop-pick.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
 import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
@@ -35,6 +37,12 @@ const COLOURS = ["skin", "hair", "shirt", "accent", "bottoms", "socks", "shoes"]
 const RIDES = ["foot", "skate", "bike", "moped", "plane"];
 const SKIN_SUPPLY = 999;
 const SKINS_ABI = parseAbi(["function ownerOf(uint256) view returns (address)", "function designOf(uint256) view returns (uint256)"]);
+const DROPS_ABI = parseAbi([
+  "function activeDrops(uint32 day) view returns (uint256[])",
+  "function drop(uint256 id) view returns ((address token, uint16 spots, uint16 maxPerWallet, uint32 startDay, uint32 endDay, uint256 perCoin, uint256 dailyCoins, uint256 left))",
+  "function stamp() view returns (address)",
+]);
+const DROPS_CHECK_MS = 60_000; // how long the running drops are trusted before they're read again
 const SKIN_CHECK_MS = 60_000; // how long a skin's owner is trusted before it's read again
 const CHAT_KEEP = 30; // chat lines kept for players who join later
 const CHAT_RECENT_MS = 60 * 60_000; // ...if they're less than an hour old
@@ -176,7 +184,7 @@ export class Planet extends DurableObject {
     }
     if (m[0] === "chat") return this.chat(ws, a, m[1], now);
     if (m[0] === "namecheck" || m[0] === "setname" || m[0] === "name" || m[0] === "unname") return this.naming(ws, a, m);
-    if (m[0] === "auth" || m[0] === "hunt" || m[0] === "grab" || m[0] === "voucher") return this.hunt(ws, a, m, now);
+    if (m[0] === "auth" || m[0] === "hunt" || m[0] === "grab" || m[0] === "vouchers") return this.hunt(ws, a, m, now);
   }
 
   // ---------------------------------------------------------------- chat
@@ -351,18 +359,50 @@ export class Planet extends DurableObject {
     return c.owner.toLowerCase() === owner.toLowerCase() ? c.design : null;
   }
 
-  /// Today's finds for a wallet (kept in storage, so they survive the room sleeping).
-  async finds(day, wallet) {
+  /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from TokenDrops and kept a minute.
+  /// If the chain doesn't answer, the last list (or none) is used: golden stamps keep working either way.
+  async dropsOn(day) {
+    this.dropCache ??= new Map();
+    const c = this.dropCache.get(day);
+    if (!this.env.DROPS_ADDRESS || (c && Date.now() - c.at < DROPS_CHECK_MS)) return c?.list ?? [];
+    try {
+      this.chain ??= createPublicClient({ transport: http(this.env.PAD_RPC ?? this.env.SKINS_RPC ?? "https://robinhood-rpc.publicnode.com") });
+      const read = (functionName, args = []) => this.chain.readContract({ address: this.env.DROPS_ADDRESS, abi: DROPS_ABI, functionName, args });
+      this.dropStamp ??= (await read("stamp")).toLowerCase();
+      const ids = await read("activeDrops", [day]);
+      const list = await Promise.all(ids.map(async (id) => {
+        const d = await read("drop", [id]);
+        return { id: Number(id), spots: Number(d.spots), isStamp: d.token.toLowerCase() === this.dropStamp };
+      }));
+      this.dropCache.set(day, { at: Date.now(), list });
+      if (this.dropCache.size > 4) this.dropCache.delete(this.dropCache.keys().next().value);
+      return list;
+    } catch {
+      return c?.list ?? [];
+    }
+  }
+
+  /// A wallet's finds for one day: the golden stamps (`key` "golden") or a token drop's coins (its id).
+  async finds(day, wallet, key = "golden") {
     this.found ??= new Map();
-    const key = `hunt:${day}:${wallet}`;
-    if (!this.found.has(key)) this.found.set(key, new Set((await this.ctx.storage.get(key)) ?? []));
-    return { key, set: this.found.get(key) };
+    const k = key === "golden" ? `hunt:${day}:${wallet}` : `drop:${day}:${key}:${wallet}`;
+    if (!this.found.has(k)) {
+      this.found.set(k, new Set((await this.ctx.storage.get(k)) ?? []));
+      if (this.found.size > 2000) this.found.delete(this.found.keys().next().value);
+    }
+    return { key: k, set: this.found.get(k) };
   }
 
   async hunt(ws, a, m, now) {
-    const on = !!(this.env.HUNT_KEY && this.env.HUNT_ADDRESS);
+    const on = !!(this.env.DROPS_KEY && this.env.DROPS_ADDRESS);
     const day = huntDay(now);
-    const state = async () => ["hunt", { on, day, wallet: a.wallet ?? null, found: a.wallet ? [...(await this.finds(day, a.wallet)).set] : [] }];
+    const state = async () => {
+      if (!a.wallet) return ["hunt", { on, day, wallet: null, found: [], coins: {} }];
+      const lay = layDrops(day, SPOTS.length, await this.dropsOn(day));
+      const coins = {};
+      for (const c of lay.coins) coins[c.drop] = [...(await this.finds(day, a.wallet, c.drop)).set];
+      return ["hunt", { on, day, wallet: a.wallet, found: [...(await this.finds(day, a.wallet)).set], coins }];
+    };
 
     if (m[0] === "auth") {
       // ["auth", wallet, signature]: they signed authMessage(wallet, the code we sent at welcome).
@@ -379,37 +419,49 @@ export class Planet extends DurableObject {
       return send(ws, await state());
     }
     if (m[0] === "hunt") return send(ws, await state());
-    if (!a.wallet) return send(ws, ["nope", -1, "Sign in with your wallet to hunt for $STAMP."]);
+    if (!a.wallet) return send(ws, ["nope", -1, "Sign in with your wallet to hunt for treasure."]);
 
     if (m[0] === "grab") {
-      // ["grab", spot]: they say they've just picked up the stamp at that spot. Check they were there.
+      // ["grab", spot]: they say they've just picked up the stamp or coin at that spot. Check they were there.
       const i = m[1];
       const nope = (why) => send(ws, ["nope", i, why]);
-      if (!Number.isInteger(i) || !pickSpots(day, SPOTS.length).includes(i)) return nope("That stamp isn't out today.");
-      const { key, set } = await this.finds(day, a.wallet);
-      if (set.has(i)) return send(ws, ["found", day, i, set.size]);
+      const owner = Number.isInteger(i) ? layDrops(day, SPOTS.length, await this.dropsOn(day)).owner.get(i) : undefined;
+      if (owner === undefined) return nope("Nothing is out there today.");
+      const { key, set } = await this.finds(day, a.wallet, owner);
+      if (set.has(i)) return send(ws, ["found", day, i, set.size, owner]);
       if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement, so finds aren't counting this session. Reload to try again.");
       if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000) return nope("Keep exploring a moment, then try again.");
       const p = SPOTS[i], far = arcBetween(a.s, spotDir[i]), up = Math.abs(a.s[6] + 0.85 - p.h);
-      if (far > REACH || up > REACH_UP) return nope("You weren't close enough to that stamp.");
+      if (far > REACH || up > REACH_UP) return nope("You weren't close enough to that one.");
       set.add(i);
       await this.ctx.storage.put(key, [...set]);
-      return send(ws, ["found", day, i, set.size]);
+      return send(ws, ["found", day, i, set.size, owner]);
     }
-    if (m[0] === "voucher") {
-      // ["voucher"]: a signed note of today's finds, for the StampHunt contract.
-      if (!on) return send(ws, ["nope", -1, "The stamp hunt isn't open yet."]);
-      const { set } = await this.finds(day, a.wallet);
-      if (!set.size) return send(ws, ["nope", -1, "Find a golden stamp first."]);
-      const stamps = Math.min(set.size, HUNT_STAMPS), deadline = Math.floor(now / 1000) + VOUCHER_SECS;
-      const signer = privateKeyToAccount(this.env.HUNT_KEY);
-      const signature = await signer.signTypedData({
-        domain: { name: "Courier World Stamp Hunt", version: "1", chainId: Number(this.env.HUNT_CHAIN_ID ?? 4663), verifyingContract: this.env.HUNT_ADDRESS },
-        types: { Finds: [{ name: "player", type: "address" }, { name: "day", type: "uint32" }, { name: "stamps", type: "uint16" }, { name: "deadline", type: "uint64" }] },
-        primaryType: "Finds",
-        message: { player: a.wallet, day, stamps, deadline: BigInt(deadline) },
-      });
-      return send(ws, ["voucher", { day, stamps, deadline, signature }]);
+    if (m[0] === "vouchers") {
+      // ["vouchers"]: a signed note of each drop's finds, today's and yesterday's, for TokenDrops.claimMany.
+      if (!on) return send(ws, ["nope", -1, "The treasure hunt isn't paying out yet."]);
+      const signer = privateKeyToAccount(this.env.DROPS_KEY);
+      const deadline = Math.floor(now / 1000) + VOUCHER_SECS;
+      const out = [];
+      for (const d of [day - 1, day]) {
+        const lay = layDrops(d, SPOTS.length, await this.dropsOn(d));
+        const wanted = lay.coins.map((c) => [c.drop, c.drop]);
+        if (lay.golden.drop !== null) wanted.unshift([lay.golden.drop, "golden"]);
+        for (const [drop, key] of wanted) {
+          const { set } = await this.finds(d, a.wallet, key);
+          if (!set.size) continue;
+          const coins = Math.min(set.size, key === "golden" ? HUNT_STAMPS : 65535);
+          const signature = await signer.signTypedData({
+            domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
+            types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
+            primaryType: "Finds",
+            message: { player: a.wallet, drop: BigInt(drop), day: d, coins, deadline: BigInt(deadline) },
+          });
+          out.push({ drop, day: d, coins, deadline, signature });
+        }
+      }
+      if (!out.length) return send(ws, ["nope", -1, "Find a golden stamp or a coin first."]);
+      return send(ws, ["vouchers", out]);
     }
   }
 

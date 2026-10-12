@@ -379,9 +379,9 @@ export function createNet(W, {
         onHunt(m[1]);
         return;
       case "found":
-        onFound(m[1], m[2], m[3]);
+        onFound(m[1], m[2], m[3], m[4] ?? "golden"); // (day, spot, that drop's finds today, "golden" or the drop id)
         return;
-      case "voucher":
+      case "vouchers":
         voucherWait?.resolve(m[1]);
         voucherWait = null;
         return;
@@ -546,21 +546,22 @@ export function createNet(W, {
       const p = players.get(id);
       if (p?.root.visible) emotes.say(p.rider.group, text, p.rider.ride ? 3.2 : 2.85);
     },
-    /// The golden stamp hunt: sign in with `wallet`, signing the room's message with `sign(message)`.
+    /// The treasure hunt (golden stamps and token drops): sign in with `wallet`, signing the room's message with
+    /// `sign(message)`.
     async huntSignIn(wallet, sign) {
       if (!code || ws?.readyState !== 1) throw new Error("Not connected to the other players yet. Try again in a moment.");
       const signature = await sign(authMessage(wallet, code));
       send(["auth", wallet, signature]);
     },
     huntState: () => send(["hunt"]),
-    /// You just picked up the stamp at `spot`: ask the room to count it.
+    /// You just picked up the stamp or coin at `spot`: ask the room to count it.
     grab: (spot) => grabs.push(spot),
-    /// A signed voucher for today's finds, to claim with.
-    voucher() {
+    /// Signed vouchers for each drop's finds (today's and yesterday's), to claim with TokenDrops.claimMany.
+    vouchers() {
       if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
       return new Promise((resolve, reject) => {
         voucherWait = { resolve, reject };
-        send(["voucher"]);
+        send(["vouchers"]);
         setTimeout(() => {
           if (voucherWait?.resolve === resolve) {
             voucherWait = null;

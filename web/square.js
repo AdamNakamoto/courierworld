@@ -383,9 +383,10 @@ export function createSquare(k) {
   }
   const TICKER = " ★ COURIER WORLD ★ DELIVERING HAPPINESS ★ $STAMP ★ GM COURIERS ★ POST OFFICES OPEN 24/7 ★ FIND THE GOLDEN STAMPS ★ PICK YOUR NAME AT THE POST OFFICE";
   let tickerTokens = ""; // once the Launchpad is open: an invitation, and its biggest tokens (from showLaunches)
+  let tickerDrops = ""; // the treasury's token drops running today (from showDrops)
   // The ticker's line fills its texture exactly, so it runs round without a seam.
   const ticker = canvasTexture(4096, 64, (g, w, h) => {
-    const line = TICKER + tickerTokens;
+    const line = TICKER + tickerDrops + tickerTokens;
     fill(g, w, h, "#120d05");
     g.font = bungee(40);
     const s = Math.ceil((40 * w) / g.measureText(line).width) + 1;
@@ -793,6 +794,13 @@ export function createSquare(k) {
       key: "square", name: "Times Square", d: centre, r: SQUARE_R, adMeshes,
       /// The Launchpad's door (stand within `reach` and press E) and its sign (tap it).
       pad: padDoor ? { d: padDoor, reach: 2.6, meshes: padMeshes } : null,
+      /// The token drops running today (their symbols): the ticker tells everyone their coins are out.
+      showDrops(symbols) {
+        const line = symbols.map((s) => ` ★ $${s} COINS ARE OUT: GO FIND THEM`).join("");
+        if (line === tickerDrops) return;
+        tickerDrops = line;
+        ticker.paint();
+      },
       /// The tokens the Launchpad shows, newest first (pad.js onTokens): the newest on a poster, the biggest on the
       /// ticker. Until the first call (no launchpad deployed yet) the sign and the poster say it's coming soon.
       showLaunches(list) {

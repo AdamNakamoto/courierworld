@@ -436,3 +436,33 @@ paths, limits, every allowed start price, independent pools, the 4% in all four 
 fills, ETH routing, fee collection, two-step recipients, admin, and a fuzz that every token bought sells back with
 the fees adding up. `test/CourierPad.fork.t.sol` launches and trades on Robinhood Chain state (real PoolManager,
 IMD, $STAMP burn, post office check, IMD/ETH pool).
+
+## 13. New: the treasure hunt's token drops (TokenDrops)
+
+`contracts/src/TokenDrops.sol` (not deployed yet) replaces `StampHunt` (never deployed): the treasury scatters
+launchpad tokens, or $STAMP for the golden stamps, round the planet as coins, and players with a post office
+claim what they find.
+
+- `createDrop(token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount)`, owner only: the token must
+  be $STAMP or launched by the launchpad (`CourierPad.launches(token).createdAt != 0`); `perCoin > 0`, 1 to 48
+  spots (always 24 for $STAMP: the golden stamps), 1 ≤ `maxPerWallet` ≤ spots, 1 to 365 days, from today or later.
+  The drop's balance is what actually arrived (balance difference), and each drop's tokens are its own
+  (`left`), never mixed with another's.
+- `claim(id, day, coins, deadline, sig)` / `claimMany(Claim[])`: not while paused, post office open, `day` not in the
+  future, claimed that day or the next (`CLAIM_DAYS = 2`), within the drop's days, and an EIP-712 voucher
+  `Finds(player, drop, day, coins, deadline)` signed by `signer` (the multiplayer room). Pays for the coins not yet
+  claimed, capped by `maxPerWallet` per wallet per day, `dailyCoins` per day across everyone (0: none), and the
+  drop's tokens. `claimMany` skips claims that would pay nothing and reverts only if all do. `nonReentrant`.
+- Owner (Ownable2Step, never renounceable, since drops need it): `topUp`; `endDrop` (stops after today, so nobody's
+  coins move mid-day; a drop that hasn't started is cancelled); `withdraw` a drop's remaining tokens once nobody
+  can claim (its last day and the day after are over, or it was cancelled), or at any time while paused;
+  `setSigner`; `setPaused`.
+- The room (`multiplayer/src/index.js`) reads the running drops from the chain, places coins with
+  `web/drop-pick.js` (the same as the game), checks each find against the player's reported path as it did for
+  golden stamps, and signs per-drop vouchers for today and yesterday.
+
+Trust: the room's key decides finds (a leaked key could claim up to each drop's daily limits for wallets with a
+post office until the owner pauses); the owner can withdraw a running drop only by pausing first, which stops
+all claims, so players see it happen. Tests: `test/TokenDrops.t.sol`, 23 tests against the real post office and
+$STAMP (creating, limits, every claim path, days and deadlines, re-entry, ending, withdrawing, pausing, signer
+change, owner-only) and a fuzz that no sequence of claims pays more than a drop holds or its limits allow.

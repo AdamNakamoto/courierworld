@@ -86,26 +86,33 @@ sent in a hello is ignored, so nobody can wear someone else's. `GET /names` list
 to `BANNED` in `web/name-rules.js` and redeploy the room and the site; its owner shows as their
 wallet address again and the name can't be used.
 
-## The golden stamp hunt
+## The treasure hunt: golden stamps and token drops
 
-Golden stamps move every day: 24 of the spots in `web/hunt-spots.json` are out each UTC day
-(`web/hunt-pick.js` picks them, the same way in the game and on the server). Anyone can collect
-them for fun. A player with a post office can also sign in with their wallet (one signature, no
-transaction): the multiplayer room then checks each find against where they've actually been, and
-signs a voucher for the day's finds. `StampHunt.sol` pays it in $STAMP from a pool its owner fills
-(it never mints), up to a set number of stamps per wallet per day and a daily total. The owner tops
-the pool up, takes $STAMP out and changes the reward from the admin part of the Post Office panel.
+Every UTC day the spots in `web/hunt-spots.json` are shuffled (`web/hunt-pick.js`, `web/drop-pick.js`, the same
+in the game and on the server): the first 24 are the golden stamps, and each token drop running that day puts
+its coins on the next ones, oldest drop first, with the token's picture on them. Anyone can collect them for fun.
+A player with a post office can also sign in with their wallet (one signature, no transaction): the
+multiplayer room then checks each find against where they've actually been, and signs a voucher per drop for
+the day's finds. `TokenDrops.sol` pays them from each drop's own tokens (it never mints), claimed for the day of
+the finds or the day after, all drops in one transaction from the Post Office panel's Treasure hunt section.
+
+Only the treasury (the contract's owner) starts drops, from that same section: a launchpad token (its 5% of
+each launch) or $STAMP, which pays for the golden stamps. Each drop sets the tokens per coin, how many coins are
+out a day (1 to 48; 24 golden stamps for $STAMP), how many one wallet is paid for a day, how many are paid a day
+across everyone, and for how many days. The treasury can top a drop up, end it after today, take what's left
+back once nobody can claim, and pause every claim (if the server's key leaks, say). Times Square's ticker
+announces the drops that are running.
 
 ```bash
 cd contracts
-STAMP=0x… OFFICE=0x… HUNT_SIGNER=0x… forge script script/DeployHunt.s.sol --rpc-url robinhood --broadcast --browser
+DROPS_SIGNER=0x… RPC_URL=… ./script/deploy-drops.sh --broadcast --browser --browser-disable-open
 cd ../multiplayer
-npx wrangler secret put HUNT_KEY          # the voucher key (its address is HUNT_SIGNER)
-npx wrangler deploy --var HUNT_ADDRESS:0x…
+npx wrangler secret put DROPS_KEY          # the voucher key (its address is DROPS_SIGNER)
+npx wrangler deploy --var DROPS_ADDRESS:0x…
 ```
 
-Then add `"hunt": "0x…"` to `contracts/deployments/robinhood.json` and run `script/export-web.sh`.
-`./dev.sh` deploys a local hunt and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs it too.
+`./dev.sh` deploys local drops and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs them too (token
+drops need the launchpad: `./dev.sh --fork`). `StampHunt.sol`, the $STAMP-only version, was never deployed.
 
 ## Courier Skins
 
@@ -294,11 +301,12 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner`; ownership renounced when the game launches |
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 | `CourierSkins.sol` | 999 cosmetic skins: blind mint, commit-reveal shuffle, on-chain metadata, enforced 5% royalty (ERC721-C) |
-| `StampHunt.sol` | Pays $STAMP from an owner-filled pool for golden stamps the multiplayer room has checked |
+| `TokenDrops.sol` | The treasure hunt's payouts: the treasury's token drops and the golden stamps ($STAMP), for finds the multiplayer room has checked |
+| `StampHunt.sol` | The earlier $STAMP-only hunt (replaced by TokenDrops, never deployed) |
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
-cd contracts && forge test                                             # 305 tests
+cd contracts && forge test                                             # 328 tests
 forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 

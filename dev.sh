@@ -84,26 +84,27 @@ NFT=$(addr CourierNFT)
 RENDERER=$(addr Renderer)
 [ -n "$NFT" ] || { echo "$OUT"; exit 1; }
 
-deploy_hunt() { # the golden stamp hunt, with a throwaway voucher key for the local multiplayer server
-  [ -n "$(addr PostOffice)" ] || return 0
-  local game="$OUT" key signer
+deploy_drops() { # the treasure hunt's payouts (golden stamps and token drops), with a throwaway voucher key for
+  # the local multiplayer server; the treasury (account 1) owns it
+  [ -n "$STAMP_ADDR" ] || return 0
+  local prev="$OUT" key signer
   # (newer cast wraps the result in {data: ...})
   key=$(cast wallet new --json | jq -r '(.data? // .) | if type == "array" then .[0] else . end | .private_key')
   signer=$(cast wallet address "$key")
-  STAMP=$(addr StampToken) OFFICE=$(addr PostOffice) HUNT_SIGNER=$signer HUNT_OWNER=${ACCOUNTS[1]} deploy script/DeployHunt.s.sol
-  HUNT=$(addr StampHunt)
-  HUNT_KEY=$key
-  OUT="$game"
+  STAMP=$STAMP_ADDR OFFICE=$OFFICE_ADDR PAD=${PAD:-} DROPS_SIGNER=$signer DROPS_OWNER=${ACCOUNTS[1]} deploy script/DeployTokenDrops.s.sol --tc DeployTokenDrops
+  DROPS=$(addr TokenDrops)
+  DROPS_KEY=$key
+  OUT="$prev"
 }
 # `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this local hunt, and checks skins on this chain.
 write_dev_vars() {
   {
-    [ -n "${HUNT:-}" ] && printf 'HUNT_KEY=%s\nHUNT_ADDRESS=%s\nHUNT_CHAIN_ID=%s\n' "$HUNT_KEY" "$HUNT" "$(cast chain-id --rpc-url "$RPC")"
+    [ -n "${DROPS:-}" ] && printf 'DROPS_KEY=%s\nDROPS_ADDRESS=%s\nDROPS_CHAIN_ID=%s\n' "$DROPS_KEY" "$DROPS" "$(cast chain-id --rpc-url "$RPC")"
     [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
     [ -n "$(addr PostOffice)" ] && printf 'POST_OFFICE=%s\nPAD_RPC=%s\n' "$(addr PostOffice)" "$RPC"
   } > multiplayer/.dev.vars || true
 }
-deploy_hunt
+STAMP_ADDR=$(addr StampToken) OFFICE_ADDR=$(addr PostOffice) # (the game's, kept: OUT changes with each deploy)
 
 deploy_skins() { # Courier Skins with the sale open, revealed with this chain's throwaway secret
   local prev="$OUT"
@@ -132,6 +133,7 @@ deploy_pad() { # the launchpad, on a fork only (it needs the real Uniswap v4 Poo
   OUT="$prev"
 }
 deploy_pad
+deploy_drops
 write_dev_vars
 
 NAME=Anvil
@@ -152,9 +154,9 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
     stage=game
     contracts=$(echo "$contracts" | jq --arg stamp "$(addr StampToken)" --arg office "$office" '. + {stamp: $stamp, office: $office}')
     abis=$(echo "$abis" | jq --argjson stamp "$(abi StampToken)" --argjson office "$(abi PostOffice)" '. + {stamp: $stamp, office: $office}')
-    if [ -n "$HUNT" ]; then
-      contracts=$(echo "$contracts" | jq --arg hunt "$HUNT" '. + {hunt: $hunt}')
-      abis=$(echo "$abis" | jq --argjson hunt "$(abi StampHunt)" '. + {hunt: $hunt}')
+    if [ -n "${DROPS:-}" ]; then
+      contracts=$(echo "$contracts" | jq --arg drops "$DROPS" '. + {drops: $drops}')
+      abis=$(echo "$abis" | jq --argjson drops "$(abi TokenDrops)" '. + {drops: $drops}')
     fi
     if [ "$FORK" = 1 ]; then
       # Robinhood Chain addresses, as in contracts/script/export-web.sh.
@@ -207,7 +209,8 @@ if [ "$STAGED" = 1 ]; then
   read -r -p "Press Enter to reveal the couriers and launch the game... " _
   export NFT RENDERER
   deploy script/DeployFork.s.sol --sig "runGame()"
-  deploy_hunt
+  STAMP_ADDR=$(addr StampToken) OFFICE_ADDR=$(addr PostOffice)
+  deploy_drops
   write_dev_vars
   write_chain_json
   echo "Stage 2: the game is live. Reload the page."

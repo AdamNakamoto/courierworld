@@ -31,7 +31,8 @@ function duration(secs) {
 /// How many skins of each rarity are in the deck.
 const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + k.supply), m), {});
 
-/// `hunt`: the golden stamp hunt's side in the game ({ state(), signIn(), voucher() }), when it's running.
+/// `hunt`: the treasure hunt's side in the game ({ state(), running(), signIn(), vouchers() }), once TokenDrops is
+/// deployed.
 /// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
 /// `wearing()` is the id of the skin you have on, if any. `username`: your name on the planet (username.js).
 /// `onLaunchpad()` opens the Launchpad (when it's deployed).
@@ -43,7 +44,9 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   let stampPriceIn = ""; // a new $STAMP price for skins, while the owner types it
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
-  let huntInfo = null, huntAt = 0, huntAmount = "", huntReward = ""; // the StampHunt contract, read every few seconds
+  let huntInfo = null, huntAt = 0; // the TokenDrops contract (today's drops, what you'd be paid, the owner), every few seconds
+  // The treasury's "start a drop" form, while it's typed.
+  const dropForm = { token: "", perCoin: "", spots: "10", maxPerWallet: "5", dailyCoins: "100", days: "7", amount: "", topUp: "" };
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   let naming = false, nameDraft = ""; // picking a name, and what's typed so far
   const stamps = new Map(); // `${seed}:${id}` -> data URL
@@ -78,9 +81,9 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
           admin = (await chain.admin.isAdmin(snap.account)) ? await chain.admin.stats() : null;
         }
       } else if (!snap.account) admin = adminFor = null;
-      if (chain.hunt && hunt && !panel.hidden && Date.now() - huntAt > 5000) {
+      if (chain.drops && hunt && !panel.hidden && Date.now() - huntAt > 5000) {
         huntAt = Date.now();
-        huntInfo = await chain.hunt.info(huntDay());
+        huntInfo = await treasure();
       }
       draw();
     } catch (e) {
@@ -88,6 +91,26 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     } finally {
       refreshing = false;
     }
+  }
+
+  /// Today's drops with what you'd be paid for your finds so far, and (for the treasury) every drop and the tokens
+  /// it can drop.
+  async function treasure() {
+    const day = huntDay(), st = hunt.state();
+    const [running, own] = await Promise.all([chain.drops.running(day), chain.drops.owner()]);
+    const mine = st?.wallet && snap?.account && st.wallet.toLowerCase() === snap.account.toLowerCase() ? st : null;
+    for (const d of running) {
+      const n = d.isStamp ? mine?.found.length ?? 0 : mine?.coins?.[d.id]?.length ?? 0;
+      d.foundToday = n;
+      d.pay = n ? (await chain.drops.claimable(d.id, day, Math.min(n, 65535)))[1] : 0n;
+    }
+    const out = { day, running, ...own };
+    if (own.isOwner) {
+      out.all = await chain.drops.all();
+      const launched = chain.pad ? await chain.pad.tokens((await chain.pad.info()).count) : [];
+      out.tokens = [{ address: "stamp", symbol: "STAMP" }, ...launched.map((t) => ({ address: t.address, symbol: t.symbol }))];
+    }
+    return out;
   }
 
   async function run(label, fn) {
@@ -105,6 +128,44 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       t.remove();
       busy = null;
       await refresh();
+    }
+  }
+
+  /// The treasury's controls: start a drop, the list of drops (end, top up, withdraw), pause.
+  function dropAdmin(h) {
+    const f = dropForm, isStamp = f.token === "stamp" || !f.token;
+    let html = `<div class="admin-hunt"><h4>Start a drop <span class="muted">you run the treasure hunt</span></h4>
+      <label class="field">Token<select data-act="dropToken">${h.tokens.map((t) => `<option value="${t.address}" ${t.address === (f.token || "stamp") ? "selected" : ""}>$${esc(t.symbol)}${t.address === "stamp" ? " (golden stamps)" : ""}</option>`).join("")}</select></label>
+      <label class="field">Tokens per coin<input data-act="dropPerCoin" value="${esc(f.perCoin)}" inputmode="decimal" placeholder="e.g. ${isStamp ? "10" : "100000"}"></label>
+      ${isStamp ? `<p class="note">$STAMP pays for the 24 golden stamps.</p>` : `<label class="field">Coins out each day (1 to 48)<input data-act="dropSpots" value="${esc(f.spots)}" inputmode="numeric"></label>`}
+      <label class="field">Coins one wallet is paid for, per day<input data-act="dropMax" value="${esc(f.maxPerWallet)}" inputmode="numeric"></label>
+      <label class="field">Coins paid per day, everyone together (0: no limit)<input data-act="dropDaily" value="${esc(f.dailyCoins)}" inputmode="numeric"></label>
+      <label class="field">Days (from today)<input data-act="dropDays" value="${esc(f.days)}" inputmode="numeric"></label>
+      <label class="field">Tokens to put in${dropSuggest() ? ` <span class="muted">(${fmt(dropSuggest(), 0)} covers every day's limit)</span>` : ""}<input data-act="dropAmount" value="${esc(f.amount)}" inputmode="decimal" placeholder="${dropSuggest() ? formatEther(dropSuggest()) : ""}"></label>
+      <button class="pbtn wide" data-act="dropCreate" ${busy ? "disabled" : ""}>Start the drop</button>`;
+    if (h.all?.length) {
+      html += `<h4>Drops</h4>`;
+      for (const d of h.all) {
+        const live = d.startDay <= h.day && h.day <= d.endDay, over = h.day > d.endDay + 1 || d.endDay < d.startDay;
+        html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)} · ${fmt(d.perCoin, 0)}/coin · ${live ? "running" : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
+          <div class="row2">${live || h.day < d.startDay ? `<button class="pbtn" data-act="dropEnd" data-id="${d.id}" ${busy ? "disabled" : ""}>End</button>` : ""}
+          ${!over ? `<button class="pbtn" data-act="dropTopUp" data-id="${d.id}" data-token="${d.token}" ${busy ? "disabled" : ""}>Top up</button>` : ""}
+          ${(over || h.paused) && d.left > 0n ? `<button class="pbtn" data-act="dropWithdraw" data-id="${d.id}" ${busy ? "disabled" : ""}>Withdraw</button>` : ""}</div>`;
+      }
+      html += `<label class="field">Tokens to top up with<input data-act="dropTopUpAmount" value="${esc(f.topUp)}" inputmode="decimal" placeholder="e.g. 50000"></label>`;
+    }
+    html += `<button class="pbtn wide" data-act="dropPause" ${busy ? "disabled" : ""}>${h.paused ? "Resume claims" : "Pause all claims"}</button>
+      <p class="note">${h.paused ? "Claims are paused: you can withdraw any drop." : "Pause if anything looks wrong (the server's key leaks, say): claims stop and you can take every drop's tokens back."}</p></div>`;
+    return html;
+  }
+  /// Tokens that cover a drop's daily limit for all its days.
+  function dropSuggest() {
+    const f = dropForm;
+    try {
+      const per = parseEther(f.perCoin || "0"), daily = BigInt(f.dailyCoins || "0"), days = BigInt(f.days || "0");
+      return per > 0n && daily > 0n && days > 0n ? per * daily * days : 0n;
+    } catch {
+      return 0n;
     }
   }
 
@@ -215,30 +276,29 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       </section>`;
     }
 
-    // ---- the golden stamp hunt
-    if (s.game && chain.hunt && hunt && huntInfo) {
+    // ---- the treasure hunt: golden stamps, and the treasury's token drops (coins round the planet)
+    if (s.game && chain.drops && hunt && huntInfo) {
       // The room's view of you counts only if it's for the wallet logged in now.
       const h = huntInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
-      const found = st?.found.length ?? 0, toClaim = Math.max(0, Math.min(found, h.maxPerDay) - h.claimed);
-      const afford = h.reward ? Number(h.pool / h.reward) : 0, pay = BigInt(Math.min(toClaim, afford)) * h.reward;
-      html += `<section class="hunt"><h3>Golden stamp hunt <span class="muted">${fmt(h.reward, 0)} $STAMP each</span></h3>
-        <div class="kv"><span>Found today</span><b>${st ? `${found}/${HUNT_STAMPS}` : "–"}</b></div>
-        <div class="kv"><span>Claimed today</span><b>${h.claimed}</b></div>
-        <div class="kv"><span>Left in the pool</span><b>${fmt(h.pool, 0)} $STAMP</b></div>`;
-      if (!s.account) html += `<p class="note">Log in, open a post office and sign in to earn $STAMP for the golden stamps you find.</p>`;
-      else if (!s.office?.open) html += `<p class="note">Open a post office to redeem golden stamps for $STAMP.</p>`;
-      else if (!st?.wallet) html += `<button class="pbtn primary wide" data-act="huntSignIn" ${busy ? "disabled" : ""}>Sign in to hunt</button>
-        <p class="note">One signature proves this wallet is yours. It costs nothing and can't move anything. Stamps you find after signing in count toward $STAMP.</p>`;
-      else if (toClaim) html += `<button class="pbtn primary wide" data-act="huntClaim" ${!pay || busy ? "disabled" : ""}>${pay ? `Claim ${fmt(pay, 0)} $STAMP` : "The pool is empty: check back soon"}</button>`;
-      else html += `<p class="note">${found >= HUNT_STAMPS ? "You found every stamp today!" : "Find more golden stamps: they're hidden all over the planet."} New spots every day at 00:00 UTC.</p>`;
-      if (h.isOwner) {
-        html += `<div class="admin-hunt"><h4>Pool <span class="muted">you run the hunt</span></h4>
-          <label class="field">$STAMP to add or take out<input data-act="huntAmount" value="${huntAmount}" inputmode="decimal" placeholder="e.g. 5000"></label>
-          <div class="row2"><button class="pbtn" data-act="huntDeposit" ${busy ? "disabled" : ""}>Deposit</button><button class="pbtn" data-act="huntWithdraw" ${busy ? "disabled" : ""}>Withdraw</button></div>
-          <label class="field">Reward per stamp<input data-act="huntReward" value="${huntReward}" inputmode="decimal" placeholder="${fmt(h.reward, 0)}"></label>
-          <button class="pbtn wide" data-act="huntSetReward" ${busy ? "disabled" : ""}>Change the reward</button>
-          <p class="note">Paid out today: ${fmt(h.paidToday, 0)} $STAMP. Each wallet is paid for up to ${h.maxPerDay} stamps a day.</p></div>`;
+      const golden = h.running.find((d) => d.isStamp), coins = h.running.filter((d) => !d.isStamp);
+      const total = h.running.reduce((m, d) => (d.pay ? m.set(d.symbol, (m.get(d.symbol) ?? 0n) + d.pay) : m), new Map());
+      html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
+      html += `<div class="kv"><span>★ Golden stamps${golden ? ` · ${fmt(golden.perCoin, 0)} $STAMP each` : " · just for fun today"}</span><b>${st ? `${st.found.length}/${HUNT_STAMPS}` : "–"}</b></div>`;
+      for (const d of coins) {
+        const left = d.perCoin ? d.left / d.perCoin : 0n;
+        html += `<div class="kv"><span>🪙 $${esc(d.symbol)} coins · ${fmt(d.perCoin, 0)} each${left < 1n ? " · all paid out" : ""}</span><b>${st ? `${st.coins?.[d.id]?.length ?? 0}/${d.spots}` : `${d.spots} out`}</b></div>`;
       }
+      if (!coins.length && !golden) html += `<p class="note">No paid drops today: golden stamps are just for fun until the treasury runs a drop.</p>`;
+      if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get paid for the golden stamps and coins you find.</p>`;
+      else if (!s.office?.open) html += `<p class="note">Open a post office to claim treasure.</p>`;
+      else if (!st?.wallet) html += `<button class="pbtn primary wide" data-act="huntSignIn" ${busy ? "disabled" : ""}>Sign in to hunt</button>
+        <p class="note">One signature proves this wallet is yours. It costs nothing and can't move anything. What you find after signing in counts.</p>`;
+      else {
+        const label = total.size ? `Claim ${[...total].map(([sym, v]) => `${fmt(v, 0)} $${esc(sym)}`).join(" + ")}` : "Claim treasure";
+        html += `<button class="pbtn primary wide" data-act="huntClaim" ${busy ? "disabled" : ""}>${label}</button>
+          <p class="note">Claim by the end of the next day (UTC). Each drop pays a few coins per wallet a day, while its tokens last.</p>`;
+      }
+      if (h.isOwner) html += dropAdmin(h);
       html += `</section>`;
     }
 
@@ -473,32 +533,52 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         await hunt.signIn();
         huntAt = 0;
       });
-      case "huntClaim": return run("Claiming golden stamps", async () => {
-        await chain.hunt.claim(await hunt.voucher());
+      case "huntClaim": return run("Claiming treasure", async () => {
+        await chain.drops.claimAll(await hunt.vouchers());
         huntAt = 0;
       });
-      case "huntDeposit":
-      case "huntWithdraw": {
+      case "dropCreate": {
+        const f = dropForm, stampDrop = !f.token || f.token === "stamp";
+        let perCoin, amount;
+        try {
+          perCoin = parseEther(f.perCoin || "0");
+          amount = parseEther(f.amount || formatEther(dropSuggest()));
+        } catch {
+          return toast("Enter the tokens per coin and how many to put in.", "error");
+        }
+        const spots = stampDrop ? 24 : Number(f.spots), max = Number(f.maxPerWallet), daily = BigInt(f.dailyCoins || "0"), days = Number(f.days);
+        if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || !(days >= 1 && days <= 365)) {
+          return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), days (1 to 365), and the tokens to put in.", "error");
+        }
+        const token = stampDrop ? chain.stampAddress : f.token;
+        return run(`Starting a drop`, async () => {
+          await chain.drops.admin.createDrop({ token, perCoin, spots, maxPerWallet: max, dailyCoins: daily, startDay: huntDay(), days, amount });
+          Object.assign(dropForm, { perCoin: "", amount: "" });
+          huntAt = 0;
+        });
+      }
+      case "dropEnd": return run(`Ending drop #${b.dataset.id} after today`, async () => {
+        await chain.drops.admin.endDrop(Number(b.dataset.id));
+        huntAt = 0;
+      });
+      case "dropWithdraw": return run(`Taking drop #${b.dataset.id}'s tokens back`, async () => {
+        await chain.drops.admin.withdraw(Number(b.dataset.id));
+        huntAt = 0;
+      });
+      case "dropTopUp": {
         let amount;
-        try { amount = parseEther(huntAmount || "0"); } catch { amount = 0n; }
-        if (amount <= 0n) return toast("Enter how much $STAMP.", "error");
-        const deposit = b.dataset.act === "huntDeposit";
-        return run(deposit ? "Adding $STAMP to the pool" : "Taking $STAMP out of the pool", async () => {
-          await (deposit ? chain.hunt.deposit(amount) : chain.hunt.withdraw(amount));
-          huntAmount = "";
+        try { amount = parseEther(dropForm.topUp || "0"); } catch { amount = 0n; }
+        if (amount <= 0n) return toast("Enter how many tokens to top up with.", "error");
+        return run(`Topping up drop #${b.dataset.id}`, async () => {
+          await chain.drops.admin.topUp(Number(b.dataset.id), b.dataset.token, amount);
+          dropForm.topUp = "";
           huntAt = 0;
         });
       }
-      case "huntSetReward": {
-        let wei;
-        try { wei = parseEther(huntReward || "0"); } catch { wei = 0n; }
-        if (wei <= 0n) return toast("Enter the new reward per stamp.", "error");
-        return run("Changing the reward", async () => {
-          await chain.hunt.setReward(wei);
-          huntReward = "";
-          huntAt = 0;
-        });
-      }
+      case "dropPause": return run(huntInfo?.paused ? "Resuming claims" : "Pausing claims", async () => {
+        await chain.drops.admin.setPaused(!huntInfo?.paused);
+        huntAt = 0;
+      });
       case "upgrade": return run("Upgrading the post office", () => chain.upgrade(snap));
       case "assign": return run(`Courier #${id} heading out`, () => chain.assign(id));
       case "unassign": return run(`Courier #${id} coming back`, () => chain.unassign(id));
@@ -553,6 +633,10 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     }
   });
   panel.addEventListener("change", (e) => {
+    if (e.target.dataset.act === "dropToken") {
+      dropForm.token = e.target.value;
+      return draw(true);
+    }
     if (e.target.dataset.act === "account") {
       chain.setAccount(e.target.value);
       lastHtml = lastMore = "";
@@ -563,8 +647,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     if (e.target.dataset.act === "invite") invite = e.target.value.trim();
     if (e.target.dataset.act === "nameInput") nameDraft = e.target.value;
     if (e.target.dataset.act === "feeWallet") newFeeWallet = e.target.value.trim();
-    if (e.target.dataset.act === "huntAmount") huntAmount = e.target.value.trim();
-    if (e.target.dataset.act === "huntReward") huntReward = e.target.value.trim();
+    const field = { dropPerCoin: "perCoin", dropSpots: "spots", dropMax: "maxPerWallet", dropDaily: "dailyCoins", dropDays: "days", dropAmount: "amount", dropTopUpAmount: "topUp" }[e.target.dataset.act];
+    if (field) dropForm[field] = e.target.value.trim();
     if (e.target.dataset.act === "skinSecret") skinSecret = e.target.value;
     if (e.target.dataset.act === "stampPriceIn") stampPriceIn = e.target.value;
   });

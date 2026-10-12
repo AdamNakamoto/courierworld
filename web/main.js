@@ -16,6 +16,8 @@ import { createPad } from "./pad.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
+import { huntDay } from "./hunt-pick.js";
+import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
 import { createUsername } from "./username.js";
@@ -240,6 +242,8 @@ async function refreshBoard(chain) {
 // another one, such as `wrangler dev` on your own machine.
 const MP_URL = new URLSearchParams(location.search).get("mp") ?? "wss://courier-world-mp.courier-world-mp.workers.dev/ws";
 const MP_HTTP = MP_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+// Token pictures are hosted by the multiplayer server (this one, or the live one for tokens launched there).
+const PICTURE_HOSTS = [...new Set([`${MP_HTTP}/pad/image/`, "https://courier-world-mp.courier-world-mp.workers.dev/pad/image/"])];
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 const net = createNet(W, {
@@ -248,15 +252,18 @@ const net = createNet(W, {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
   },
-  // The golden stamp hunt: the room's view of you (signed in? what you've found today).
+  // The treasure hunt: the room's view of you (signed in? what you've found today, golden stamps and coins).
   onHunt(state) {
     huntState = state;
-    if (state?.wallet) stamps.setFound(state.day, state.found);
+    if (state?.wallet) stamps.setFound(state.day, state.found, state.coins);
     office?.huntChanged();
     hud();
   },
-  onFound(day, spot, count) {
-    if (huntState && huntState.day === day && !huntState.found.includes(spot)) huntState.found.push(spot);
+  onFound(day, spot, count, owner) {
+    if (huntState && huntState.day === day) {
+      const list = owner === "golden" ? huntState.found : (huntState.coins[owner] ??= []);
+      if (!list.includes(spot)) list.push(spot);
+    }
     office?.huntChanged();
   },
   onNope(spot, why) {
@@ -379,15 +386,59 @@ function collected(s) {
   sounds.collect();
   sparkle.puff(s.mesh.position, s.d, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
   hud();
-  toast(stamps.found === STAMPS ? "Every golden stamp on the planet!" : `Golden stamp! ${stamps.found} of ${STAMPS}`);
-  // Signed-in hunters have the room count it (and pay $STAMP for it); everyone else gets a hint, once.
+  const drop = s.kind === "coin" ? droppingToday.find((d) => d.id === s.drop) : null;
+  if (drop) {
+    const c = stamps.coins(drop.id);
+    toast(`🪙 $${drop.symbol} coin! ${c.found} of ${c.out} today`);
+  } else toast(stamps.found === STAMPS ? "Every golden stamp on the planet!" : `Golden stamp! ${stamps.found} of ${STAMPS}`);
+  // Signed-in hunters have the room count it (and pay for it); everyone else gets a hint, once.
   if (huntState?.wallet) net.grab(s.id);
-  else if (chainRef?.hunt && !huntHinted) {
+  else if (chainRef?.drops && !huntHinted && (drop || goldenPays)) {
     huntHinted = true;
-    setTimeout(() => toast("Golden stamps can earn $STAMP: open the Post Office panel (P) and sign in to hunt."), 1800);
+    setTimeout(() => toast("Treasure pays out: open the Post Office panel (P) and sign in to hunt."), 1800);
   }
-  if (stamps.found === STAMPS) say([{ name: "You", text: `That's all ${STAMPS} golden stamps. The whole planet, done!` }]);
+  if (!drop && stamps.found === STAMPS) say([{ name: "You", text: `That's all ${STAMPS} golden stamps. The whole planet, done!` }]);
 }
+
+// The treasury's token drops running today: their coins go out round the planet, with the token's picture.
+let droppingToday = [], goldenPays = false, dropsDay = -1;
+const coinPictures = new Map(); // picture URL -> Image (null while loading)
+async function refreshDrops() {
+  const chain = chainRef;
+  if (!chain?.drops) return;
+  const day = huntDay();
+  try {
+    const running = await chain.drops.running(day);
+    if (day !== huntDay()) return;
+    goldenPays = running.some((d) => d.isStamp && d.left >= d.perCoin);
+    const tokens = running.filter((d) => !d.isStamp);
+    for (const d of tokens) {
+      const url = parseMeta(d.metadata, PICTURE_HOSTS).image;
+      d.pictureUrl = url ?? null;
+      if (url && !coinPictures.has(url)) {
+        coinPictures.set(url, null);
+        const im = new Image();
+        im.crossOrigin = "anonymous";
+        im.onload = () => {
+          coinPictures.set(url, im);
+          refreshDrops();
+        };
+        im.src = url;
+      }
+      d.picture = url ? coinPictures.get(url) : null;
+    }
+    droppingToday = tokens;
+    dropsDay = day;
+    stamps.setDrops(day, tokens);
+    W.square?.showDrops?.(tokens.map((d) => d.symbol));
+  } catch (e) {
+    console.warn("drops: couldn't read today's", e);
+  }
+}
+setInterval(() => {
+  if (huntDay() !== dropsDay) refreshDrops();
+}, 15_000);
+setInterval(refreshDrops, 60_000);
 
 // ---------------------------------------------------------------- envelope markers
 
@@ -1444,12 +1495,13 @@ const chainReady = connectChain()
     $("officeBtn").hidden = false;
     office = createOffice(chain, {
       toast,
-      hunt: chain.hunt ? {
+      hunt: chain.drops ? {
         state: () => huntState,
+        running: () => droppingToday,
         async signIn() {
-          await net.huntSignIn(chain.account, (message) => chain.hunt.sign(message));
+          await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
         },
-        voucher: () => net.voucher(),
+        vouchers: () => net.vouchers(),
       } : null,
       onSnapshot(s) {
         autoAvatar(s);
@@ -1480,8 +1532,7 @@ const chainReady = connectChain()
         onLogin: () => chain.login().then(() => office.refresh(), (e) => toast(explain(e), "error")),
         openOffice: () => showOffice(true),
         imageApi: MP_HTTP,
-        // Pictures are hosted by the multiplayer server (here, or the live one for tokens launched there).
-        imageHosts: [...new Set([`${MP_HTTP}/pad/image/`, "https://courier-world-mp.courier-world-mp.workers.dev/pad/image/"])],
+        imageHosts: PICTURE_HOSTS,
         onTokens: (list) => W.square?.showLaunches(list),
       });
       if (!matchMedia("(pointer: coarse)").matches) $("help").textContent = $("help").textContent.replace(" · drag to look", " · L for the Launchpad · drag to look");
@@ -1490,6 +1541,7 @@ const chainReady = connectChain()
     }
     refreshBoard(chain);
     setInterval(() => refreshBoard(chain), 20_000);
+    refreshDrops();
     return chain;
   })
   .catch((e) => {

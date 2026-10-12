@@ -48,11 +48,11 @@ if [ -f "$GAME" ]; then
       abis: {stamp: \$stampAbi, nft: \$nftAbi, office: \$officeAbi, renderer: \$rendererAbi,
              hook: \$hookAbi, router: \$routerAbi, ethRouter: \$ethRouterAbi}
     }" > "$OUT"
-  # The golden stamp hunt, once it's deployed (its address added to deployments/robinhood.json as "hunt").
-  HUNT=$(jq -r '.hunt // empty' "$GAME")
-  if [ -n "$HUNT" ]; then
+  # The treasure hunt's payouts, once deployed (script/deploy-drops.sh writes deployments/robinhood-drops.json).
+  DROPS=deployments/robinhood-drops.json
+  if [ -f "$DROPS" ]; then
     tmp=$(mktemp)
-    jq --arg hunt "$HUNT" --argjson huntAbi "$(abi StampHunt)" '.contracts.hunt = $hunt | .abis.hunt = $huntAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+    jq --slurpfile d "$DROPS" --argjson dropsAbi "$(abi TokenDrops)" '.contracts.drops = $d[0].drops | .abis.drops = $dropsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
   # Courier Skins, once deployed (script/deploy-skins.sh writes deployments/robinhood-skins.json).
   SKINS=deployments/robinhood-skins.json

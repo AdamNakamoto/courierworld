@@ -50,8 +50,14 @@ const ERROR_TEXT = {
   RevealTooSoon: "The sale was closed moments ago: wait about 15 seconds, then reveal.",
   BadSecret: "That isn't this collection's reveal secret.",
   ZeroPrice: "The price can't be zero.",
-  DailyLimitReached: "Today's golden stamp payouts have run out. Your stamps stay claimable tomorrow.",
-  PoolEmpty: "The golden stamp pool is empty right now. Check back soon.",
+  // The treasure hunt (TokenDrops)
+  NoOffice: "Open a post office first: only post office owners can claim treasure.",
+  NothingToClaim: "Nothing new to claim: find more golden stamps or coins first.",
+  IsPaused: "Treasure claims are paused right now. Your finds stay claimable until the day after.",
+  TooLate: "Those finds are too old to claim: claim by the end of the next day (UTC).",
+  NotRunning: "That drop isn't running.",
+  BadDrop: "Check the drop's settings: coins out (1 to 48), a wallet's daily coins (up to that), and days (1 to 365).",
+  StillRunning: "Players can still claim from this drop: withdraw the day after it ends.",
 };
 
 // Uniswap v4 wraps a hook's revert; the reason inside is what the player needs.
@@ -119,7 +125,7 @@ export async function connectChain() {
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
     ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []),
-    ...(dep.abis.pad ?? []), ...V4_ABI,
+    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -127,7 +133,7 @@ export async function connectChain() {
     nft: { address: dep.contracts.nft, abi: withErrors(dep.abis.nft) },
     stamp: game ? { address: dep.contracts.stamp, abi: withErrors(dep.abis.stamp) } : null,
     office: game ? { address: dep.contracts.office, abi: withErrors(dep.abis.office) } : null,
-    hunt: dep.contracts.hunt ? { address: dep.contracts.hunt, abi: withErrors(dep.abis.hunt) } : null,
+    drops: dep.contracts.drops ? { address: dep.contracts.drops, abi: withErrors(dep.abis.drops) } : null,
     skins: dep.contracts.skins ? { address: dep.contracts.skins, abi: withErrors(dep.abis.skins) } : null,
     skinsStamp: dep.contracts.skinsStamp ? { address: dep.contracts.skinsStamp, abi: withErrors(dep.abis.skinsStamp) } : null,
   };
@@ -531,34 +537,80 @@ export async function connectChain() {
     },
   } : null;
 
-  // ---------------------------------------------------------------- the golden stamp hunt
-  // The StampHunt contract pays $STAMP, from a pool its owner fills, for golden stamps the multiplayer
-  // server has checked. Only wallets with a post office can claim.
-  const hunt = C.hunt ? {
-    async info(day) {
-      const [pool, reward, maxPerDay, owner, claimed, paidToday] = await Promise.all([
-        read(C.hunt, "pool"), read(C.hunt, "rewardPerStamp"), read(C.hunt, "maxStampsPerDay"), read(C.hunt, "owner"),
-        account ? read(C.hunt, "claimed", [account, day]) : 0, read(C.hunt, "paidFor", [day]),
-      ]);
-      return { pool, reward, maxPerDay: Number(maxPerDay), owner, claimed: Number(claimed), paidToday, isOwner: !!account && same(owner, account) };
+  // ---------------------------------------------------------------- the treasure hunt
+  // Golden stamps and the treasury's token drops (TokenDrops): coins round the planet that the multiplayer server
+  // checks and signs vouchers for. Only wallets with a post office can claim.
+  const dropToken = new Map(); // token (lower case) -> { symbol, name, image }
+  async function tokenInfo(token) {
+    const k = token.toLowerCase();
+    if (!dropToken.has(k)) {
+      if (same(token, C.stamp.address)) dropToken.set(k, { symbol: "STAMP", name: "Courier World", metadata: "{}" });
+      else {
+        const t = { address: token, abi: P?.tokenAbi ?? ERC20_ABI };
+        const [symbol, name, metadata] = await Promise.all([read(t, "symbol"), read(t, "name"), P ? read(t, "metadata").catch(() => "{}") : "{}"]);
+        dropToken.set(k, { symbol, name, metadata });
+      }
+    }
+    return dropToken.get(k);
+  }
+  const dropOf = async (id) => {
+    const d = await read(C.drops, "drop", [BigInt(id)]);
+    return {
+      id: Number(id), token: d.token, isStamp: same(d.token, C.stamp.address), spots: Number(d.spots), maxPerWallet: Number(d.maxPerWallet),
+      startDay: Number(d.startDay), endDay: Number(d.endDay), perCoin: d.perCoin, dailyCoins: d.dailyCoins, left: d.left,
+      ...(await tokenInfo(d.token)),
+    };
+  };
+  const drops = C.drops ? {
+    address: C.drops.address,
+    today: () => Number(BigInt(Math.floor(Date.now() / 1000)) / 86400n),
+    /// The drops with coins out on `day`, oldest first, each with its token's symbol and metadata and the coins
+    /// paid that day.
+    async running(day) {
+      const ids = await read(C.drops, "activeDrops", [day]);
+      return Promise.all(ids.map(async (id) => ({ ...(await dropOf(id)), paid: await read(C.drops, "paidCoins", [id, day]) })));
     },
+    /// Every drop (for the treasury's list), newest first.
+    async all() {
+      const n = Number(await read(C.drops, "dropCount"));
+      return (await Promise.all(Array.from({ length: n }, (_, i) => dropOf(i)))).reverse();
+    },
+    async owner() {
+      const [owner, paused] = await Promise.all([read(C.drops, "owner"), read(C.drops, "paused")]);
+      return { owner, paused, isOwner: !!account && same(owner, account) };
+    },
+    /// What a find count would pay now: [coins, amount].
+    claimable: (id, day, coins) => (account ? read(C.drops, "claimable", [BigInt(id), account, day, coins]) : [0, 0n]),
     /// Sign the hunt's sign-in message with the logged-in wallet (proves it's theirs; no transaction).
     sign: (message) => wallet.signMessage({ account, message }),
-    /// Redeem a voucher from the multiplayer server.
-    claim: (v) => send(C.hunt, "claim", [v.day, v.stamps, BigInt(v.deadline), v.signature]),
-    /// Owner: top up the pool (approving the $STAMP first if needed), take some back out, change the reward.
-    async deposit(amount) {
-      if ((await read(C.stamp, "allowance", [account, C.hunt.address])) < amount) await send(C.stamp, "approve", [C.hunt.address, amount]);
-      await send(C.hunt, "deposit", [amount]);
+    /// Claim every voucher from the multiplayer server in one transaction.
+    claimAll: (vouchers) => send(C.drops, "claimMany", [vouchers.map((v) => ({
+      drop: BigInt(v.drop), day: v.day, coins: v.coins, deadline: BigInt(v.deadline), signature: v.signature,
+    }))]),
+    tokenBalance: (token) => (account ? read({ address: token, abi: ERC20_ABI }, "balanceOf", [account]) : 0n),
+    /// The treasury: start, top up, end and withdraw drops, and pause claims.
+    admin: {
+      async createDrop({ token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount }) {
+        const t = { address: token, abi: ERC20_ABI };
+        if ((await read(t, "allowance", [account, C.drops.address])) < amount) await send(t, "approve", [C.drops.address, amount]);
+        await send(C.drops, "createDrop", [token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount]);
+      },
+      async topUp(id, token, amount) {
+        const t = { address: token, abi: ERC20_ABI };
+        if ((await read(t, "allowance", [account, C.drops.address])) < amount) await send(t, "approve", [C.drops.address, amount]);
+        await send(C.drops, "topUp", [BigInt(id), amount]);
+      },
+      endDrop: (id) => send(C.drops, "endDrop", [BigInt(id)]),
+      withdraw: (id) => send(C.drops, "withdraw", [BigInt(id), account]),
+      setPaused: (on) => send(C.drops, "setPaused", [on]),
     },
-    withdraw: (amount) => send(C.hunt, "withdraw", [account, amount]),
-    setReward: (wei) => send(C.hunt, "setReward", [wei]),
-    stampBalance: () => (account ? read(C.stamp, "balanceOf", [account]) : 0n),
   } : null;
 
   return {
     local: dep.local,
-    hunt,
+    drops,
+    /// The $STAMP token's address (once the game is out).
+    stampAddress: C.stamp?.address ?? null,
     browserWallet,
     chainName: chain.name,
     snapshot,
