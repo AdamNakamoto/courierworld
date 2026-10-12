@@ -418,11 +418,13 @@ export async function connectChain() {
       pub.getBalance({ address: treasury }), read(T.imd, "balanceOf", [treasury]), read(C.stamp, "balanceOf", [treasury]),
       market().catch(() => null),
     ]);
+    // The launchpad's 4% on every launched token's trades, waiting in its pools (null before it's deployed).
+    const [padFees, padFeeRecipient] = P ? await Promise.all([read(P.pad, "pendingProtocolFees", [T.imd.address]), read(P.pad, "feeRecipient")]) : [null, null];
     const nextHalving = (curBlock / interval + 1n) * interval;
     return {
       feeRecipient, treasury, pendingFees, minted, supply, burned, emitted, totalPower, reward, market: mkt,
       halvingIn: Number(((nextHalving - curBlock) * blockTimeMs) / 1000n), royaltyBps: Number(royalty[1]), royaltyTo: royalty[0],
-      treasuryEth: tEth, treasuryImd: tImd, treasuryStamp: tStamp,
+      treasuryEth: tEth, treasuryImd: tImd, treasuryStamp: tStamp, padFees, padFeeRecipient,
     };
   }
 
@@ -704,6 +706,8 @@ export async function connectChain() {
       stats: adminStats,
       /// Send the trading fees waiting in the pool to the fee wallet (anyone may; it always pays the fee wallet).
       collectFees: () => send(T.hook, "collectProtocolFees", [T.imd.address]),
+      /// The same for the launchpad's pools (every launched token): always paid to the launchpad's fee recipient.
+      collectPadFees: () => send(P.pad, "collectProtocolFees", [T.imd.address]),
       /// Hand the fee wallet to another address. Only the current fee wallet can.
       async setFeeWallet(to) {
         await send(T.hook, "setFeeRecipient", [to]);

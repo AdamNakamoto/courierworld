@@ -222,8 +222,10 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       const days = Math.floor(a.halvingIn / 86400), hours = Math.floor((a.halvingIn % 86400) / 3600);
       const link = (addr) => (s.explorer ? `<a href="${s.explorer}/address/${addr}" target="_blank" rel="noopener">${short(addr)}</a>` : short(addr));
       html += `<section class="admin"><h3>Admin <span class="muted">your wallet runs the treasury</span></h3>
-        <div class="pending"><b>${fmt(a.pendingFees, 4)}</b><span>IMD in trading fees${usd(m ? fees * m.imdUsd : 0)}</span></div>
-        <button class="pbtn primary wide" data-act="collectFees" ${a.pendingFees === 0n || busy ? "disabled" : ""}>Collect fees to ${short(a.feeRecipient)}</button>
+        <div class="pending"><b>${fmt(a.pendingFees, 4)}</b><span>IMD in $STAMP trading fees${usd(m ? fees * m.imdUsd : 0)}</span></div>
+        <button class="pbtn primary wide" data-act="collectFees" ${a.pendingFees === 0n || busy ? "disabled" : ""}>Collect $STAMP fees to ${short(a.feeRecipient)}</button>
+        ${a.padFees != null ? `<div class="pending"><b>${fmt(a.padFees, 4)}</b><span>IMD in launchpad trading fees${usd(m ? Number(formatEther(a.padFees)) * m.imdUsd : 0)}</span></div>
+        <button class="pbtn primary wide" data-act="collectPadFees" ${a.padFees === 0n || busy ? "disabled" : ""}>Collect launchpad fees to ${short(a.padFeeRecipient)}</button>` : ""}
         <h4>Treasury · ${link(a.treasury)}</h4>
         <div class="kv"><span>ETH</span><b>${fmt(a.treasuryEth, 4)}</b></div>
         <div class="kv"><span>IMD</span><b>${fmt(a.treasuryImd, 2)}</b></div>
@@ -514,6 +516,10 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         if (invite && !isAddress(invite)) return toast("That invite address isn't valid.", "error");
         return run("Opening your post office", () => chain.openOffice(snap, invite || ZERO));
       case "claim": return run("Collecting $STAMP", () => chain.claim());
+      case "collectPadFees": return run("Collecting launchpad fees", async () => {
+        await chain.admin.collectPadFees();
+        adminAt = 0;
+      });
       case "collectFees": return run("Collecting trading fees", async () => {
         await chain.admin.collectFees();
         adminAt = 0;
