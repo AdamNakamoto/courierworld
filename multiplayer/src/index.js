@@ -575,18 +575,32 @@ async function padImage(req, env, url) {
   return corsJson({ url: `${url.origin}/pad/image/${hash}` });
 }
 
+const polled = new Map(); // "/count" or "/names" -> { at, body }: what the room last said, kept a few seconds
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     if (url.pathname.startsWith("/pad/image")) return padImage(req, env, url);
     const room = env.PLANET.get(env.PLANET.idFromName("planet"));
-    if (url.pathname === "/count") {
-      const r = await room.fetch("https://room/count");
-      return new Response(r.body, { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "max-age=10" } });
-    }
-    if (url.pathname === "/names") {
-      const r = await room.fetch("https://room/names");
-      return new Response(r.body, { headers: { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "max-age=20" } });
+    // The online count and the names are polled by every open game: kept a little while at Cloudflare's edge, so
+    // the polls share one request to the room instead of each costing one (the free plan caps the room's
+    // requests a day).
+    if (url.pathname === "/count" || url.pathname === "/names") {
+      const ttl = url.pathname === "/count" ? 15 : 30;
+      const headers = { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": `public, max-age=${ttl}` };
+      // In this Worker's memory first (it serves many requests), then Cloudflare's cache, then the room.
+      const kept = polled.get(url.pathname);
+      if (kept && Date.now() - kept.at < ttl * 1000) return new Response(kept.body, { headers });
+      const key = new Request(`${url.origin}${url.pathname}`), cache = caches.default;
+      const hit = await cache.match(key).catch(() => null);
+      if (hit) return hit;
+      const r = await room.fetch(`https://room${url.pathname}`);
+      const body = await r.text();
+      if (r.ok) {
+        polled.set(url.pathname, { at: Date.now(), body });
+        await cache.put(key, new Response(body, { headers })).catch(() => {});
+      }
+      return new Response(body, { status: r.status, headers });
     }
     if (url.pathname === "/ws") {
       if (!ORIGINS.some((re) => re.test(req.headers.get("Origin") || ""))) return new Response("Not allowed", { status: 403 });

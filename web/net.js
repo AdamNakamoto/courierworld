@@ -14,7 +14,7 @@ export const EMOTES = [
   { e: "😊" }, { e: "👋", t: "Hey!" }, { e: "🔥", t: "LFG!" }, { e: "🎉", t: "Have fun!" }, { e: "😂" },
   { e: "❤️" }, { e: "👍", t: "GG!" }, { e: "☀️", t: "gm!" }, { e: "🙏", t: "Thanks!" }, { e: "📮", t: "Follow me!" },
 ];
-const SEND_EVERY = 0.15; // seconds between position updates while you move
+const SEND_EVERY = 0.25; // seconds between position updates while you move (each is a request to the room)
 const SEEN = 22; // how far away (in metres) other couriers are drawn
 
 const ENUMS = {
@@ -503,10 +503,11 @@ export function createNet(W, {
           while (grabs.length) send(["grab", grabs.shift()]);
         }
       }
-      // Everyone else eases toward where they last said they were.
+      // Everyone else eases toward where they last said they were (gently enough to fill the quarter second
+      // between their updates, so they glide instead of moving and stopping).
       for (const p of players.values()) {
         if (!p.target) continue;
-        const k = 1 - Math.exp(-dt * 10);
+        const k = 1 - Math.exp(-dt * 6);
         let moved = 0;
         if (!p.placed || arc(p.pos, p.target.p) > 6) {
           p.pos.copy(p.target.p);
@@ -517,10 +518,10 @@ export function createNet(W, {
           const before = p.pos.clone();
           p.pos.lerp(p.target.p, k).normalize();
           moved = arc(before, p.pos);
-          p.fwd.lerp(p.target.f, 1 - Math.exp(-dt * 12));
-          p.h += (p.target.h - p.h) * (1 - Math.exp(-dt * 14));
+          p.fwd.lerp(p.target.f, 1 - Math.exp(-dt * 8));
+          p.h += (p.target.h - p.h) * (1 - Math.exp(-dt * 9));
         }
-        p.air = p.target.air;
+        p.air += (p.target.air - p.air) * (1 - Math.exp(-dt * 12)); // (jumps arc instead of stepping)
         p.spd += (p.target.spd - p.spd) * k;
         p.swim += (p.target.swim - p.swim) * k;
         p.root.visible = all || arc(p.pos, mePos) < SEEN;
