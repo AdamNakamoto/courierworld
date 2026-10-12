@@ -377,8 +377,9 @@ edge the audit listed) and the fork test.
 
 ## 12. New: the launchpad (CourierPad, PadToken)
 
-`contracts/src/CourierPad.sol` and `contracts/src/PadToken.sol` (not deployed yet). Players launch their own
-tokens inside the game.
+`contracts/src/CourierPad.sol` and `contracts/src/PadToken.sol`, live since 2026-10-13 at
+`0x90c3aaae34cf4681701452379D3819D6Bc8Fe8CC` (deployed from `7324e0a`, after the fixes below; source verified on
+Sourcify). Players launch their own tokens inside the game.
 
 - `launch(name, symbol, metadata, maxStampFee, expectedStartTick)` / `launchWithPermit(..., deadline, v, r, s)`:
   needs an open post office (`PostOffice.offices(msg.sender).open`), reverts `FeeChanged(stampFee)` if the fee is

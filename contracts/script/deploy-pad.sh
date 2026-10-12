@@ -5,6 +5,8 @@
 #   ./script/deploy-pad.sh --broadcast --browser --browser-disable-open     # deploy, signing in your browser wallet
 #
 # Sign with the wallet that should own the launchpad (it can change the $STAMP fee and the start price).
+# RPC_URL picks the RPC (default: foundry.toml's "robinhood"); finding the hook's address takes a while, so it
+# needs one that keeps a few minutes of state.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
@@ -26,8 +28,8 @@ if [ "$BROADCAST" = 1 ]; then
   grep -E '^(FEE_RECIPIENT|TREASURY|PAD_[A-Z_]+)=' launch.env | sed 's/^/  /'
   read -r -p "Type DEPLOY to continue: " ok
   [ "$ok" = "DEPLOY" ] || { echo "Cancelled."; exit 1; }
-  forge script script/DeployCourierPad.s.sol --rpc-url robinhood "$@"
+  forge script script/DeployCourierPad.s.sol --rpc-url "${RPC_URL:-robinhood}" "$@"
   ./script/export-web.sh
 else
-  forge script script/DeployCourierPad.s.sol --fork-url robinhood "$@"
+  forge script script/DeployCourierPad.s.sol --fork-url "${RPC_URL:-robinhood}" "$@"
 fi
