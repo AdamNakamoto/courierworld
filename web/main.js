@@ -3,7 +3,7 @@ import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
-import { SKINS } from "./skins.js";
+import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { createNet, EMOTES } from "./net.js";
 import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
@@ -709,8 +709,9 @@ function steerCamera(dt) {
 
 let mode = "title"; // title | intro | play
 let intro = null;
-$("begin").addEventListener("click", async () => {
-  if (mode !== "title") return;
+/// Leave the title for the planet (logging in first on a real chain). True if the game started.
+async function begin() {
+  if (mode !== "title") return false;
   // First, while the click still counts as permission to play sound.
   music.start();
   sounds.start();
@@ -718,17 +719,30 @@ $("begin").addEventListener("click", async () => {
   const chain = await chainReady;
   if (chain && chain.browserWallet && !chain.account) {
     try {
-      if (!(await chain.login())) return;
+      if (!(await chain.login())) return false;
     } catch (e) {
       toast(explain(e), "error");
-      return;
+      return false;
     }
     office?.refresh();
   }
   mode = "intro";
   intro = { k: 0, from: world.quaternion.clone() };
   $("title").classList.add("gone");
+  return true;
+}
+$("begin").addEventListener("click", begin);
+// The skins mint, from the title (into the game, then the mint) or the corner of the screen.
+$("skinMint").addEventListener("click", async () => {
+  if (await begin()) office?.showSkins();
 });
+$("skinMintHud").addEventListener("click", () => office?.showSkins());
+/// Show the mint buttons only while the skins sale is on.
+function skinButtons(s) {
+  const on = !!s?.skins?.saleOpen && s.skins.minted < SKIN_SUPPLY;
+  $("skinMint").hidden = !on;
+  $("skinMintHud").hidden = !on;
+}
 
 // ---------------------------------------------------------------- loop
 
@@ -1122,7 +1136,10 @@ const chainReady = connectChain()
         },
         voucher: () => net.voucher(),
       } : null,
-      onSnapshot: autoAvatar,
+      onSnapshot(s) {
+        autoAvatar(s);
+        skinButtons(s);
+      },
       wearing: () => skinWorn?.id ?? null,
       onWearSkin(m) {
         if (!m) {

@@ -487,6 +487,13 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       lastHtml = lastMore = "";
       draw(true);
     },
+    /// Open the panel at the Courier Skins mint.
+    showSkins() {
+      panel.hidden = false;
+      lastHtml = lastMore = "";
+      draw(true);
+      panel.querySelector("section.skins")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
     get snap() { return snap; },
     /// The hunt changed (signed in, a find, a new day): redraw.
     huntChanged() {
