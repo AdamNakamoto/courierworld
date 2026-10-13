@@ -2,13 +2,12 @@
   "about": "Ads on the Orb. Only what's listed here shows, so add an ad only once it's paid and approved. image: a picture in web/orb/ (\"orb/name.png\"), square (it's shown as a circle filling the globe's face; round logos fit best), PNG/JPG/WebP; url (website) and/or chart: https links, at least one; text: up to 140 characters; color: the rest of the globe (\"#rrggbb\"; if left out, the picture's edge colour); from/until: when it runs (UTC). The running ad also shows on two of Times Square's big screens.",
   "ads": [
     {
-      "name": "PEPES",
-      "image": "orb/pepes.png",
-      "url": "https://pepesfamily-f765.sites.imd.fun/",
-      "chart": "https://dexscreener.com/robinhood/0xa6ac374bf40898004f0f4cf46389d4fc2735fe413c95379a5b2e1fdce089ec18",
-      "text": "Launch and Pair everything with $IMD on Ethereum and Robinhood",
-      "color": "#ffffff",
-      "from": "2026-10-12"
+      "name": "BLUBERRINI",
+      "image": "orb/bluberrini.png",
+      "url": "https://x.com/yzj29/status/2109740102285205522",
+      "chart": "https://dexscreener.com/robinhood/0x8b5452a441f4d720b430ac1ba1329c8ed2c7fade",
+      "text": "I’m the top 1 post office holder!",
+      "from": "2026-10-13"
     }
   ]
 }
