@@ -52,7 +52,7 @@ const ERROR_TEXT = {
   ZeroPrice: "The price can't be zero.",
   // The treasure hunt (TokenDrops)
   NoOffice: "Open a post office first: only post office owners can claim treasure.",
-  NothingToClaim: "Nothing new to claim: find more golden stamps or coins first.",
+  NothingToClaim: "Nothing to claim right now: the day's coins may all be claimed already (each day pays a set number across everyone), or you've had a wallet's most for the day. New coins come out at 00:00 UTC.",
   IsPaused: "Treasure claims are paused right now. Your finds stay claimable until the day after.",
   TooLate: "Those finds are too old to claim: claim by the end of the next day (UTC).",
   NotRunning: "That drop isn't running.",
@@ -584,6 +584,13 @@ export async function connectChain() {
     },
     /// What a find count would pay now: [coins, amount].
     claimable: (id, day, coins) => (account ? read(C.drops, "claimable", [BigInt(id), account, day, coins]) : [0, 0n]),
+    /// A drop's day: the coins paid that day across everyone and its cap, and yours and a wallet's most.
+    async dayOf(id, day) {
+      const [d, paid, mine] = await Promise.all([
+        dropOf(id), read(C.drops, "paidCoins", [BigInt(id), day]), account ? read(C.drops, "claimed", [BigInt(id), day, account]) : 0,
+      ]);
+      return { ...d, paid: Number(paid), mine: Number(mine) };
+    },
     /// Sign the hunt's sign-in message with the logged-in wallet (proves it's theirs; no transaction).
     sign: (message) => wallet.signMessage({ account, message }),
     /// Claim every voucher from the multiplayer server in one transaction.

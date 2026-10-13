@@ -113,6 +113,17 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     return out;
   }
 
+  /// Why your finds (the room's vouchers) would pay nothing now, in words.
+  async function nothingToClaim(vouchers) {
+    for (const v of vouchers) {
+      const d = await chain.drops.dayOf(v.drop, v.day), when = v.day === huntDay() ? "today" : "yesterday";
+      if (d.left < d.perCoin) return `The $${d.symbol} drop has paid out all its tokens.`;
+      if (d.mine >= d.maxPerWallet) return `You've claimed ${when}'s ${d.maxPerWallet} $${d.symbol} coins, the most a wallet gets a day. More come out at 00:00 UTC.`;
+      if (d.paid >= Number(d.dailyCoins)) return `All ${d.dailyCoins} of ${when}'s $${d.symbol} coins have been claimed: each day pays a set number across everyone, first come first served. New coins come out at 00:00 UTC: claim soon after you find them.`;
+    }
+    return vouchers.length ? "Nothing new to claim: find more golden stamps or coins first." : "Nothing to claim yet: find golden stamps or coins first.";
+  }
+
   async function run(label, fn) {
     if (busy) return;
     busy = label;
@@ -287,8 +298,10 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
       html += `<div class="kv"><span>★ Golden stamps${golden ? ` · ${fmt(golden.perCoin, 0)} $STAMP each` : " · just for fun today"}</span><b>${st ? `${st.found.length}/${HUNT_STAMPS}` : "–"}</b></div>`;
       for (const d of coins) {
-        const left = d.perCoin ? d.left / d.perCoin : 0n;
-        html += `<div class="kv"><span>🪙 $${esc(d.symbol)} coins · ${fmt(d.perCoin, 0)} each${left < 1n ? " · all paid out" : ""}</span><b>${st ? `${st.coins?.[d.id]?.length ?? 0}/${d.spots}` : `${d.spots} out`}</b></div>`;
+        const left = d.perCoin ? d.left / d.perCoin : 0n, paid = Number(d.paid ?? 0), daily = Number(d.dailyCoins);
+        html += `<div class="kv"><span>🪙 $${esc(d.symbol)} coins · ${fmt(d.perCoin, 0)} each${left < 1n ? " · all paid out" : ` · ${paid}/${daily} claimed today`}</span><b>${st ? `${st.coins?.[d.id]?.length ?? 0}/${d.spots}` : `${d.spots} out`}</b></div>`;
+        // Each day pays a set number of coins across everyone, first come first served.
+        if (left >= 1n && paid >= daily) html += `<p class="note">Today's $${esc(d.symbol)} coins are all claimed. New coins come out at 00:00 UTC: claim soon after you find them.</p>`;
       }
       if (!coins.length && !golden) html += `<p class="note">No paid drops today: golden stamps are just for fun until the treasury runs a drop.</p>`;
       if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get paid for the golden stamps and coins you find.</p>`;
@@ -540,7 +553,12 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         huntAt = 0;
       });
       case "huntClaim": return run("Claiming treasure", async () => {
-        await chain.drops.claimAll(await hunt.vouchers());
+        // Only ask the wallet for claims that pay: otherwise say why, rather than send a transaction that fails.
+        const vouchers = await hunt.vouchers();
+        const paying = [];
+        for (const v of vouchers) if ((await chain.drops.claimable(v.drop, v.day, v.coins))[1] > 0n) paying.push(v);
+        if (!paying.length) throw new Error(await nothingToClaim(vouchers));
+        await chain.drops.claimAll(paying);
         huntAt = 0;
       });
       case "dropCreate": {
