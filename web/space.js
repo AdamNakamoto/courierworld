@@ -95,9 +95,9 @@ export function postBox(mesh, label) {
   return g;
 }
 
-/// The locals on a world of radius `R` (moon frogs, Martians): `add` each one once it's built and placed ({ g, body,
-/// eyes, tips }: the group, the part that turns and hops, the eyes that blink, the bits that glow), with where it
-/// stands, its name and what it says.
+/// The locals on a world of radius `R` (moon frogs, Martians, astronauts): `add` each one once it's built and placed
+/// ({ g, body, eyes, tips, tick? }: the group, the part that turns and hops, the eyes that blink, the bits that glow,
+/// and anything else it does each frame), with where it stands, its name and what it says.
 export function createLocals(R) {
   const all = [];
   const arcOn = (a, b) => R * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
@@ -135,6 +135,7 @@ export function createLocals(R) {
         const shut = (t + f.ph) % 4.3 < 0.14;
         for (const e of f.eyes) e.scale.y = shut ? 0.12 : 1;
         for (const tp of f.tips) tp.scale.setScalar(1 + 0.3 * Math.sin(t * 4 + f.ph));
+        f.tick?.(dt, t); // (anything else it does, like an astronaut's idle sway)
       }
     },
   };

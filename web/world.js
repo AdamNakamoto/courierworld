@@ -136,7 +136,7 @@ export function texFromCanvas(c) {
 }
 
 /// Accumulates many meshes into one vertex-coloured geometry.
-class Batch {
+export class Batch {
   constructor() { this.pos = []; this.nrm = []; this.col = []; this.sway = []; this.idx = []; this.n = 0; }
   /// leafy: the mesh sways in the wind, the more the higher it is off the ground.
   add(geo, matrix, color, leafy = false) {

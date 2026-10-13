@@ -123,9 +123,10 @@ drops need the launchpad: `./dev.sh --fork`). `StampHunt.sol`, the $STAMP-only v
 
 The neon district's rocket flies couriers to two small worlds, each built the first time someone goes: the moon
 (`web/moon.js`, rules in `web/moon-pick.js`: radius 12 m, gravity 0.35 of the planet's, craters, the moon frogs and
-their base, a saucer) and Mars (`web/mars.js`, rules in `web/mars-pick.js`: radius 16 m, gravity 0.55, dunes, a
-winding canyon, a sleeping volcano, an ice cap, the colony, seven Martians, a rover to drive, and a dust storm every
-seven minutes, the same for everyone). `web/trips.js` holds both trips' tickets and stamps in one table, shared by the
+their base, a saucer) and Mars (`web/mars.js`, rules in `web/mars-pick.js`: as big as the planet, radius 34 m, gravity 0.55; the spaceport;
+Mars City with a walk-in plaza dome, greenhouses, homes, tubes, pools, farms and a ring road; red mountains; a canyon,
+a sleeping volcano and an ice cap; seven Martians and thirteen astronauts; a rover to drive; and a dust storm every
+seven minutes, the same for everyone). Mars's static scenery is merged into one mesh as it's built. `web/trips.js` holds both trips' tickets and stamps in one table, shared by the
 game and the server; `web/space.js` holds what both worlds share (the pad and rocket, the post box, the locals, the
 day's stamps). Each world's group sits so its top is where the planet's is, so the sun, the shadows and the camera work
 unchanged; `main.js` walks on whichever world you're on (its radius, centre, ground, obstacles and gravity) and turns

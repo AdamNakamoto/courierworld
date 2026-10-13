@@ -1664,11 +1664,11 @@ let rocketHinted = false, flying = false, leftFrom = null, stormSaid = false;
 let tripPick = "moon"; // the trip the card at the rocket shows
 const TRIP_TEXT = {
   moon: () => `Low gravity, craters, and Courier World hanging in a black sky. The moon frogs have letters waiting at the Moon Post box, and ${TRIPS.moon.stamps} golden moon stamps a day count with your golden stamps. A ticket is ${TRIPS.moon.priceText} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`,
-  mars: () => `A red world with a winding canyon, a sleeping volcano, an ice cap and dust storms. The Martians have letters waiting at the Mars Post box, and a rover you can drive. ${TRIPS.mars.stamps} golden Mars stamps a day count with your golden stamps. A ticket is ${TRIPS.mars.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
+  mars: () => `A red world as big as ours: Mars City's glass domes by the spaceport, red mountains beyond, a canyon, a sleeping volcano, an ice cap and dust storms. Twenty Martians and astronauts have letters waiting at the Mars Post box, and there's a rover to drive. ${TRIPS.mars.stamps} golden Mars stamps a day count with your golden stamps. A ticket is ${TRIPS.mars.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
 };
 const WELCOME = {
   moon: () => `🌙 Welcome to the moon! Gravity is low, so jump. Moon mail is waiting in the Moon Post box, ${TRIPS.moon.stamps} golden moon stamps are out today, and the rocket flies you home.`,
-  mars: () => `🔴 Welcome to Mars! Letters for the Martians are in the Mars Post box, Pip's rover is at the colony garage (E to drive), and ${TRIPS.mars.stamps} golden Mars stamps are out today. Mind the dust storms.`,
+  mars: () => `🔴 Welcome to Mars! Mars City is just ahead, letters for its Martians and astronauts are in the Mars Post box, Pip's rover is in the garage (E to drive), and ${TRIPS.mars.stamps} golden Mars stamps are out today. Mind the dust storms.`,
 };
 const EMOJI = { moon: "🌙", mars: "🔴" };
 const NOUN = { moon: "Moon", mars: "Mars" };
