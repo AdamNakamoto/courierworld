@@ -5,6 +5,11 @@ export const HUNT_STAMPS = 24;
 
 /// The hunt's day number: days since 1 January 1970, UTC (the contract's `today()`).
 export const huntDay = (ms = Date.now()) => Math.floor(ms / 86_400_000);
+/// How long until the next day's spots come out (00:00 UTC), as "3h 12m" (or "12m", or "under a minute").
+export function newSpotsIn(ms = Date.now()) {
+  const mins = Math.floor(((huntDay(ms) + 1) * 86_400_000 - ms) / 60_000), h = Math.floor(mins / 60);
+  return mins < 1 ? "under a minute" : h ? `${h}h ${mins % 60}m` : `${mins}m`;
+}
 
 /// All `total` spots for `day`, in a shuffle that's the same everywhere: the golden stamps are the first
 /// HUNT_STAMPS, and the drops' coins (drop-pick.js) take the ones after.

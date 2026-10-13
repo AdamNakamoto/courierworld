@@ -1,7 +1,7 @@
 // The Post Office panel: open an office, mint couriers, put them on duty, train
 // them, collect $STAMP. Re-rendered every second from the chain snapshot.
 import { formatEther, isAddress, parseEther } from "https://esm.sh/viem@2";
-import { huntDay, HUNT_STAMPS } from "./hunt-pick.js";
+import { huntDay, newSpotsIn, HUNT_STAMPS } from "./hunt-pick.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { renderStamp } from "./portrait.js";
@@ -296,12 +296,20 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       const golden = h.running.find((d) => d.isStamp), coins = h.running.filter((d) => !d.isStamp);
       const total = h.running.reduce((m, d) => (d.pay ? m.set(d.symbol, (m.get(d.symbol) ?? 0n) + d.pay) : m), new Map());
       html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
+      if (coins.some((d) => d.left >= d.perCoin)) html += `<p class="on">🪙 The hunt is on! New coins in ${newSpotsIn()}</p>`;
       html += `<div class="kv"><span>★ Golden stamps${golden ? ` · ${fmt(golden.perCoin, 0)} $STAMP each` : " · just for fun today"}</span><b>${st ? `${st.found.length}/${HUNT_STAMPS}` : "–"}</b></div>`;
+      // Each coin drop: what you've found of today's coins, what they pay, how many of the day's are left to claim
+      // (each day pays a set number across everyone, first come first served), and how far through the drop it is.
       for (const d of coins) {
-        const left = d.perCoin ? d.left / d.perCoin : 0n, paid = Number(d.paid ?? 0), daily = Number(d.dailyCoins);
-        html += `<div class="kv"><span>🪙 $${esc(d.symbol)} coins · ${fmt(d.perCoin, 0)} each${left < 1n ? " · all paid out" : ` · ${paid}/${daily} claimed today`}</span><b>${st ? `${st.coins?.[d.id]?.length ?? 0}/${d.spots}` : `${d.spots} out`}</b></div>`;
-        // Each day pays a set number of coins across everyone, first come first served.
-        if (left >= 1n && paid >= daily) html += `<p class="note">Today's $${esc(d.symbol)} coins are all claimed. New coins come out at 00:00 UTC: claim soon after you find them.</p>`;
+        const sym = `$${esc(d.symbol)}`, daily = Number(d.dailyCoins), open = Math.max(0, daily - Number(d.paid ?? 0));
+        html += `<div class="drop-card"><div class="kv"><span>🪙 <b>${sym} coins</b></span><b>${st ? `${st.coins?.[d.id]?.length ?? 0}/${d.spots} found` : `${d.spots} out today`}</b></div>
+          <p class="note">${fmt(d.perCoin, 0)} ${sym} a coin · up to ${d.maxPerWallet} a wallet a day</p>`;
+        if (d.left < d.perCoin) html += `<p class="note">All paid out.</p>`;
+        else {
+          html += `<div class="hunt-bar"><i style="width:${((100 * open) / Math.max(1, daily)).toFixed(1)}%"></i><span>${open} of ${daily} left to claim today</span></div>`;
+          if (!open) html += `<p class="note">Today's coins are all claimed. New ones come out at 00:00 UTC: claim soon after you find them.</p>`;
+        }
+        html += `<p class="note">Day ${h.day - d.startDay + 1} of ${d.endDay - d.startDay + 1} · ${compact(d.left)} ${sym} left in the drop</p></div>`;
       }
       if (!coins.length && !golden) html += `<p class="note">No paid drops today: golden stamps are just for fun until the treasury runs a drop.</p>`;
       if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get paid for the golden stamps and coins you find.</p>`;

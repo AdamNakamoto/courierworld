@@ -57,6 +57,12 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .office .note a { color: var(--ink); }
 .office .admin { background: #fff6d6; }
 .office .hunt .admin-hunt { margin-top: 10px; padding-top: 8px; border-top: 1.5px dashed #d8d2c2; }
+.office .hunt .on { margin: 0 0 6px; font: 400 15px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; color: #b8860b; }
+.office .hunt .drop-card { margin: 6px 0 8px; padding: 7px 10px; border: 2px solid var(--ink); border-radius: 3px; background: #fff8dc; }
+.office .hunt .drop-card .note { margin: 2px 0; }
+.hunt-bar { position: relative; height: 22px; margin: 6px 0 4px; border: 2px solid var(--ink); border-radius: 3px; background: #ece4cc; overflow: hidden; }
+.hunt-bar i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--yellow); }
+.hunt-bar span { position: relative; display: block; text-align: center; font: 400 12px/18px Bungee, Impact, sans-serif; letter-spacing: .03em; }
 .office .hunt h4 { margin: 0 0 6px; font: 400 13px/1.2 Bungee, Impact, sans-serif; letter-spacing: .04em; }
 .office .hunt .row2 { display: flex; gap: 6px; margin: 6px 0 8px; }
 .office .hunt .row2 .pbtn { flex: 1; }
@@ -89,6 +95,20 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 /* ---------------------------------------------------------------- HUD */
 
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+/* While a token drop is on, the treasure hunt's running line goes across the top and the rest moves down for it. */
+body.ticking #hud { top: 30px; }
+body.ticking .office, body.ticking #toasts { top: 94px; }
+.hunt-ticker {
+  position: absolute; top: -30px; left: 0; right: 0; height: 30px; overflow: hidden; cursor: pointer;
+  background: #1d1608; border-bottom: 2.5px solid var(--ink); color: #ffc23d; white-space: nowrap;
+  font: 400 14px/28px Bungee, Impact, sans-serif; letter-spacing: .05em;
+}
+.hunt-ticker .track { display: inline-flex; animation: hunt-tick var(--secs, 60s) linear infinite; }
+.hunt-ticker .track span { padding-right: 2.5em; }
+.hunt-ticker b { color: #fff3c4; font-weight: 400; }
+.hunt-ticker .hot { color: #ff7a6b; }
+@keyframes hunt-tick { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .hunt-ticker .track { animation: none; } }
 #hud > * { pointer-events: auto; }
 .bag { position: absolute; top: 14px; left: 14px; padding: 6px 14px; transform: rotate(-1deg); display: flex; align-items: center; gap: 6px; }
 .bag b { font-size: 24px; }

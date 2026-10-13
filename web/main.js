@@ -16,7 +16,7 @@ import { createPad } from "./pad.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
-import { huntDay } from "./hunt-pick.js";
+import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
@@ -255,6 +255,7 @@ const net = createNet(W, {
   // The treasure hunt: the room's view of you (signed in? what you've found today, golden stamps and coins).
   onHunt(state) {
     huntState = state;
+    paintTicker();
     if (state?.wallet) stamps.setFound(state.day, state.found, state.coins);
     office?.huntChanged();
     hud();
@@ -264,6 +265,7 @@ const net = createNet(W, {
       const list = owner === "golden" ? huntState.found : (huntState.coins[owner] ??= []);
       if (!list.includes(spot)) list.push(spot);
     }
+    paintTicker();
     office?.huntChanged();
   },
   onNope(spot, why) {
@@ -432,6 +434,7 @@ async function refreshDrops() {
     dropsDay = day;
     stamps.setDrops(day, tokens);
     W.square?.showDrops?.(tokens.filter((d) => !d.empty).map((d) => ({ symbol: d.symbol, picture: d.picture })));
+    paintTicker();
   } catch (e) {
     console.warn("drops: couldn't read today's", e);
   }
@@ -440,6 +443,51 @@ setInterval(() => {
   if (huntDay() !== dropsDay) refreshDrops();
 }, 15_000);
 setInterval(refreshDrops, 60_000);
+
+// The treasure hunt's running line across the top while a token drop is on: the coins out today (and how many you've
+// found), how many are left to claim today, what they pay, and when the next ones come out. Tap it for the panel.
+const ticker = $("huntTicker"), tickerTrack = ticker.querySelector(".track");
+let tickerLine = "", tickerNext = null;
+const tickEsc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const tickNum = (wei, compact = false) =>
+  new Intl.NumberFormat("en-US", compact ? { notation: "compact", maximumFractionDigits: 2 } : { maximumFractionDigits: 0 }).format(Number(wei) / 1e18);
+function paintTicker() {
+  const live = droppingToday.filter((d) => !d.empty && dropsDay === huntDay());
+  const on = live.length > 0;
+  document.body.classList.toggle("ticking", on);
+  ticker.hidden = !on;
+  if (!on) return;
+  const parts = [];
+  for (const d of live) {
+    const sym = `$${tickEsc(d.symbol)}`, daily = Number(d.dailyCoins), left = Math.max(0, daily - Number(d.paid ?? 0));
+    const mine = huntState?.wallet && huntState.day === dropsDay ? huntState.coins?.[d.id]?.length ?? 0 : null;
+    parts.push(`🪙 THE ${sym} TREASURE HUNT IS ON`);
+    parts.push(`<b>${d.spots}</b> ${sym} COINS HIDDEN ROUND THE PLANET TODAY${mine !== null ? ` · YOU'VE FOUND <b>${mine}</b>` : ""}`);
+    parts.push(left > 0 ? `<b>${left} OF ${daily}</b> COINS LEFT TO CLAIM TODAY · FIRST COME, FIRST SERVED`
+      : `<span class="hot">TODAY'S ${daily} COINS ARE ALL CLAIMED</span>`);
+    parts.push(`<b>${tickNum(d.perCoin)}</b> ${sym} A COIN · UP TO ${d.maxPerWallet} A WALLET A DAY`);
+    parts.push(`DAY ${dropsDay - d.startDay + 1} OF ${d.endDay - d.startDay + 1} · ${tickNum(d.left, true)} ${sym} LEFT IN THE DROP`);
+  }
+  parts.push(`NEW COINS IN <b>${newSpotsIn().toUpperCase()}</b> (00:00 UTC)`);
+  parts.push("OPEN A POST OFFICE TO REDEEM · PRESS P");
+  let line = parts.join(" ★ ") + " ★";
+  // Long enough to fill a wide screen, so the two copies run round without a gap; about 80 px a second.
+  const chars = line.replace(/<[^>]+>/g, "").length;
+  line = Array(Math.max(1, Math.ceil(240 / chars))).fill(line).join(" ");
+  if (line === tickerLine || line === tickerNext) return;
+  // A new line takes over where the old one comes round again, so it never jumps mid-sentence.
+  if (!tickerLine) setTicker(line);
+  else tickerNext = line;
+}
+function setTicker(line) {
+  tickerLine = line;
+  tickerNext = null;
+  for (const s of tickerTrack.children) s.innerHTML = line;
+  tickerTrack.style.setProperty("--secs", `${Math.round(line.replace(/<[^>]+>/g, "").length * 0.13)}s`);
+}
+tickerTrack.addEventListener("animationiteration", () => tickerNext && setTicker(tickerNext));
+ticker.addEventListener("click", () => office && showOffice(true));
+setInterval(paintTicker, 30_000);
 
 // ---------------------------------------------------------------- envelope markers
 
