@@ -150,26 +150,14 @@ Signing in to the hunt also gives the browser a token (`["hunttoken"]`, kept for
 picks the hunt up again (`["resume"]`) without another signature. For local testing, `MOON_DEV=1` in
 `multiplayer/.dev.vars` makes the room accept any ticket; never set it in production.
 
-## MOON letters
+## MOON (retired)
 
-MOON is the game's play-to-earn currency, deployed by the IMD swarm (explorer.imd.fun/jobs/ee210497-4d31-4153-9cc8-ca23b7898f70):
-the MOON token, `MoonRewards` (a permanent reward pool: nothing leaves it but verified mission claims, capped at 20,000
-MOON a wallet and 1,000,000 MOON for everyone per UTC day, and only to wallets with an open post office) and `MoonShop`
-(companions for MOON, half burned and half recycled into the pool). Addresses are in
-`contracts/deployments/robinhood-moon.json` and `web/deployments/robinhood.json`.
-
-The game pays MOON for MOON letters (`web/missions.js`): a signed-in courier with an open post office picks one up at a
-MOON Missions board (by the post office, and by the landing pads on the moon and Mars) for someone on any of the three
-worlds (`["mission", world]`, checked against where the room last saw them; `["missiondrop"]` puts it back); the room
-picks someone on that world from `web/mission-spots.json` (each world's board, and every door and character on the
-planet and every local on the moon and Mars, with names, made from the game's own layout: remake it if they move) and
-remembers the letter; at the door (`["deliver"]`, checked against where they are and, on the same world, how fast
-anyone can travel) it signs an EIP-712 `MissionVoucher` (player, amount, day, nonce, deadline) for
-MoonRewards with `MOON_KEY` (a Worker secret; its address is the contract's voucher signer). Letters pay 500 MOON on
-the planet, 1,000 on the moon and 2,000 on Mars, up to 10,000 a wallet a day; the room stops handing them out at the
-contract's daily cap. The Post Office panel lists the day's vouchers (`["moonv"]`) and claims them, one transaction
-each, and gives the treasury its two buttons: deposit its MOON into the pool for good, and set the voucher signer to
-the server's address. `MOON_DEV=1` in `multiplayer/.dev.vars` also opens MOON letters locally without the live pool.
+MOON was a play-to-earn currency the IMD swarm deployed on 2026-10-13 (explorer.imd.fun/jobs/ee210497-4d31-4153-9cc8-ca23b7898f70):
+the MOON token (0x7dEEc126e0bc35b1246129f30B6D6F17a6EC9392), MoonRewards (0x55c6548125C5fe33d59950D814FCd91222E87cD6) and
+MoonShop (0x2c328E6D3aE72E5b06e10884d83B01F1b0342F85). The game paid it for MOON letters for one day; the community
+preferred $STAMP for everything, so the game dropped MOON the same day: the letters, the boards, the panel section, the
+server's code and its signing key are gone, and the treasury pauses MoonRewards. The contracts and the MOON/IMD pool stay
+on chain (contracts can't be deleted), and the MOON in MoonRewards can't be withdrawn by design.
 
 ## Courier Skins
 

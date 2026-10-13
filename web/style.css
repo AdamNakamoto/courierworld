@@ -130,16 +130,6 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 #arrow svg { display: block; }
 #target { overflow: hidden; text-overflow: ellipsis; }
 #way { flex: none; margin-left: -5px; }
-/* A MOON letter's own line, under the compass, with a gold arrow. */
-.job-bar {
-  position: absolute; top: 66px; left: 50%; transform: translateX(-50%) rotate(-.5deg);
-  padding: 4px 14px; display: flex; gap: 10px; align-items: center; white-space: nowrap; max-width: calc(100% - 28px);
-  background: #2a2340; color: #ffe9a8; font-size: 17px;
-}
-.job-bar .arrow { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: none; transition: transform .12s linear; }
-.job-bar .arrow svg { display: block; }
-#jobTarget { overflow: hidden; text-overflow: ellipsis; }
-#jobWay { flex: none; margin-left: -5px; }
 .help { position: absolute; right: 14px; bottom: 14px; padding: 4px 12px; font-size: 17px; transform: rotate(.8deg); }
 
 #joy { position: absolute; right: 22px; bottom: 60px; width: 124px; height: 124px; border: 2.5px solid var(--ink); border-radius: 50%; background: rgba(251, 248, 239, .55); touch-action: none; }
@@ -192,8 +182,6 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 @media (max-width: 640px) {
   body { font-size: 18px; }
   #compass { top: 64px; font-size: 17px; }
-  .job-bar { top: 112px; font-size: 15px; }
-  body.jobbing .online { top: 158px; }
   .help { display: none; }
   #dialog { bottom: 16px; padding: 22px 54px 14px 18px; }
   #dtext { font-size: 19px; }
@@ -427,11 +415,6 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .orb-domain { margin: 8px 0 0; font: 600 13px ui-monospace, Menlo, monospace; color: var(--muted); }
 .orb-note { margin: 8px 0 0; font-size: 14px; line-height: 1.2; color: var(--muted); }
 .trip-card .orb-tag { color: #6b4fd8; }
-.job-card .orb-tag { color: #b8860b; }
-.job-card button.pbtn { font: inherit; cursor: pointer; }
-.job-pick { display: grid; gap: 8px; margin: 0 0 10px; }
-.job-pick .pbtn { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; }
-.job-pick .pbtn b { font-weight: 400; color: #b8860b; }
 .trip-card button.pbtn { font: inherit; cursor: pointer; }
 .trip-pick { display: flex; gap: 8px; margin: 0 0 10px; }
 .trip-pick .pbtn { flex: 1; }

@@ -28,6 +28,3 @@ POST_OFFICE = "0x26D80804D0FA2F4598369E0062bFC9536d115D82"
 # The treasure hunt's payouts (TokenDrops): the room reads the running drops from it and signs vouchers for
 # finds with DROPS_KEY (a secret, set with `npx wrangler secret put DROPS_KEY`; its address is the contract's signer).
 DROPS_ADDRESS = "0xD0e785276840F7175DF12678991605042e89771C"
-# MOON missions (web/missions.js): letters that pay MOON from MoonRewards. The room signs their vouchers with MOON_KEY
-# (a secret, `npx wrangler secret put MOON_KEY`; the owner sets its address as the contract's voucher signer).
-MOON_REWARDS = "0x55c6548125C5fe33d59950D814FCd91222E87cD6"

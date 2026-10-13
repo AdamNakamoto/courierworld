@@ -9,19 +9,6 @@ import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
 import { TRIPS, TREASURY } from "./trips.js";
 
 const ERROR_TEXT = {
-  // MOON (MoonRewards, by the IMD swarm)
-  WrongDay: "That MOON voucher was for an earlier UTC day, so it can't pay any more.",
-  NonceAlreadyUsed: "That MOON letter is already claimed.",
-  PostOfficeRequired: "MOON pays couriers with an open post office. Open one first.",
-  PostOfficeUnavailable: "Couldn't check your post office. Try again.",
-  WalletDailyCapExceeded: "This wallet has claimed all the MOON it can today.",
-  GlobalDailyCapExceeded: "Today's MOON is all paid out. New letters at 00:00 UTC.",
-  NotFunded: "The MOON reward pool isn't funded yet.",
-  VoucherSignerNotConfigured: "MOON claims aren't open yet.",
-  InvalidSignature: "That voucher's signature isn't the game server's.",
-  InsufficientRewards: "The MOON reward pool has run dry.",
-  VoucherExpired: "That MOON voucher expired.",
-  EnforcedPause: "MOON claims are paused right now.",
   // Courier Skins for $STAMP (SkinsStampSale)
   Closed: "Paying in $STAMP is paused right now. You can still pay in ETH.",
   NeedsTopUp: "The $STAMP sale needs topping up. Pay in ETH for now, or try again soon.",
@@ -79,23 +66,6 @@ const V4_ABI = parseAbi([
   "error WrappedError(address target, bytes4 selector, bytes reason, bytes details)",
   "error PriceLimitAlreadyExceeded(uint160 sqrtPriceCurrentX96, uint160 sqrtPriceLimitX96)",
   "function extsload(bytes32 slot) view returns (bytes32)",
-]);
-// MoonRewards (moon.sites.imd.fun): the MOON reward pool that pays the vouchers for MOON letters.
-const MOON_ABI = parseAbi([
-  "function owner() view returns (address)",
-  "function voucherSigner() view returns (address)",
-  "function isFunded() view returns (bool)",
-  "function paused() view returns (bool)",
-  "function totalPaid() view returns (uint256)",
-  "function dailyPaid(uint256 day) view returns (uint256)",
-  "function walletDailyPaid(address player, uint256 day) view returns (uint256)",
-  "function usedNonces(uint256 nonce) view returns (bool)",
-  "function claim((address player, uint256 amount, uint256 day, uint256 nonce, uint256 deadline) voucher, bytes signature)",
-  "function fund(uint256 amount)",
-  "function setVoucherSigner(address newSigner)",
-  "error WrongDay()", "error NonceAlreadyUsed()", "error PostOfficeRequired()", "error PostOfficeUnavailable()", "error WalletDailyCapExceeded()",
-  "error GlobalDailyCapExceeded()", "error NotFunded()", "error VoucherSignerNotConfigured()", "error InvalidSignature()", "error InsufficientRewards()",
-  "error VoucherExpired()", "error EnforcedPause()", "error NotVoucherPlayer()", "error InvalidMissionAmount()", "error InexactFunding()",
 ]);
 const ERC20_ABI = parseAbi([
   "function balanceOf(address) view returns (uint256)",
@@ -652,48 +622,9 @@ export async function connectChain() {
     },
   } : null;
 
-  // MOON: MOON letters pay vouchers the multiplayer server signs (missions.js), claimed here; the treasury funds the
-  // pool and sets the server's signing address (dep.moonSigner) once.
-  const M = dep.contracts.moonRewards ? {
-    token: { address: dep.contracts.moon, abi: withErrors(ERC20_ABI) },
-    rewards: { address: dep.contracts.moonRewards, abi: [...MOON_ABI, ...errors] },
-  } : null;
-  const moon = M ? {
-    rewards: M.rewards.address,
-    serverSigner: dep.moonSigner ?? null,
-    /// The pool (funded? taking the game server's signature? paused?), what it's paid, and your MOON.
-    async status() {
-      const day = BigInt(Math.floor(Date.now() / 86_400_000));
-      const [funded, signer, paused, owner, pool, totalPaid, paidToday, balance, claimedToday] = await Promise.all([
-        read(M.rewards, "isFunded"), read(M.rewards, "voucherSigner"), read(M.rewards, "paused"), read(M.rewards, "owner"),
-        read(M.token, "balanceOf", [M.rewards.address]), read(M.rewards, "totalPaid"), read(M.rewards, "dailyPaid", [day]),
-        account ? read(M.token, "balanceOf", [account]) : 0n, account ? read(M.rewards, "walletDailyPaid", [account, day]) : 0n,
-      ]);
-      return {
-        funded, signer, paused, pool, totalPaid, paidToday, balance, claimedToday,
-        isOwner: !!account && same(owner, account), signerOk: !!dep.moonSigner && same(signer, dep.moonSigner),
-      };
-    },
-    /// Whether a voucher (by its nonce) has been claimed.
-    used: (nonce) => read(M.rewards, "usedNonces", [BigInt(nonce)]),
-    claim: (v) => send(M.rewards, "claim", [{ player: v.player, amount: BigInt(v.amount), day: BigInt(v.day), nonce: BigInt(v.nonce), deadline: BigInt(v.deadline) }, v.signature]),
-    /// The treasury: deposit all its MOON into the pool for good (approve, then fund), and set the game server's
-    /// signing address.
-    admin: {
-      async fundAll() {
-        const amount = await read(M.token, "balanceOf", [account]);
-        if (!amount) throw new Error("This wallet has no MOON to deposit.");
-        if ((await read(M.token, "allowance", [account, M.rewards.address])) < amount) await send(M.token, "approve", [M.rewards.address, amount]);
-        await send(M.rewards, "fund", [amount]);
-      },
-      setSigner: () => send(M.rewards, "setVoucherSigner", [dep.moonSigner]),
-    },
-  } : null;
-
   return {
     local: dep.local,
     drops,
-    moon,
     /// A ticket for a trip from the neon district's rocket (`key`: "moon" or "mars", see trips.js): its price in
     /// $STAMP from you to the treasury. Resolves with the transaction's hash (the multiplayer server checks it and
     /// lets you fly).

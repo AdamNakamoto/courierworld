@@ -27,10 +27,7 @@
     "skinsStamp": "0x6DB7DCdFDBCe63Dd1e960CB8cE676bd32c99bc6a",
     "pad": "0x90c3aaae34cf4681701452379D3819D6Bc8Fe8CC",
     "padRouter": "0x7F3223C32a73f2e7233f8106D3a37F959d2a2B5d",
-    "padEthRouter": "0x51E57F0BA393e720786Bd6BDCFC6324246E5B96b",
-    "moon": "0x7dEEc126e0bc35b1246129f30B6D6F17a6EC9392",
-    "moonRewards": "0x55c6548125C5fe33d59950D814FCd91222E87cD6",
-    "moonShop": "0x2c328E6D3aE72E5b06e10884d83B01F1b0342F85"
+    "padEthRouter": "0x51E57F0BA393e720786Bd6BDCFC6324246E5B96b"
   },
   "abis": {
     "stamp": [
@@ -10997,6 +10994,5 @@
     ]
   },
   "skinsBlock": 26171009,
-  "padBlock": 26178528,
-  "moonSigner": "0xDF09c862c018B741E7C8f6Ef34Eb7CAd427edD44"
+  "padBlock": 26178528
 }
