@@ -156,7 +156,7 @@ MOON was a play-to-earn currency the IMD swarm deployed on 2026-10-13 (explorer.
 the MOON token (0x7dEEc126e0bc35b1246129f30B6D6F17a6EC9392), MoonRewards (0x55c6548125C5fe33d59950D814FCd91222E87cD6) and
 MoonShop (0x2c328E6D3aE72E5b06e10884d83B01F1b0342F85). The game paid it for MOON letters for one day; the community
 preferred $STAMP for everything, so the game dropped MOON the same day: the letters, the boards, the panel section, the
-server's code and its signing key are gone, and the treasury pauses MoonRewards. The contracts and the MOON/IMD pool stay
+server's code and its signing key are gone, and the treasury paused MoonRewards (tx 0x70e244a6…7655). The contracts and the MOON/IMD pool stay
 on chain (contracts can't be deleted), and the MOON in MoonRewards can't be withdrawn by design.
 
 ## Courier Skins
