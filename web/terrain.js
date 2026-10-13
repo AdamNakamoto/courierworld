@@ -303,10 +303,17 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
     for (const p of plates) if (onPlate(p, d)) hs.push(p.h);
     return hs;
   }
-  /// The highest thing you can stand on here from height y (anything up to `reach` above it).
-  function surfaceAt(d, y, reach = STEP) {
+  /// The highest thing you can stand on here from height y (anything up to `reach` above it; stairs up to `climb`
+  /// more, for however far up them you've come since you last stood on them).
+  function surfaceAt(d, y, reach = STEP, climb = 0) {
     let best = -Infinity;
     for (const h of heightsAt(d)) if (h <= y + reach && h > best) best = h;
+    if (climb > 0) {
+      for (const r of ramps) {
+        const h = inRamp(r, d);
+        if (h !== null && h <= y + reach + climb && h > best) best = h;
+      }
+    }
     return best === -Infinity ? baseAt(d) : best;
   }
 

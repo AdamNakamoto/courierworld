@@ -747,12 +747,21 @@ function localPos() {
   return UP.clone().applyQuaternion(playerQ.clone().invert());
 }
 /// Whether an obstacle stops you at height y here (railings only up on the deck, cliffs only below
-/// their top, and never on the stairs cut into them).
-const solidAt = (o, p, y) => !((o.y1 !== undefined && y >= o.y1) || (o.y0 !== undefined && y < o.y0) || (o.except && W.terrain.inRamp(o.except, p, 0.2) !== null));
-/// Push a spot on the planet (a unit vector) out of anything solid at height y, so you slide along walls.
-function pushOut(p, y = bodyY) {
+/// their top, and never on the stairs cut into them). The blocks under a staircase only keep things from
+/// being put there: what keeps you out from under it is in pushOut.
+const solidAt = (o, p, y) => !(o.under || (o.y1 !== undefined && y >= o.y1) || (o.y0 !== undefined && y < o.y0) || (o.except && W.terrain.inRamp(o.except, p, 0.2) !== null));
+/// Push a spot on the planet (a unit vector) out of anything solid at height y (by default where your feet
+/// are: the step you're on while you rise to it, or higher in a jump), so you slide along walls.
+function pushOut(p, y = Math.max(bodyY, footY)) {
   const v = new THREE.Vector3();
   for (let pass = 0; pass < 2; pass++) {
+    // Never in under a staircase (inside its steps, or under a flight): out to the nearer side.
+    for (const r of W.terrain.ramps) {
+      const h = W.terrain.inRamp(r, p, BODY_R);
+      if (h === null || y >= h - STEP) continue;
+      const lat = p.clone().sub(r.bottom).multiplyScalar(R).dot(r.side);
+      p.addScaledVector(r.side, ((Math.sign(lat) || 1) * (r.hw + BODY_R - Math.abs(lat))) / R).normalize();
+    }
     for (const o of W.obstacles) {
       if (p.dot(o.d) < o.cos || !solidAt(o, p, y)) continue;
       if (o.kind === "circle") {
@@ -1274,7 +1283,9 @@ function frame() {
     const p = localPos();
     // What's underfoot: the highest thing you can stand on from here (in the air, only what you're above).
     let air = jumpV !== 0 || bodyY > footY + 0.02;
-    const ground = W.terrain.surfaceAt(p, bodyY, air ? 0.05 : STEP);
+    // (On foot, from the step you're standing on, not the height you're still easing up to: on a fast ride you'd
+    // fall behind a staircase and through it. And up the stairs, as far as you've come up them this frame.)
+    const ground = W.terrain.surfaceAt(p, air ? bodyY : Math.max(bodyY, footY), air ? 0.05 : STEP, air ? 0 : dist * 0.7);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
     if (jumpBuffer > 0 && !air && !dialog && !swimming) {
       jumpBuffer = 0;

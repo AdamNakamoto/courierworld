@@ -64,8 +64,9 @@ export function buildBiomes(k) {
       const a = (ramp.len * i) / parts, b = (ramp.len * (i + 1)) / parts;
       const mid = step(ramp.bottom, ramp.dir, (a + b) / 2);
       const h = ramp.h0 + ((ramp.h1 - ramp.h0) * i) / parts;
-      // Slack for the courier's body width and for easing up each step.
-      k.addRect(mid, spinAlong(mid, ramp.dir), ramp.hw, (b - a) / 2, null, { y1: h - 0.65 });
+      // Slack for the courier's body width and for easing up each step. (Nothing gets put here; main.js keeps
+      // the courier out from under the stairs.)
+      k.addRect(mid, spinAlong(mid, ramp.dir), ramp.hw, (b - a) / 2, null, { y1: h - 0.65, under: ramp });
     }
   };
   /// Bake a group built flat round d, bent over the planet: x and z become distances along the ground
@@ -1096,7 +1097,7 @@ export function buildBiomes(k) {
         // Nobody walks in underneath (a flight off a landing is too high to step onto from below).
         if (under) for (let j = 0; j < 4; j++) {
           const m = at(x, zOf(((j + 0.5) * len) / 4));
-          k.addRect(m, spinAlong(m, tan), w / 2, len / 8, null, { y1: yOf((j * len) / 4) - 0.65 });
+          k.addRect(m, spinAlong(m, tan), w / 2, len / 8, null, { y1: yOf((j * len) / 4) - 0.65, under: ramp });
         } else stairSides(ramp);
         return { zOf, yOf, len };
       };
