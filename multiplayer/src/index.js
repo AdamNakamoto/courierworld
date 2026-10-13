@@ -88,15 +88,19 @@ function cleanHello(h) {
 }
 
 /// Where a player is: ["s", x, y, z (their direction from the planet's centre), fx, fy, fz (which
-/// way they face), height, jump, speed, swim], checked and with the direction made unit length.
+/// way they face), height, jump, speed, swim, and from newer games vx, vy, vz, turn (how fast that
+/// direction is changing, per second, and how fast it's turning, in radians a second, for the others to
+/// predict them by between updates)], checked and with the direction made unit length. Older games'
+/// updates get a velocity and turn of zero.
 function cleanState(m) {
-  if (m.length !== 11) return null;
+  if (m.length !== 11 && m.length !== 15) return null;
   const s = m.slice(1).map(Number);
   if (!s.every(Number.isFinite)) return null;
-  const [x, y, z, fx, fy, fz, h, air, spd, swim] = s;
+  const [x, y, z, fx, fy, fz, h, air, spd, swim, vx = 0, vy = 0, vz = 0, turn = 0] = s;
   const len = Math.hypot(x, y, z);
   if (len < 0.9 || len > 1.1 || Math.hypot(fx, fy, fz) > 1.1 || Math.abs(h) > 12 || air < 0 || air > 6 || spd < 0 || spd > 3 || swim < 0 || swim > 1) return null;
-  return [x / len, y / len, z / len, fx, fy, fz, h, air, spd, swim];
+  const moving = Math.hypot(vx, vy, vz) * R <= TOP_SPEED && Math.abs(turn) <= 12;
+  return [x / len, y / len, z / len, fx, fy, fz, h, air, spd, swim, ...(moving ? [vx, vy, vz, turn] : [0, 0, 0, 0])];
 }
 
 export class Planet extends DurableObject {

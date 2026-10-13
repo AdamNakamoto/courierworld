@@ -299,7 +299,7 @@ onNames(() => {
   office?.refresh();
 });
 loadNames(MP_HTTP);
-setInterval(() => loadNames(MP_HTTP), 60_000);
+setInterval(() => loadNames(MP_HTTP), 300_000); // (names change rarely; each poll is a request to the server)
 
 // ---------------------------------------------------------------- the Orb's ads
 

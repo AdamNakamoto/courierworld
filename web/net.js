@@ -14,7 +14,16 @@ export const EMOTES = [
   { e: "😊" }, { e: "👋", t: "Hey!" }, { e: "🔥", t: "LFG!" }, { e: "🎉", t: "Have fun!" }, { e: "😂" },
   { e: "❤️" }, { e: "👍", t: "GG!" }, { e: "☀️", t: "gm!" }, { e: "🙏", t: "Thanks!" }, { e: "📮", t: "Follow me!" },
 ];
-const SEND_EVERY = 0.25; // seconds between position updates while you move (each is a request to the room)
+// Position updates are what the room is billed for (Cloudflare's free plan counts 20 incoming messages as one
+// request, 100,000 a day), so they go out only when your movement changes (start, stop, turn, jump, swim), or every
+// couple of seconds while you keep going the same way; everyone else's game carries you on in between, from the
+// velocity and turn each update gives.
+const MIN_GAP = 0.4; // seconds: the soonest a change goes out after the last update
+const HEARTBEAT = 2.0; // seconds: while you keep moving the same way
+const AHEAD = 2.5; // seconds: the longest anyone is carried on past their last update
+const DRIFT = 0.5; // metres from where the others predict you before an update goes out early
+const PING_EVERY = 45; // seconds: keeps the connection open (Cloudflare drops sockets quiet for 100 s)
+const AWAY = 60_000; // ms: a tab hidden this long leaves the room (and comes back when it's shown again)
 const SEEN = 22; // how far away (in metres) other couriers are drawn
 
 const ENUMS = {
@@ -270,7 +279,10 @@ export function createNet(W, {
   const anchor = new THREE.Object3D(); // where you are on the planet, for your own emotes
   W.world.add(anchor);
   const emotes = createEmotes(W.world, W.noNormals);
-  let ws = null, me = null, started = false, retry = 1, sendIn = 0, pingIn = 0, last = null;
+  let ws = null, me = null, started = false, retry = 1, since = 0, pingIn = 0, last = null, current = null;
+  let away = null, asleep = false; // leaving the room while the tab is hidden; waiting to be shown to come back
+  const vel = new THREE.Vector3(), prevP = new THREE.Vector3(); // how fast you're going (smoothed), from frame to frame
+  let turn = 0; // and how fast you're turning (radians a second, anticlockwise seen from above)
   let code = null, voucherWait = null; // the room's sign-in code for this connection; a pending voucher request
   let nameWait = null, checkWait = null; // a name being set, and a name being checked, waiting for the room
   let myId = null; // the room's name for you on this connection
@@ -306,8 +318,11 @@ export function createNet(W, {
     };
   }
   function later() {
-    setTimeout(connect, retry * 1000);
-    retry = Math.min(retry * 2, 30);
+    // A hidden tab waits to be shown before it knocks again.
+    if (document.hidden) return (asleep = true);
+    // Back off (with a little jitter, so every game doesn't knock at once) when the room isn't answering.
+    setTimeout(connect, retry * 1000 * (0.75 + Math.random() * 0.5));
+    retry = Math.min(retry * 2, 120);
   }
 
   function label(hello) {
@@ -342,10 +357,51 @@ export function createNet(W, {
     dispose(p.rider.group);
     players.delete(id);
   }
+  /// A position update: where they are, and how fast they're going and turning (older games don't say), to
+  /// predict them by.
   function apply(p, s) {
-    const [x, y, z, fx, fy, fz, h, air, spd, swim] = s;
-    p.target = { p: new THREE.Vector3(x, y, z).normalize(), f: new THREE.Vector3(fx, fy, fz), h, air, spd, swim };
+    const [x, y, z, fx, fy, fz, h, air, spd, swim, vx = 0, vy = 0, vz = 0, turn = 0] = s;
+    const v = new THREE.Vector3(vx, vy, vz);
+    const moving = spd > 0.05 && v.lengthSq() > 0 && v.length() * R < 30;
+    p.target = { p: new THREE.Vector3(x, y, z).normalize(), f: new THREE.Vector3(fx, fy, fz), h, air, spd, swim, t: performance.now() / 1000,
+      vel: moving ? v : null, turn: moving ? turn : 0 };
   }
+  /// Where an update ({ p, f, vel, turn }) puts someone `secs` after it, and which way they face: carried on
+  /// along the curve its velocity and turn make (for at most AHEAD).
+  function carried(u, secs) {
+    if (!u.vel) return u;
+    const s = Math.min(secs, AHEAD), w = u.turn, up = u.p;
+    const along = Math.abs(w) < 1e-3 ? s : Math.sin(w * s) / w, aside = Math.abs(w) < 1e-3 ? 0 : (1 - Math.cos(w * s)) / w;
+    const p = u.p.clone().addScaledVector(u.vel, along).addScaledVector(up.clone().cross(u.vel), aside).normalize();
+    const c = Math.cos(w * s), f = u.f.clone().multiplyScalar(c).addScaledVector(up.clone().cross(u.f), Math.sin(w * s)).addScaledVector(up, up.dot(u.f) * (1 - c));
+    return { p, f };
+  }
+  /// Send where you are now (`stop`: as standing still).
+  function sendState(s, stop = false) {
+    const r = (v, k = 1e4) => Math.round(v * k) / k;
+    const v = !stop && s.spd > 0.05 && vel.length() * R < 25 ? vel.clone() : null, w = v && Math.abs(turn) < 10 ? turn : 0;
+    const spd = stop ? 0 : s.spd;
+    send(["s", r(s.p.x, 1e5), r(s.p.y, 1e5), r(s.p.z, 1e5), r(s.f.x, 1e3), r(s.f.y, 1e3), r(s.f.z, 1e3),
+      r(s.h, 1e3), r(s.air, 1e3), r(spd, 1e2), r(s.swim, 1e2), r(v?.x ?? 0, 1e5), r(v?.y ?? 0, 1e5), r(v?.z ?? 0, 1e5), r(w, 1e3)]);
+    last = { p: s.p.clone(), f: s.f.clone(), h: s.h, spd, swim: s.swim, air: s.air, vel: v, turn: r(w, 1e3) };
+    since = 0;
+  }
+  // A hidden tab stops playing (no frames, so no keep-alive either): tell the others you've stopped rather than
+  // let them carry you on, and after a minute leave the room, instead of being dropped and knocking again in the
+  // background (every new connection is a request to the room).
+  document.addEventListener("visibilitychange", () => {
+    clearTimeout(away);
+    if (document.hidden) {
+      if (current && last?.spd > 0.05 && ws?.readyState === 1 && me) sendState(current, true);
+      send("ping"); // (so a short look away doesn't run into the 100 s limit)
+      pingIn = PING_EVERY;
+      away = setTimeout(() => document.hidden && ws?.close(), AWAY);
+    } else if (asleep) {
+      asleep = false;
+      retry = 1;
+      connect();
+    }
+  });
 
   /// A chat line from the room: [id, name, text, time] -> { id, name, text, time, mine }.
   function chatLine([id, name, text, time]) {
@@ -482,43 +538,61 @@ export function createNet(W, {
     /// planet's centre, the way you face, height, jump, speed and swim), or null when not playing.
     /// `me` is your position for deciding who to draw; `all` draws everyone (the title screen).
     update(dt, t, state, mePos, all = false) {
-      if (state) anchor.position.copy(state.p).multiplyScalar(R + state.h);
+      if (state) {
+        anchor.position.copy(state.p).multiplyScalar(R + state.h);
+        // Your velocity across the planet, smoothed over a few frames (and forgotten after a jump across it).
+        if (current && dt > 0 && arc(state.p, prevP) < 3) {
+          const before = vel.clone();
+          vel.lerp(state.p.clone().sub(prevP).divideScalar(dt), 1 - Math.exp(-dt * 12));
+          // How fast your heading turns, while you're going faster than half a metre a second.
+          if (Math.min(before.length(), vel.length()) * R > 0.5) {
+            const w = Math.atan2(state.p.dot(before.clone().cross(vel)), before.dot(vel)) / dt;
+            turn += (w - turn) * (1 - Math.exp(-dt * 8));
+          } else turn = 0;
+        } else {
+          vel.set(0, 0, 0);
+          turn = 0;
+        }
+        prevP.copy(state.p);
+      }
+      current = state;
       emotes.update(dt);
       if (ws?.readyState === 1 && me) {
         if ((pingIn -= dt) <= 0) {
           send("ping");
-          pingIn = 20;
+          pingIn = PING_EVERY;
         }
-        // Send where you are while it's changing (and once more when you stop).
-        if (state && ((sendIn -= dt) <= 0 || grabs.length)) {
-          const moved = !last || arc(state.p, last.p) > 0.02 || state.f.dot(last.f) < 0.995 || Math.abs(state.h - last.h) > 0.03 ||
-            Math.abs(state.spd - last.spd) > 0.05 || Math.abs(state.swim - last.swim) > 0.1 || (state.air > 0) !== (last.air > 0);
-          if (moved || grabs.length) {
-            const r = (v, k = 1e4) => Math.round(v * k) / k;
-            send(["s", r(state.p.x, 1e5), r(state.p.y, 1e5), r(state.p.z, 1e5), r(state.f.x, 1e3), r(state.f.y, 1e3), r(state.f.z, 1e3),
-              r(state.h, 1e3), r(state.air, 1e3), r(state.spd, 1e2), r(state.swim, 1e2)]);
-            last = { p: state.p.clone(), f: state.f.clone(), h: state.h, spd: state.spd, swim: state.swim, air: state.air };
-            sendIn = SEND_EVERY;
-          }
+        // Send where you are when your movement changes, or now and then while it keeps on (see HEARTBEAT).
+        since += dt;
+        if (state && (since >= MIN_GAP || grabs.length)) {
+          const moving = state.spd > 0.05;
+          // Where the others' games put you now: your last update, carried on along the curve it gave.
+          const seen = last && carried(last, since);
+          const changed = !last || moving !== last.spd > 0.05 || (state.air > 0) !== (last.air > 0) || state.f.dot(seen.f) < 0.94 ||
+            Math.abs(state.spd - last.spd) > 0.25 || Math.abs(state.h - last.h) > 0.25 || Math.abs(state.swim - last.swim) > 0.3 ||
+            arc(state.p, seen.p) > DRIFT;
+          if (changed || (moving && since >= HEARTBEAT) || grabs.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
         }
       }
-      // Everyone else eases toward where they last said they were (gently enough to fill the quarter second
-      // between their updates, so they glide instead of moving and stopping).
+      // Everyone else eases toward where they should be by now: their last update, carried on along the curve
+      // it gave, so they glide between the updates they send.
+      const nowS = performance.now() / 1000;
       for (const p of players.values()) {
         if (!p.target) continue;
-        const k = 1 - Math.exp(-dt * 6);
+        const k = 1 - Math.exp(-dt * 8);
+        const goal = carried(p.target, nowS - p.target.t);
         let moved = 0;
-        if (!p.placed || arc(p.pos, p.target.p) > 6) {
-          p.pos.copy(p.target.p);
-          p.fwd.copy(p.target.f);
+        if (!p.placed || arc(p.pos, goal.p) > 6) {
+          p.pos.copy(goal.p);
+          p.fwd.copy(goal.f);
           p.h = p.target.h;
           p.placed = true;
         } else {
           const before = p.pos.clone();
-          p.pos.lerp(p.target.p, k).normalize();
+          p.pos.lerp(goal.p, k).normalize();
           moved = arc(before, p.pos);
-          p.fwd.lerp(p.target.f, 1 - Math.exp(-dt * 8));
+          p.fwd.lerp(goal.f, 1 - Math.exp(-dt * 8));
           p.h += (p.target.h - p.h) * (1 - Math.exp(-dt * 9));
         }
         p.air += (p.target.air - p.air) * (1 - Math.exp(-dt * 12)); // (jumps arc instead of stepping)
