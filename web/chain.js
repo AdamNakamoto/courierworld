@@ -324,13 +324,14 @@ export async function connectChain() {
   // ---------------------------------------------------------------- the leaderboard
   // Every post office, from the OfficeOpened events, then each one's tier and power from the contract.
   // Public RPCs won't serve old events, so the history comes from the chain's official RPC, or, where an
-  // internet provider blocks that, through the site's own relay (/api/logs). What's been read is kept in
-  // the browser, so later visits only read the new blocks.
+  // internet provider blocks that, through a relay: the site's own (/api/logs, on Vercel), then the multiplayer
+  // server's (for hosts without one, like the IMD backup). What's been read is kept in the browser, so later
+  // visits only read the new blocks.
   const OPENED = parseAbiItem("event OfficeOpened(address indexed owner, address indexed referrer)");
   const CLAIMED = parseAbiItem("event Claimed(address indexed owner, uint256 amount, address indexed referrer, uint256 referralAmount)");
   const logSources = dep.local ? [pub] : [
     dep.logsRpcUrl && createPublicClient({ chain, transport: http(dep.logsRpcUrl, { timeout: 5000, retryCount: 0 }) }),
-    dep.logsRelay && createPublicClient({ chain, transport: http(new URL(dep.logsRelay, location.href).href, { timeout: 20000 }) }),
+    ...(dep.logsRelays ?? (dep.logsRelay ? [dep.logsRelay] : [])).map((u) => createPublicClient({ chain, transport: http(new URL(u, location.href).href, { timeout: 20000 }) })),
   ].filter(Boolean);
   const boardKey = game ? `courier:offices2:${dep.chainId}:${C.office.address.toLowerCase()}` : null;
   let board = null, boardSource = 0;

@@ -22,7 +22,7 @@ CHAIN='{
   rpcUrl: "https://robinhood-rpc.publicnode.com",
   walletRpcUrl: "https://robinhood-rpc.publicnode.com",
   logsRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
-  logsRelay: "/api/logs",
+  logsRelays: ["/api/logs", "https://courier-world-mp.courier-world-mp.workers.dev/logs"],
   explorer: "https://robinhoodchain.blockscout.com"
 }'
 

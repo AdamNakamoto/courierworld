@@ -27,7 +27,9 @@ const MAX_PLAYERS = 200;
 const MAX_MSG = 2048;
 const PHRASES = 16; // emotes the game can show (web/net.js EMOTES); -1 is a wave
 
-const ORIGINS = [/^https:\/\/(www\.)?courierworld\.fun$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
+// The game's homes: courierworld.fun, its backup on IMD's hosting, Vercel previews, and local development.
+const ORIGINS = [/^https:\/\/(www\.)?courierworld\.fun$/, /^https:\/\/courierworld\.sites\.imd\.fun$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
+  /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
 const ENUMS = {
   hairStyle: ["pony", "bun", "bob", "twin", "long"],
   headwear: ["none", "cap", "bucket", "beanie", "headphones", "goggles", "hardhat"],
@@ -699,10 +701,74 @@ async function padImage(req, env, url) {
 
 const polled = new Map(); // "/count" or "/names" -> { at, body }: what the room last said, kept a few seconds
 
+// ---------------------------------------------------------------- the leaderboard's relay
+// The same narrow relay as the website's /api/logs (web/api/logs.js), for hosts without it (the IMD backup): only
+// the block number, the chain id and the post office's own events pass to Robinhood Chain's official RPC, which
+// some internet providers block. Only for the game's own sites.
+// The official RPC first; it turns Cloudflare's shared addresses away for event queries now and then (429), and
+// then the website's own relay on Vercel answers instead (server to server, so a browser block on the website's
+// domain doesn't matter).
+const LOGS_UPSTREAMS = ["https://rpc.mainnet.chain.robinhood.com", "https://courierworld.fun/api/logs"];
+async function logsRelay(req, env) {
+  const origin = req.headers.get("Origin") || "";
+  if (!ORIGINS.some((re) => re.test(origin))) return new Response("Not allowed", { status: 403 });
+  const cors = { "access-control-allow-origin": origin, "access-control-allow-methods": "POST", "access-control-allow-headers": "content-type", vary: "Origin" };
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  const json = (body, status = 200) => new Response(typeof body === "string" ? body : JSON.stringify(body), {
+    status, headers: { ...cors, "content-type": "application/json", "cache-control": "no-store" },
+  });
+  if (req.method !== "POST") return json({ error: "POST a JSON-RPC request" }, 405);
+  const office = String(env.POST_OFFICE ?? "").toLowerCase();
+  const allowed = (c) => c && typeof c === "object" && (c.method === "eth_blockNumber" || c.method === "eth_chainId" ||
+    (c.method === "eth_getLogs" && office && String(c.params?.[0]?.address ?? "").toLowerCase() === office));
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "Not JSON" }, 400);
+  }
+  const calls = Array.isArray(body) ? body : [body];
+  if (!calls.length || calls.length > 20 || !calls.every(allowed)) return json({ error: "Not allowed" }, 403);
+  // A range of the post office's events never changes once it's mined: kept at Cloudflare's edge (by the query,
+  // not its id), so one visitor's scan of the history serves everyone's.
+  const one = !Array.isArray(body) && body.method === "eth_getLogs";
+  const cache = caches.default;
+  let key = null;
+  if (one) {
+    const hash = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(body.params)))));
+    key = new Request(`https://logs.cache/${hash}`);
+    const hit = await cache.match(key).catch(() => null);
+    if (hit) return json(JSON.stringify({ ...(await hit.json()), id: body.id }));
+  }
+  // Turned away (429) or broken (5xx): the other upstream, then both again after a pause.
+  let r = null;
+  for (let i = 0; i < 4; i++) {
+    try {
+      r = await fetch(LOGS_UPSTREAMS[i % 2], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (r.status !== 429 && r.status < 500) break;
+    } catch {
+      r = null;
+    }
+    if (i % 2) await new Promise((ok) => setTimeout(ok, 500));
+  }
+  if (!r) return json({ error: "The chain didn't answer. Try again." }, 502);
+  const text = await r.text();
+  if (one && r.ok) {
+    try {
+      const out = JSON.parse(text);
+      if (Array.isArray(out.result)) {
+        await cache.put(key, new Response(JSON.stringify(out), { headers: { "content-type": "application/json", "cache-control": "public, max-age=2592000" } }));
+      }
+    } catch {}
+  }
+  return json(text, r.status);
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     if (url.pathname.startsWith("/pad/image")) return padImage(req, env, url);
+    if (url.pathname === "/logs") return logsRelay(req, env);
     const room = env.PLANET.get(env.PLANET.idFromName("planet"));
     // The online count and the names are polled by every open game: kept a little while at Cloudflare's edge, so
     // the polls share one request to the room instead of each costing one (the free plan caps the room's
