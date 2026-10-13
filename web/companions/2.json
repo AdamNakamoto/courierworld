@@ -1,0 +1,20 @@
+{
+  "name": "Dog · Courier Companion",
+  "description": "A loyal pup with a tiny mailbag. Thinks every letter is for them. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/2.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Pet"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Dog"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Little Martian · Courier Companion",
+  "description": "A young Martian, one big eye and a dust scarf, on their first trip off Mars. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/13.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Space buddy"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Little Martian"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

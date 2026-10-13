@@ -4,10 +4,13 @@
 // and waving as they do. Positions are just for show: nothing here is on-chain.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
+import { STEP } from "./terrain.js";
 import { authMessage } from "./hunt-pick.js";
 import { WORLDS } from "./trips.js";
 import { nameMessage, nameShown } from "./name-rules.js";
 import { SKINS } from "./skins.js";
+import { createFollower } from "./companions.js";
+import { COMPANION_IDS } from "./companion-kinds.js";
 
 /// What you can show the players around you: an emoji, or an emoji and a few words. It pops up
 /// over your head (keys 1-9 and 0, or the emote buttons). The order matters: the room sends the index.
@@ -268,6 +271,15 @@ function orient(obj, up, forward) {
   obj.quaternion.setFromRotationMatrix(_m);
 }
 
+/// A player's facing laid flat along the ground and made unit length, in `p.ahead` (their companion follows that way).
+/// False if it can't be (facing straight up or down).
+function along(p) {
+  p.ahead.copy(p.fwd).addScaledVector(p.pos, -p.fwd.dot(p.pos));
+  if (p.ahead.lengthSq() < 1e-8) return false;
+  p.ahead.normalize();
+  return true;
+}
+
 /// `url`: the room's WebSocket address. `makeRider(look, ride, rideColour)` builds a courier (the same as yours),
 /// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count)` and `onNope(spot, why)` hear
 /// from the golden stamp hunt,
@@ -278,9 +290,9 @@ function orient(obj, up, forward) {
 export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
-  world = (w) => (w === "planet" ? { group: W.world, r: R } : null),
+  world = (w) => (w === "planet" ? { group: W.world, r: R, terrain: W.terrain } : null),
 }) {
-  const players = new Map(); // id -> { hello, root, rider, tag, pos, fwd, target, h, air, spd, swim, wave }
+  const players = new Map(); // id -> { hello, root, rider, tag, follower, pos, fwd, target, h, air, spd, swim, wave }
   const anchor = new THREE.Object3D(); // where you are on the planet, for your own emotes
   W.world.add(anchor);
   const emotes = createEmotes(W.world, W.noNormals);
@@ -356,10 +368,24 @@ export function createNet(W, {
       : makeRider(cleanLook(hello.look), RIDES.includes(hello.ride) ? hello.ride : "foot");
     const tag = label(hello);
     root.add(rider.group, tag);
+    // Their Courier Companion, if the room has read on chain that it's theirs. (root sits at the world's centre, so the
+    // follower's coordinates are the world's, as companions.js expects.)
+    const follower = COMPANION_IDS.includes(hello.companion) ? createFollower(hello.companion) : null;
+    if (follower) root.add(follower.group);
     root.visible = false;
     W.noNormals.push(tag);
-    const p = { hello, root, rider, tag, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0,
+    const p = { hello, root, rider, tag, follower, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0,
       world: WORLDS.includes(w) ? w : w === undefined && was ? was : "planet" };
+    // What their companion walks on: their world's ground where it is, measured from the ground under them (their
+    // height less their jump) so it follows them up onto decks; or the water's surface. (Before their world is known,
+    // just the ground under them.)
+    p.groundAt = (d) => {
+      const y = p.h - p.air, t = p.terrain;
+      if (!t) return y;
+      const floor = t.surfaceAt(d, y, STEP), water = t.waterAt(d);
+      return water === null ? floor : Math.max(floor, water);
+    };
+    p.ahead = new THREE.Vector3(0, 0, 1); // the way they face, along the ground, for their companion
     home(root, p.world);
     players.set(id, p);
     if (s) apply(p, s);
@@ -372,6 +398,7 @@ export function createNet(W, {
     p.tag.material.map.dispose();
     p.tag.material.dispose();
     dispose(p.rider.group);
+    p.follower?.dispose();
     players.delete(id);
   }
   /// A position update: where they are, and how fast they're going and turning (older games don't say), to
@@ -549,12 +576,13 @@ export function createNet(W, {
   }
 
   return {
-    /// Who you are: your courier's look and ride, your wallet address if logged in, and the Courier Skin
-    /// you're wearing (its token id; the room shows it only if that wallet owns it). Joins the room the
-    /// first time it's called; afterwards it tells everyone you've changed.
-    hello(look, ride, addr, skinId = null) {
+    /// Who you are: your courier's look and ride, your wallet address if logged in, the Courier Skin
+    /// you're wearing (its token id) and the Courier Companion following you (its kind; the room shows
+    /// either only if that wallet owns it). Joins the room the first time it's called; afterwards it tells
+    /// everyone you've changed.
+    hello(look, ride, addr, skinId = null, companion = null) {
       const was = me?.addr;
-      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}) };
+      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}), ...(addr && companion ? { companion } : {}) };
       if (!started) {
         started = true;
         connect();
@@ -649,6 +677,7 @@ export function createNet(W, {
           continue;
         }
         const pr = pw.r, dist = (a, b) => pr * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
+        p.terrain = pw.terrain;
         const k = 1 - Math.exp(-dt * 8);
         const goal = carried(p.target, nowS - p.target.t);
         let moved = 0;
@@ -657,6 +686,7 @@ export function createNet(W, {
           p.fwd.copy(goal.f);
           p.h = p.target.h;
           p.placed = true;
+          if (p.follower && along(p)) p.follower.place(p.pos, p.ahead, pr, p.groundAt);
         } else {
           const before = p.pos.clone();
           p.pos.lerp(goal.p, k).normalize();
@@ -667,8 +697,15 @@ export function createNet(W, {
         p.air += (p.target.air - p.air) * (1 - Math.exp(-dt * 12)); // (jumps arc instead of stepping)
         p.spd += (p.target.spd - p.spd) * k;
         p.swim += (p.target.swim - p.swim) * k;
+        const shown = p.root.visible;
         p.root.visible = all || dist(p.pos, mePos) < SEEN;
         if (!p.root.visible) continue;
+        // Their companion: snapped behind them as they come into view (it stood still while they were out of it),
+        // then following.
+        if (p.follower && along(p)) {
+          if (!shown) p.follower.place(p.pos, p.ahead, pr, p.groundAt);
+          p.follower.update(dt, t, p.pos, p.ahead, pr, p.groundAt, Math.min(1, p.spd));
+        }
         p.rider.group.position.copy(p.pos).multiplyScalar(pr + p.h);
         orient(p.rider.group, p.pos, p.fwd);
         p.tag.position.copy(p.pos).multiplyScalar(pr + p.h + (p.rider.ride ? 2.35 : 2.05));

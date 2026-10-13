@@ -478,6 +478,28 @@ body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card 
 /* Courier Skins: the $STAMP button under the ETH one. */
 .skins .stamp-mint { margin-top: 6px; background: #f2c94c; }
 
+/* Courier Companions: the shop's cards, an emoji badge, a few lines, and the buy / follow buttons down the right. */
+.companions h4 { margin: 12px 0 6px; font: 400 13px/1.2 Bungee, Impact, sans-serif; letter-spacing: .04em; }
+.comp-list { display: grid; gap: 6px; }
+.comp-card { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: center; border: 2px solid #d8d2c2; padding: 6px 8px; background: #fff; }
+.comp-card.on { border-color: var(--ink); background: #f3fbf6; }
+.comp-card.off .comp-icon { filter: grayscale(.8); opacity: .6; }
+.comp-icon { display: grid; place-items: center; width: 40px; height: 40px; font-size: 24px; line-height: 1; border: 2px solid var(--ink); border-radius: 50%; background: #fff8dc; }
+.comp-info { display: flex; flex-direction: column; min-width: 0; font-size: 16px; line-height: 1.15; }
+.comp-info b { font: 400 13px/1.25 Bungee, Impact, sans-serif; letter-spacing: .02em; }
+.comp-blurb { font-size: 15px; color: var(--ink); }
+.office .comp-info .muted { font-size: 15px; }
+.comp-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.comp-tag { font: 400 10px/1 Bungee, sans-serif; background: #ece4cc; color: var(--ink); padding: 3px 5px; border: 1.5px solid var(--ink); }
+.comp-tag.following { background: #5e9f57; color: #fff; }
+.comp-act { display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
+.comp-act .pbtn { padding: 6px 8px; white-space: nowrap; }
+.companions > .kv { align-items: center; gap: 8px; margin: 4px 0 8px; }
+@media (max-width: 400px) {
+  .comp-card { grid-template-columns: 40px 1fr; }
+  .comp-act { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+}
+
 /* ---------------------------------------------------------------- the launchpad (pad.js) */
 
 #padBody { padding: 10px 14px 4px; }

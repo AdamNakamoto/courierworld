@@ -24,6 +24,8 @@ import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
 import { createUsername } from "./username.js";
+import { createFollower } from "./companions.js";
+import { COMPANION_IDS } from "./companion-kinds.js";
 
 const $ = (id) => document.getElementById(id);
 // Golden stamp spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
@@ -204,6 +206,63 @@ function autoAvatar(s) {
   playAs(courier(pick.id, s.seed), s.account);
 }
 
+// Your Courier Companion (companions.js): the one you picked in the Post Office panel follows you on whichever world
+// you're on, as long as your wallet owns one of that kind. The pick is kept per wallet; the room shows it to everyone
+// else only once it has read on chain that it's yours. With no companions contract (until it's deployed), nobody has one.
+let companion = null; // the follower walking with you, or null
+let companionKind = null; // the kind it is (kept apart, so a kind this game can't draw isn't looked for again and again)
+const companionKey = (account) => `courier:companion:${account.toLowerCase()}`;
+/// What your companion stands on: the ground you're on (on the planet, from the height you're at, so it follows you up
+/// onto decks and stairs; in a jump, from the ground under you, so it doesn't hop up onto things as you go up), or the
+/// water's surface rather than the river bed under it.
+function companionGround(d) {
+  const from = jumpV !== 0 ? footY : Math.max(bodyY, footY);
+  const floor = G.terrain.surfaceAt(d, from, STEP), water = G.terrain.waterAt(d);
+  return water === null ? floor : Math.max(floor, water);
+}
+/// Bring your companion onto the world you're on, just behind you (when it arrives, and after a flight).
+function companionHere() {
+  if (!companion) return;
+  if (companion.group.parent !== world) world.add(companion.group);
+  companion.place(localPos(), ahead(), G.R, companionGround);
+}
+/// Swap the follower for one of kind `id` (null: none), without telling anyone.
+function showCompanion(id) {
+  if (companionKind === id) return;
+  companionKind = id;
+  if (companion) {
+    companion.group.parent?.remove(companion.group);
+    companion.dispose();
+  }
+  companion = id === null ? null : createFollower(id);
+  companionHere();
+}
+/// Have your companion of kind `id` follow you (null sends it home): remembered for this wallet, and the room hears.
+function setCompanion(id) {
+  id = COMPANION_IDS.includes(Number(id)) ? Number(id) : null;
+  const account = chainRef?.account;
+  try {
+    if (account) id ? localStorage.setItem(companionKey(account), String(id)) : localStorage.removeItem(companionKey(account));
+  } catch {}
+  showCompanion(id);
+  if (mode === "play") introduce();
+}
+/// After each look at the chain: the companion this wallet picked last, if it still owns one of that kind (sold or
+/// sent away, another wallet logged in, or no companions contract: none). The pick itself is kept, so it comes back
+/// if the wallet gets one again.
+function checkCompanion(s) {
+  let want = null;
+  if (s?.account && s.companions) {
+    try {
+      want = Number(localStorage.getItem(companionKey(s.account))) || null;
+    } catch {}
+    if (!COMPANION_IDS.includes(want) || !(s.companions.owned?.[want] > 0)) want = null;
+  }
+  if (want === companionKind) return;
+  showCompanion(want);
+  if (mode === "play") introduce();
+}
+
 W.addresses.forEach((a, i) => {
   if (!a.landmark) a.name = NAMES[i % NAMES.length];
   a.no = i + 1;
@@ -265,7 +324,7 @@ let chainRef = null;
 const net = createNet(W, {
   url: MP_URL, makeRider: rider, dispose,
   // Where each world's couriers are drawn (the moon's and Mars's only once they're built).
-  world: (w) => (trips[w] ? (trips[w].w ? { group: trips[w].w.group, r: TRIPS[w].R } : null) : { group: W.world, r: R }),
+  world: (w) => (trips[w] ? (trips[w].w ? { group: trips[w].w.group, r: TRIPS[w].R, terrain: trips[w].w.ground.terrain } : null) : { group: W.world, r: R, terrain: W.terrain }),
   tier(addr) {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
@@ -354,10 +413,10 @@ function showAd() {
 const hideAd = () => ($("orbCard").hidden = true);
 $("orbClose").addEventListener("click", hideAd);
 for (const a of [$("orbSite"), $("orbChart")]) a.addEventListener("click", () => setTimeout(hideAd, 0));
-/// Tell the room who you are: your courier, and your wallet if you're logged in.
+/// Tell the room who you are: your courier, your wallet if you're logged in, and your companion if one follows you.
 function introduce() {
   // (In the rover, they see your look driving it rather than your skin.)
-  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null);
+  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null, companion?.id ?? null);
 }
 /// The facts the room passes on about you each frame, in planet space.
 function netState() {
@@ -1368,6 +1427,7 @@ function frame() {
     if (intro.k >= 1) {
       mode = "play";
       playerQ.copy(spawnQ);
+      companionHere();
       $("hud").hidden = false;
       introduce();
       fillBag();
@@ -1510,6 +1570,11 @@ function frame() {
   const stepped = player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4), dist);
   // A puff with each running step.
   if (stepped && moveSpeed > 0.8 && mode === "play" && !wading) kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
+  // Your companion follows you once you're playing (and stays out of the picture when photo mode hides you).
+  if (companion) {
+    companion.group.visible = mode === "play" && !photo?.hide;
+    if (companion.group.visible) companion.update(dt, t, localPos(), ahead(), G.R, companionGround, moveSpeed);
+  }
   dust.update(dt, 1 - 0.55 * W.night);
   sparkle.update(dt);
   district.tick(t);
@@ -1789,6 +1854,7 @@ function flyTo(k) {
     w.group.visible = true;
     W.setSky(k === "mars" ? "mars" : "space", w.group);
     standAt(w.arrival.d, w.arrival.tangent);
+    companionHere(); // (it flew with you)
     if (huntState?.wallet) w.setFound(huntState.day, huntState[k] ?? []);
     net.setWorld(k);
     hud();
@@ -1812,6 +1878,7 @@ function flyHome(why = null) {
     bodyY = footY = camLift = leftFrom?.y ?? 0.04;
     jumpV = 0;
     vel.set(0, 0);
+    companionHere();
     net.setWorld("planet");
     hud();
     if (why) setTimeout(() => toast(why), 1200);
@@ -1937,6 +2004,7 @@ const chainReady = connectChain()
       if (chain.account) $("begin").textContent = "Begin";
       chain.onAccountChange(() => {
         huntState = null; // a different wallet signs in afresh
+        showCompanion(null); // (the next look at the chain brings back the new wallet's, if it has one)
         office?.refresh();
         if (mode === "play") introduce();
         if (board) district.update(board.list, chain.account);
@@ -1956,8 +2024,11 @@ const chainReady = connectChain()
       onSnapshot(s) {
         autoAvatar(s);
         skinButtons(s);
+        checkCompanion(s);
       },
       wearing: () => skinWorn?.id ?? null,
+      onCompanion: (id) => setCompanion(id),
+      companionShown: () => companion?.id ?? null,
       username,
       onWearSkin(m) {
         if (!m) {

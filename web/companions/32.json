@@ -1,0 +1,20 @@
+{
+  "name": "Colossus · Courier Companion",
+  "description": "A towering stone giant with mossy shoulders and warm amber eyes. Gentle, slow, unstoppable. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/32.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Mecha"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Colossus"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

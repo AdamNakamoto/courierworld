@@ -1,0 +1,20 @@
+{
+  "name": "Mini UFO · Courier Companion",
+  "description": "A pocket flying saucer with blinking lights and a tractor beam for stray letters. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/11.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Space buddy"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Mini UFO"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Hovers"
+    }
+  ]
+}

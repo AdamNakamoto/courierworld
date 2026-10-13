@@ -8,7 +8,8 @@
 // signs vouchers the TokenDrops contract pays for. Positions and emotes are just for show; only the vouchers touch the chain. A player
 // wearing a Courier Skin is shown in it only once the room has read on-chain that their wallet owns it.
 // Players can pick a name (web/name-rules.js): their wallet signs for it, and the room shows it instead of
-// their wallet address from then on.
+// their wallet address from then on. A Courier Companion following a player is shown only once the room has read
+// on chain that their wallet owns one of that kind.
 import { DurableObject } from "cloudflare:workers";
 import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -19,6 +20,7 @@ import { TRIPS, TREASURY, WORLDS } from "../../web/trips.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
 import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
+import { COMPANION_IDS } from "../../web/companion-kinds.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -47,6 +49,11 @@ const DROPS_ABI = parseAbi([
 ]);
 const DROPS_CHECK_MS = 60_000; // how long the running drops are trusted before they're read again
 const SKIN_CHECK_MS = 60_000; // how long a skin's owner is trusted before it's read again
+// Courier Companions (an ERC-1155: each kind is a token id), at COMPANIONS_ADDRESS once it's deployed.
+const COMPANIONS_ABI = parseAbi(["function balanceOf(address account, uint256 id) view returns (uint256)"]);
+const COMPANION_CHECK_MS = 3 * 60_000; // how long a wallet's companions are trusted before they're read again
+const COMPANION_MISS_MS = 15_000; // ...and how long "not theirs" is, so a companion just bought shows soon
+const COMPANION_RECHECK_MS = 16_000; // one more look this long after a miss (a buy the RPC hadn't seen; a hiccup)
 const CHAT_KEEP = 30; // chat lines kept for players who join later
 const CHAT_RECENT_MS = 60 * 60_000; // ...if they're less than an hour old
 const CHAT_ROOM_MAX = 20; // lines from everyone together every five seconds
@@ -81,7 +88,8 @@ const send = (ws, m) => {
 
 /// A player's hello with anything unexpected dropped: a look built only from known keys and values,
 /// a ride, their wallet address if they're logged in (shown on their name tag; not checked), and the
-/// Courier Skin they'd like to wear (checked in `hi` before anyone sees it).
+/// Courier Skin they'd like to wear and the Courier Companion they'd like to have follow them (both
+/// checked in `hi` before anyone sees them).
 function cleanHello(h) {
   if (!h || typeof h !== "object") return null;
   const src = h.look && typeof h.look === "object" ? h.look : {};
@@ -92,6 +100,7 @@ function cleanHello(h) {
   const out = { look, ride: RIDES.includes(h.ride) ? h.ride : "foot" };
   if (typeof h.addr === "string" && /^0x[0-9a-fA-F]{40}$/.test(h.addr)) out.addr = h.addr;
   if (out.addr && Number.isInteger(h.skinId) && h.skinId >= 1 && h.skinId <= SKIN_SUPPLY) out.skinId = h.skinId;
+  if (out.addr && COMPANION_IDS.includes(h.companion)) out.companionId = h.companion;
   return out;
 }
 
@@ -118,6 +127,7 @@ export class Planet extends DurableObject {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.seen = new Map(); // socket -> its attachment, read once after each wake
     this.skins = new Map(); // skin id -> { at, owner, design }
+    this.companions = new Map(); // "<wallet lower case>:<kind>" -> { at, owned }
   }
 
   info(ws) {
@@ -334,19 +344,43 @@ export class Planet extends DurableObject {
 
   // ---------------------------------------------------------------- the golden stamp hunt
 
-  /// Who they are: their look, and the Courier Skin they asked to wear if it's theirs (its design number).
+  /// Who they are: their look, the Courier Skin they asked to wear if it's theirs (its design number), and
+  /// the Courier Companion they asked for if they own one of that kind.
   async hi(ws, a, raw) {
     const hello = cleanHello(raw);
     if (!hello) return;
     const seq = (a.hiSeq = (a.hiSeq ?? 0) + 1);
-    const id = hello.skinId;
+    const id = hello.skinId, kind = hello.companionId;
     delete hello.skinId;
+    delete hello.companionId;
+    // Skins and companions are read from the chain (never taken on the client's word) for the wallet on their name
+    // tag, the address everyone sees: a hunt sign-in may be for a wallet they've since switched from. Both at once,
+    // on a client with short timeouts, so a slow chain can't hold up their arrival for long.
     // A different skin at most every two seconds, so nobody can make the room hammer the chain.
-    if (id && (id === a.skinAsked || Date.now() - (a.skinAskedAt ?? 0) > 2000)) {
-      [a.skinAsked, a.skinAskedAt] = [id, Date.now()];
-      const design = await this.skinDesign(id, a.wallet ?? hello.addr);
-      if (a.hiSeq !== seq) return; // a newer hello arrived while we were checking
-      if (design !== null) hello.skin = design;
+    const skinAsk = id && (id === a.skinAsked || Date.now() - (a.skinAskedAt ?? 0) > 2000);
+    if (skinAsk) [a.skinAsked, a.skinAskedAt] = [id, Date.now()];
+    const [design, owned] = await Promise.all([
+      skinAsk ? this.skinDesign(id, hello.addr) : null,
+      kind ? this.ownsCompanion(kind, hello.addr, a) : false,
+    ]);
+    if (a.hiSeq !== seq) return; // a newer hello arrived while we were checking (or they left)
+    if (design !== null) hello.skin = design;
+    if (owned === true) hello.companion = kind;
+    else if (owned === undefined && a.hello?.companion === kind) hello.companion = kind; // (no answer: keep the one already shown)
+    if (kind && owned === null) {
+      // Too soon after the last new check: look again once one's allowed, unless a newer hello comes first (so
+      // flicking through companions in the panel still ends with the last one showing).
+      const wait = 2100 - (Date.now() - a.companionAskedAt);
+      setTimeout(() => a.hiSeq === seq && this.seen.get(ws) === a && this.hi(ws, a, raw).catch(() => {}), Math.max(100, wait));
+    } else if (kind && owned !== true) {
+      // Not theirs as far as the chain said (or it didn't answer): one more look in a little while, for this hello
+      // only, and the room hears again only if it's theirs after all.
+      setTimeout(async () => {
+        if (a.hiSeq !== seq || this.seen.get(ws) !== a) return;
+        if ((await this.ownsCompanion(kind, hello.addr, a)) === true && a.hiSeq === seq && this.seen.get(ws) === a) {
+          this.hi(ws, a, raw).catch(() => {});
+        }
+      }, COMPANION_RECHECK_MS);
     }
     await this.decorate(hello, a);
     if (a.hiSeq !== seq) return;
@@ -373,8 +407,7 @@ export class Planet extends DurableObject {
     let c = this.skins.get(id);
     if (!c || Date.now() - c.at > SKIN_CHECK_MS) {
       try {
-        this.chain ??= createPublicClient({ transport: http(this.env.SKINS_RPC ?? "https://robinhood-rpc.publicnode.com") });
-        const read = (functionName) => this.chain.readContract({ address: this.env.SKINS_ADDRESS, abi: SKINS_ABI, functionName, args: [BigInt(id)] });
+        const read = (functionName) => this.cosmeticChain().readContract({ address: this.env.SKINS_ADDRESS, abi: SKINS_ABI, functionName, args: [BigInt(id)] });
         const [who, design] = await Promise.all([read("ownerOf"), read("designOf")]);
         c = { at: Date.now(), owner: who, design: Number(design) };
         this.skins.set(id, c);
@@ -383,6 +416,36 @@ export class Planet extends DurableObject {
       }
     }
     return c.owner.toLowerCase() === owner.toLowerCase() ? c.design : null;
+  }
+
+  /// The chain, for what players wear and bring along: short timeouts and one retry, since nothing waits on it but
+  /// how someone looks.
+  cosmeticChain() {
+    return (this.cosmetic ??= createPublicClient({
+      transport: http(this.env.SKINS_RPC ?? this.env.PAD_RPC ?? "https://robinhood-rpc.publicnode.com", { timeout: 4000, retryCount: 1 }),
+    }));
+  }
+
+  /// Whether `owner` holds a companion of `kind`, read from the CourierCompanions contract (ERC-1155 balanceOf): kept
+  /// a few minutes if so, a few seconds if not. False if not (or there's no contract yet); undefined if the chain
+  /// didn't answer; null if it isn't known and a new read would come sooner than two seconds after this player's last
+  /// one (so nobody can make the room hammer the chain).
+  async ownsCompanion(kind, owner, a) {
+    if (!this.env.COMPANIONS_ADDRESS || !owner) return false;
+    const key = `${owner.toLowerCase()}:${kind}`, c = this.companions.get(key);
+    if (c && Date.now() - c.at < (c.owned ? COMPANION_CHECK_MS : COMPANION_MISS_MS)) return c.owned;
+    if (Date.now() - (a.companionAskedAt ?? 0) < 2000) return null;
+    a.companionAskedAt = Date.now();
+    try {
+      const held = await this.cosmeticChain().readContract({
+        address: this.env.COMPANIONS_ADDRESS, abi: COMPANIONS_ABI, functionName: "balanceOf", args: [owner.toLowerCase(), BigInt(kind)],
+      });
+      this.companions.set(key, { at: Date.now(), owned: held > 0n });
+      if (this.companions.size > 2000) this.companions.delete(this.companions.keys().next().value);
+      return held > 0n;
+    } catch {
+      return undefined;
+    }
   }
 
   /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from TokenDrops and kept a minute.
@@ -618,6 +681,7 @@ export class Planet extends DurableObject {
   left(ws) {
     const a = this.info(ws);
     this.seen.delete(ws);
+    if (a) a.hiSeq = (a.hiSeq ?? 0) + 1; // (a hello still reading the chain stops there: no join for someone gone)
     if (a?.hello) this.broadcast(ws, ["leave", a.id]);
   }
 }

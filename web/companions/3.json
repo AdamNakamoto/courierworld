@@ -1,0 +1,20 @@
+{
+  "name": "Frog · Courier Companion",
+  "description": "A little green frog that hops after you, puddle to puddle. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/3.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Pet"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Frog"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

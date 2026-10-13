@@ -1,0 +1,20 @@
+{
+  "name": "Golden Stamp Spirit · Courier Companion",
+  "description": "A golden stamp come to life, trailing sparkles wherever you go. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/21.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Legendary"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Golden Stamp Spirit"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Hovers"
+    }
+  ]
+}

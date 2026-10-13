@@ -5,6 +5,7 @@ import { huntDay, newSpotsIn, HUNT_STAMPS } from "./hunt-pick.js";
 import { TRIPS } from "./trips.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
+import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
@@ -31,13 +32,25 @@ function duration(secs) {
 
 /// How many skins of each rarity are in the deck.
 const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + k.supply), m), {});
+/// The companion tiers' headings in the shop (the rest read fine as they are).
+const TIER_TITLE = { Pet: "Pets", "Space buddy": "Space buddies" };
+/// A companion's blurb, down to its first sentence, for the shop's one line.
+const firstSentence = (text) => {
+  const m = /[.!?]\s/.exec(text); // (no lookbehind: Safari before 16.4 can't even load a module that has one)
+  return m ? text.slice(0, m.index + 1) : text;
+};
 
 /// `hunt`: the treasure hunt's side in the game ({ state(), running(), signIn(), vouchers() }), once TokenDrops is
 /// deployed.
 /// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
 /// `wearing()` is the id of the skin you have on, if any. `username`: your name on the planet (username.js).
 /// `onLaunchpad()` opens the Launchpad (when it's deployed).
-export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null, onLaunchpad = null }) {
+/// `onCompanion(id)` has your companion of kind `id` follow you (null sends it home); `companionShown()` is the kind
+/// following you, if any. (Only once the Courier Companions contract is deployed.)
+export function createOffice(chain, {
+  onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null, onLaunchpad = null,
+  onCompanion = () => {}, companionShown = () => null,
+}) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
@@ -50,6 +63,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   const dropForm = { token: "", perCoin: "", spots: "10", maxPerWallet: "5", dailyCoins: "100", days: "7", amount: "", topUp: "" };
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   let naming = false, nameDraft = ""; // picking a name, and what's typed so far
+  let followNext = null; // a companion just bought: it follows you once the chain shows it's yours, if none is yet
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
   let queue = Promise.resolve(); // stamp renders, one at a time
@@ -74,6 +88,11 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     try {
       snap = await chain.snapshot();
       onSnapshot?.(snap);
+      // (Called only once the snapshot shows it's yours, so the game, which has the snapshot first, agrees.)
+      if (followNext != null && snap.companions?.owned[followNext]) {
+        if (companionShown() == null) onCompanion(followNext);
+        followNext = null;
+      }
       // The admin view, for the wallet the contracts pay; refreshed every few seconds while the panel is open.
       if (chain.admin && snap.account && !panel.hidden) {
         if (adminFor !== snap.account) [admin, adminFor, adminAt] = [null, snap.account, 0];
@@ -455,6 +474,46 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${k.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
     }
 
+    // ---- Courier Companions: friends that follow your courier around, bought only with $STAMP (once deployed)
+    if (s.companions) {
+      const c = s.companions, shown = companionShown(), onChain = new Map(c.kinds.map((k) => [k.id, k]));
+      let needStamp = false; // some kind you could buy costs more $STAMP than you have
+      html += `<section class="companions"><h3>Companions <span class="muted">they follow you everywhere</span></h3>
+        <p class="note">Pets, space buddies and rarer friends that walk or fly beside your courier, on the planet, the moon and Mars. Everyone in the game sees yours. Each kind is limited, and paid only in $STAMP, all of it to the treasury.</p>`;
+      // Following one you no longer hold (sold, or another wallet logged in): still let you send it home.
+      const stray = shown != null && !c.owned[shown] ? companionOf(shown) : null;
+      if (stray) html += `<div class="kv"><span>${stray.icon} ${esc(stray.name)} is following you</span><button class="pbtn" data-act="companionHome">Send home</button></div>`;
+      for (const tier of TIERS) {
+        // Only kinds both on chain and in the catalogue: the game has no model for any other.
+        const list = COMPANIONS.filter((x) => x.tier === tier && onChain.has(x.id));
+        if (!list.length) continue;
+        html += `<h4>${TIER_TITLE[tier] ?? tier}</h4><div class="comp-list">`;
+        for (const meta of list) {
+          const k = onChain.get(meta.id), left = Math.max(0, k.maxSupply - k.minted), own = c.owned[k.id] ?? 0;
+          const capped = k.perWallet > 0 && (c.bought[k.id] ?? 0) >= k.perWallet; // (what you've bought, not what you hold)
+          const poor = !!s.account && s.stamp != null && s.stamp < k.price;
+          if (poor && left && k.open && !capped) needStamp = true;
+          const on = shown === k.id;
+          html += `<div class="comp-card ${on ? "on" : ""} ${!left || !k.open ? "off" : ""}">
+            <span class="comp-icon" aria-hidden="true">${meta.icon}</span>
+            <div class="comp-info"><b>${esc(meta.name)}</b>
+              <span class="comp-blurb" title="${esc(meta.blurb)}">${esc(firstSentence(meta.blurb))}</span>
+              <span class="muted">${fmt(k.price, 0)} $STAMP · ${left ? `${left.toLocaleString()} left` : "Sold out"}${k.open ? "" : " · Closed"}${k.perWallet ? ` · ${k.perWallet} a wallet` : ""}</span>
+              ${own || on ? `<span class="comp-tags">${own ? `<span class="comp-tag">You own ${own}</span>` : ""}${on ? `<span class="comp-tag following">Following</span>` : ""}</span>` : ""}</div>
+            <div class="comp-act">
+              <button class="pbtn primary" data-act="companionBuy" data-id="${k.id}" ${!s.account || busy || !left || !k.open || capped || poor ? "disabled" : ""}
+                ${capped ? `title="You've bought ${k.perWallet}, the most one wallet can"` : ""}>${capped ? "Wallet limit" : "Buy"}</button>
+              ${own ? (on ? `<button class="pbtn" data-act="companionHome">Send home</button>` : `<button class="pbtn" data-act="companionFollow" data-id="${k.id}">Follow me</button>`) : ""}
+            </div></div>`;
+        }
+        html += `</div>`;
+      }
+      if (!s.account) html += `<p class="note">Log in to buy a companion.</p>`;
+      else if (needStamp) html += `<p class="note">You have ${fmt(s.stamp, 0)} $STAMP: not quite enough for the ones you can't buy.${chain.trade ? " Get more in the trade box above." : ""}</p>`;
+      html += `<p class="note">One at a time, up to each kind's wallet limit (which counts what you've bought, so passing one on doesn't reset it). Companions are cosmetic: they never change what you earn.</p>
+        <p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${c.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
+    }
+
     // ---- mint
     html += `<section><h3>Mint couriers</h3>
       <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(s.minted / SUPPLY) * 100}%"></div></div><span>${s.minted.toLocaleString()}/${SUPPLY.toLocaleString()}</span></div>`;
@@ -646,6 +705,21 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       case "unwear":
         onWearSkin(null);
         return draw(true);
+      case "companionBuy": {
+        const meta = companionOf(id);
+        if (!meta) return;
+        return run(`Buying ${meta.name}`, async () => {
+          await chain.buyCompanion(snap, id, 1);
+          // Your first companion comes along straight away; after that you pick who follows.
+          followNext = id;
+        });
+      }
+      case "companionFollow":
+        onCompanion(id);
+        return draw(true);
+      case "companionHome":
+        onCompanion(null);
+        return draw(true);
       case "revealSkins": return run("Revealing the skins", () => chain.devRevealSkins());
       case "skinSale": {
         const open = !snap.skins.saleOpen;
@@ -704,6 +778,13 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       lastHtml = lastMore = "";
       draw(true);
       panel.querySelector("section.skins")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
+    /// Open the panel at the Companions shop (when the contract is deployed).
+    showCompanions() {
+      panel.hidden = false;
+      lastHtml = lastMore = "";
+      draw(true);
+      panel.querySelector("section.companions")?.scrollIntoView({ block: "start", behavior: "smooth" });
     },
     get snap() { return snap; },
     /// The hunt changed (signed in, a find, a new day): redraw.

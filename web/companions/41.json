@@ -1,0 +1,20 @@
+{
+  "name": "Sakura · Courier Companion",
+  "description": "A cheerful companion in cherry-blossom pink, with a sakura hairpin and boundless energy. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/41.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Anime"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Sakura"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

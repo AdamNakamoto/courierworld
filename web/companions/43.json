@@ -1,0 +1,20 @@
+{
+  "name": "Hana · Courier Companion",
+  "description": "A sunny flower-crowned helper with her own tiny satchel. Loves delivering letters with you. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/43.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Anime"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Hana"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

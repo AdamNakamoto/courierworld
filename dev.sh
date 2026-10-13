@@ -101,6 +101,7 @@ write_dev_vars() {
   {
     [ -n "${DROPS:-}" ] && printf 'DROPS_KEY=%s\nDROPS_ADDRESS=%s\nDROPS_CHAIN_ID=%s\n' "$DROPS_KEY" "$DROPS" "$(cast chain-id --rpc-url "$RPC")"
     [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
+    [ -n "${COMPANIONS:-}" ] && printf 'COMPANIONS_ADDRESS=%s\n' "$COMPANIONS"
     [ -n "$(addr PostOffice)" ] && printf 'POST_OFFICE=%s\nPAD_RPC=%s\n' "$(addr PostOffice)" "$RPC"
   } > multiplayer/.dev.vars || true
 }
@@ -123,6 +124,27 @@ deploy_skins_stamp() { # the $STAMP sale for the skins, open, with a float for 5
   OUT="$prev"
 }
 deploy_skins_stamp
+
+deploy_companions() { # Courier Companions with the whole lineup on sale for $STAMP (paid to the treasury, account 1),
+  # and $STAMP for the dev players to buy them with
+  [ -n "$STAMP_ADDR" ] || return 0
+  local prev="$OUT" minter p
+  STAMP=$STAMP_ADDR COMPANIONS_BASE="http://localhost:$WEB_PORT/companions/" deploy script/DeployCompanions.s.sol
+  COMPANIONS=$(addr CourierCompanions)
+  OUT="$prev"
+  # Only $STAMP's minter (the post office, a contract) can mint it, so on this chain we act as it for a moment:
+  # 20,000 $STAMP each for accounts 2-9, with a little ETH for the gas, taken back afterwards (it never holds any).
+  minter=$(cast call "$STAMP_ADDR" "minter()(address)" --rpc-url "$RPC")
+  cast rpc anvil_impersonateAccount "$minter" --rpc-url "$RPC" >/dev/null
+  cast rpc anvil_setBalance "$minter" 0xDE0B6B3A7640000 --rpc-url "$RPC" >/dev/null
+  for p in "${ACCOUNTS[@]:2}"; do
+    cast send "$STAMP_ADDR" "mint(address,uint256)" "$p" 20000000000000000000000 \
+      --from "$minter" --unlocked --rpc-url "$RPC" >/dev/null
+  done
+  cast rpc anvil_setBalance "$minter" 0x0 --rpc-url "$RPC" >/dev/null
+  cast rpc anvil_stopImpersonatingAccount "$minter" --rpc-url "$RPC" >/dev/null
+}
+deploy_companions
 
 deploy_pad() { # the launchpad, on a fork only (it needs the real Uniswap v4 PoolManager and IMD)
   [ "$FORK" = 1 ] && [ -n "$(addr StampToken)" ] || return 0
@@ -176,6 +198,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
     contracts=$(echo "$contracts" | jq --arg sale "$SKINS_STAMP" '. + {skinsStamp: $sale}')
     abis=$(echo "$abis" | jq --argjson sale "$(abi SkinsStampSale)" '. + {skinsStamp: $sale}')
   fi
+  if [ -n "${COMPANIONS:-}" ]; then
+    contracts=$(echo "$contracts" | jq --arg companions "$COMPANIONS" '. + {companions: $companions}')
+    abis=$(echo "$abis" | jq --argjson companions "$(abi CourierCompanions)" '. + {companions: $companions}')
+  fi
   if [ -n "${PAD:-}" ]; then
     contracts=$(echo "$contracts" | jq --arg pad "$PAD" --arg r "$PAD_ROUTER" --arg er "$PAD_ETH_ROUTER" '. + {pad: $pad, padRouter: $r, padEthRouter: $er}')
     abis=$(echo "$abis" | jq --argjson pad "$(abi CourierPad)" --argjson padToken "$(abi PadToken)" '. + {pad: $pad, padToken: $padToken}')
@@ -191,6 +217,7 @@ write_chain_json
 
 echo "CourierNFT $NFT"
 echo "Skins      $SKINS"
+[ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
 echo "Chain      $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Game       http://localhost:$WEB_PORT"
 if [ "$WALLET" = 1 ]; then
@@ -210,9 +237,11 @@ if [ "$STAGED" = 1 ]; then
   export NFT RENDERER
   deploy script/DeployFork.s.sol --sig "runGame()"
   STAMP_ADDR=$(addr StampToken) OFFICE_ADDR=$(addr PostOffice)
+  deploy_companions
   deploy_drops
   write_dev_vars
   write_chain_json
+  [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
   echo "Stage 2: the game is live. Reload the page."
   wait "$WEB_PID"
 else

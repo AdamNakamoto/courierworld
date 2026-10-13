@@ -1,0 +1,20 @@
+{
+  "name": "Mecha Guardian · Courier Companion",
+  "description": "A pint-sized guardian mech with a glowing visor and jet boots. Built to keep couriers safe. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/31.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Mecha"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Mecha Guardian"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

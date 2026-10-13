@@ -1,0 +1,20 @@
+{
+  "name": "Luna · Courier Companion",
+  "description": "A calm stargazer with silver hair and a crescent-moon cloak. Knows every constellation. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/42.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Anime"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Luna"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

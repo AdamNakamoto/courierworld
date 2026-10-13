@@ -210,6 +210,38 @@
     </ul>
   </section>
 
+  <!-- Companions stay hidden until the contract is deployed: then remove `hidden` and the note at the end, and add
+       <a href="#companions">Companions</a> after Skins in the contents above. -->
+  <section class="card" id="companions" hidden>
+    <h2>Companions<small>Little friends that follow your courier around.</small></h2>
+    <p>A companion walks (or hovers) along behind your courier wherever you go, on the planet, the moon and Mars. They're bought
+       only with <b>$STAMP</b>, in the Post office panel, and every bit of it goes to the Courier World treasury. Own more than one?
+       Pick which one follows you. Every player around you sees it too: the game's server checks on-chain that your wallet owns it.</p>
+    <div class="scroll"><table>
+      <tr><th>Tier</th><th>Companions</th><th class="num">Price</th><th class="num">How many of each</th><th class="num">Per wallet</th></tr>
+      <tr><td>Pets</td><td>Cat, Dog, Frog</td><td class="num">100 $STAMP</td><td class="num">300</td><td class="num">5</td></tr>
+      <tr><td>Space buddies</td><td>Mini UFO, Robot Drone, Little Martian</td><td class="num">250 $STAMP</td><td class="num">150</td><td class="num">3</td></tr>
+      <tr><td>Legendary</td><td>Golden Stamp Spirit, Mini Rocket</td><td class="num">500 $STAMP</td><td class="num">50</td><td class="num">2</td></tr>
+      <tr><td>Mecha</td><td>Mecha Guardian, Colossus</td><td class="num">2,500 $STAMP</td><td class="num">30</td><td class="num">1</td></tr>
+      <tr><td>Anime</td><td>Sakura, Luna, Hana</td><td class="num">3,000 $STAMP</td><td class="num">25</td><td class="num">1</td></tr>
+    </table></div>
+    <ul>
+      <li><b>Limited for good.</b> Each kind's supply can only shrink, never grow, and every companion is minted by a buy at
+          its listed price: there's no free mint. (The treasury is Courier World's own, so if the team bought one, its $STAMP
+          would just come back to the team.) The mecha, the colossus and the anime companions are Courier World's own designs.</li>
+      <li>Buy them one at a time, up to each kind's wallet limit in the table, with one signature (no separate approval), and
+          never for more than the price you saw. Wallet limits count what you've bought, so passing a companion on doesn't free up another buy.</li>
+      <li>Companions are just for fun: they never change what you earn.</li>
+      <li>Every kind has a wallet limit, so no one wallet can buy up a kind (it counts per wallet, not per person).</li>
+      <li><b>The 5% royalty is enforced</b> (the owner can change the rate, never above 10%). The contract checks every
+          transfer: marketplaces can only sell companions in trades that pay it, to the treasury. You can always move your own
+          companions between your wallets.</li>
+      <li>The owner (the treasury) sets the prices and opens or closes each kind's sale. Your companions and your $STAMP are
+          never within its reach, and ownership can be handed on but never thrown away.</li>
+    </ul>
+    <p class="note">Audited by IMD Swarm. Companions aren't on sale yet.</p>
+  </section>
+
   <section class="card" id="offices">
     <h2>Post offices<small>Put couriers to work and collect $STAMP.</small></h2>
     <p>Open a post office for <b>0.005 ETH</b>. It comes with a trainee courier (60 power) who starts work straight away, so you

@@ -211,6 +211,54 @@ The collection's page on OpenSea comes from `contractURI()`: name, description (
 add the X link (https://x.com/PlayCourierWld) to the collection's links and turn on creator earnings
 (the registry is already the transfer validator). `./dev.sh` deploys local skins with the sale open; "Reveal skins" in the panel reveals them.
 
+## Courier Companions
+
+`CourierCompanions.sol` (not deployed yet) sells companions that follow your courier around. It's an ERC-1155: each
+kind of companion is a token id with its own $STAMP price, a limited supply (which can only shrink) and a per-wallet
+limit (counting purchases, per address). Paid only in $STAMP, straight from the buyer to the treasury (`buy`, or
+`buyWithPermit` for one signature); buyers name the most they'll pay, nothing is minted except by buying, and resales
+carry an ERC-2981 royalty to the treasury (5%, at most 10%), enforced like the skins': every transfer between
+wallets goes through a transfer validator (ERC1155-C, OpenSea's creator fee enforcement registry
+`0xA000027A9B2802E1ddf7000061001e5c005A0000`), so marketplaces can only move companions in sales that pay it, while
+holders can always move their own; mints (buys) never touch it, and it can be replaced but never removed. Ownership is
+two-step and can't be renounced; the owner sets prices, the treasury and the validator, and can `rescue` tokens sent
+to the contract by mistake (it never holds any otherwise). The first lineup, in `DeployCompanions.s.sol`:
+pets 100 $STAMP (300 of each, 5 a wallet), space buddies 250 (150, 3 a wallet), legendaries 500 (50, 2 a wallet), the
+mecha guardian and colossus 2,500 (30, 1 a wallet) and three anime-style companions 3,000 (25, 1 a wallet).
+
+IMD audited it ([job 145af84f](https://explorer.imd.fun/jobs/145af84f-02c5-4db7-8dc3-3ec3a300b8f1): 3 low, 6
+informational, no critical, high or medium). All nine are addressed (waiting on IMD's re-check): the royalty follows the treasury, the treasury
+can't be the contract, `renounceOwnership` reverts, a failed permit reverts `PermitFailed`, new kinds announce their
+`URI`, `contractURI` (ERC-7572) and `rescue` exist, the trust notes are in the NatSpec, every kind has a wallet limit,
+the royalty is now enforced (finding 6 offered it as an option; Courier World wants its royalties enforced), and the
+tests cover the gaps (`CourierCompanions.t.sol`; `CourierCompanions.invariant.t.sol` predicts
+every call's outcome and fails on any surprise).
+
+- `web/companion-kinds.js`: what each kind is (name, tier, blurb...), shared by the game, the Post Office panel (the
+  shop, where players also pick which companion follows them), the server and the metadata. Prices and supplies live
+  on chain.
+- `web/companions.js` draws the companions and makes them follow their courier (`createFollower(id)`), on every
+  world; `web/companions-premium.js` has the bigger models (the mecha, the colossus and the anime companions).
+- The multiplayer room shows a player's companion to others only after reading on-chain that the wallet on their
+  name tag owns it (`COMPANIONS_ADDRESS`).
+- Until the contract is deployed, everything hides itself: `chain.companions` is null and the server has no
+  `COMPANIONS_ADDRESS`, so the live site plays as before.
+- Metadata: `web/companions/<id>.json` (name, description, picture, and Tier / Kind / Moves traits) under the
+  contract's `base` (`COMPANIONS_BASE`, https://courierworld.fun/companions/ by default), plus `collection.json`. The
+  pictures (`<id>.png`, `collection.png`) are rendered from the game models. `contractURI()` serves `collection.json`
+  (ERC-7572), so marketplaces pick up the collection's name, picture and links from it.
+
+```bash
+cd contracts
+./script/deploy-companions.sh                                                # dry run on a fork
+./script/deploy-companions.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet (it becomes the owner)
+cd ../multiplayer   # set COMPANIONS_ADDRESS in wrangler.toml's [vars], then
+npx wrangler deploy
+```
+
+The deploy writes `deployments/robinhood-companions.json` and runs `export-web.sh`, which adds the companions to
+`web/deployments/robinhood.json`; commit it and the shop opens.
+
 ## The launchpad
 
 Any player with a post office can launch their own token, inside the game (`CourierPad.sol`, live since
@@ -348,11 +396,12 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierSkins.sol` | 999 cosmetic skins: blind mint, commit-reveal shuffle, on-chain metadata, enforced 5% royalty (ERC721-C) |
 | `TokenDrops.sol` | The treasure hunt's payouts: the treasury's token drops and the golden stamps ($STAMP), for finds the multiplayer room has checked |
 | `StampHunt.sol` | The earlier $STAMP-only hunt (replaced by TokenDrops, never deployed) |
+| `CourierCompanions.sol` | Companions that follow your courier: ERC-1155 kinds sold only for $STAMP (straight to the treasury), supplies that only shrink, wallet limits, enforced 5% royalty (ERC1155-C) (not deployed yet) |
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
-cd contracts && forge test                                             # 347 tests
-forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
+cd contracts && forge test                                             # 395 tests
+forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest|CourierCompanionsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 
 ## Deploying to Robinhood Chain

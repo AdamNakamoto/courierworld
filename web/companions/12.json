@@ -1,0 +1,20 @@
+{
+  "name": "Robot Drone · Courier Companion",
+  "description": "A hovering helper bot with a big friendly screen face. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/12.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Space buddy"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Robot Drone"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Hovers"
+    }
+  ]
+}

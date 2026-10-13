@@ -91,6 +91,23 @@ const FRAMING = {
 };
 const BLOB = { plane: 2.6, supercar: 2.4, neonbike: 1.9, hoverboard: 1.3 };
 
+/// Draw the scene as it stands onto the canvas: colour, then normals, then the ink pass over a `background` halftone.
+function shoot(k, background) {
+  const bg = new THREE.Color(background);
+  k.post.uniforms.bg.value.copy(bg);
+  k.post.uniforms.bg2.value.copy(bg).offsetHSL(0, 0.02, 0.06);
+  k.gl.setRenderTarget(k.colorRT);
+  k.gl.render(k.scene, k.camera);
+  k.blob.visible = false;
+  k.scene.overrideMaterial = k.normalMat;
+  k.gl.setRenderTarget(k.normalRT);
+  k.gl.render(k.scene, k.camera);
+  k.scene.overrideMaterial = null;
+  k.blob.visible = true;
+  k.gl.setRenderTarget(null);
+  k.gl.render(k.postScene, k.postCam);
+}
+
 /// Render courier `c` (from traits.courier): just the 3D art, w×h pixels. `rideColour` paints the ride
 /// (skins), otherwise it takes the courier's accent.
 function renderArt(c, w, h, rideColour = null, headroom = false) {
@@ -114,20 +131,7 @@ function renderArt(c, w, h, rideColour = null, headroom = false) {
   const f = headroom && c.ride.key === "foot" ? { d: 3.55, y: 1.0 } : FRAMING[c.ride.key];
   k.camera.position.set(0, f.y + 0.4, f.d);
   k.camera.lookAt(0, f.y, 0);
-  const bg = new THREE.Color(c.background);
-  k.post.uniforms.bg.value.copy(bg);
-  k.post.uniforms.bg2.value.copy(bg).offsetHSL(0, 0.02, 0.06);
-
-  k.gl.setRenderTarget(k.colorRT);
-  k.gl.render(k.scene, k.camera);
-  k.blob.visible = false;
-  k.scene.overrideMaterial = k.normalMat;
-  k.gl.setRenderTarget(k.normalRT);
-  k.gl.render(k.scene, k.camera);
-  k.scene.overrideMaterial = null;
-  k.blob.visible = true;
-  k.gl.setRenderTarget(null);
-  k.gl.render(k.postScene, k.postCam);
+  shoot(k, c.background);
 
   k.scene.remove(subject);
   subject.traverse((o) => {
@@ -347,5 +351,81 @@ export async function renderSealedStamp(size = 512) {
   g.fillStyle = "#fbf8ef";
   g.strokeText("REVEALED SOON", p + A - 16 * u, p + 16 * u);
   g.fillText("REVEALED SOON", p + A - 16 * u, p + 16 * u);
+  return out;
+}
+
+const TIER_INK = { Pet: "#5e9f57", "Space buddy": "#3f6fbf", Legendary: "#c9962a", Mecha: "#8d5a99", Anime: "#c4577f" };
+
+/// Any ready-made `subject` (feet at y 0, facing +z), turned a little and framed to fit, w×h pixels. The caller
+/// builds it and disposes of it.
+function renderSubject(subject, w, h, background, blob, zoom = 1) {
+  const k = setup(w, h);
+  const yaw = subject.rotation.y;
+  subject.rotation.y = yaw - 0.55;
+  k.scene.add(subject);
+  subject.updateMatrixWorld(true);
+  // (Only what shows: models park hidden sparkles and flames out of the way.)
+  const box = new THREE.Box3().expandByPoint(new THREE.Vector3(0, 0, 0)), part = new THREE.Box3();
+  subject.traverseVisible((o) => {
+    if (!o.isMesh) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    box.union(part.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld));
+  });
+  const size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
+  const t = Math.tan(THREE.MathUtils.degToRad(k.camera.fov) / 2);
+  const d = Math.max(size.y / 2 / t, Math.max(size.x, size.z) / 2 / t / k.camera.aspect) * 1.2 / zoom + Math.max(size.x, size.z) / 2;
+  k.camera.position.set(mid.x, mid.y + d * 0.16, mid.z + d);
+  k.camera.lookAt(mid.x, mid.y, mid.z);
+  k.camera.far = Math.max(50, d * 3);
+  k.camera.updateProjectionMatrix();
+  k.blob.scale.setScalar(blob);
+  shoot(k, background);
+  k.camera.far = 50;
+  k.camera.updateProjectionMatrix();
+  k.scene.remove(subject);
+  subject.rotation.y = yaw;
+  return k.canvas;
+}
+
+/// A companion's stamp: the companion (`subject`, built by the game's own code), its name on the label, its tier in
+/// the corner and how many of it there are. `c`: { name, tier, supply, background, subject, blob (its shadow, m),
+/// zoom (closer than the fit, for a group) }.
+export async function renderCompanionStamp(c, size = 512) {
+  await document.fonts.load(`${Math.round(size * 0.06)}px Bungee`);
+  const { out, g, u, p, A } = stampBase(size);
+  const labelH = 54 * u, artH = A - labelH;
+  g.drawImage(renderSubject(c.subject, Math.round(A), Math.round(artH), c.background, c.blob ?? 0.9, c.zoom), p, p, A, artH);
+  g.lineWidth = 4 * u;
+  g.strokeStyle = "#283033";
+  g.strokeRect(p, p, A, A);
+  g.beginPath(); g.moveTo(p, p + artH); g.lineTo(p + A, p + artH); g.stroke();
+  g.fillStyle = "#fbf8ef";
+  g.fillRect(p + 2 * u, p + artH + 2 * u, A - 4 * u, labelH - 4 * u);
+  g.fillStyle = "#283033";
+  g.textBaseline = "middle";
+  g.textAlign = "center";
+  const name = c.name.toUpperCase();
+  let fs = 26;
+  g.font = `${Math.round(fs * u)}px Bungee`;
+  while (g.measureText(name).width > A - 28 * u && fs > 12) g.font = `${Math.round(--fs * u)}px Bungee`;
+  g.fillText(name, p + A / 2, p + artH + labelH / 2 + 2 * u);
+  const vx = p + A - 16 * u, vy = p + 16 * u;
+  g.textAlign = "right";
+  g.textBaseline = "top";
+  g.lineWidth = 6 * u;
+  g.strokeStyle = "#fbf8ef";
+  if (c.tier) {
+    g.font = `${Math.round(15 * u)}px Bungee`;
+    g.fillStyle = TIER_INK[c.tier] ?? "#283033";
+    g.strokeText(c.tier.toUpperCase(), vx, vy);
+    g.fillText(c.tier.toUpperCase(), vx, vy);
+  }
+  if (c.supply) {
+    const ed = `One of ${c.supply}`;
+    g.font = `${Math.round(12 * u)}px Bungee`;
+    g.fillStyle = "#283033";
+    g.strokeText(ed, vx, vy + 22 * u);
+    g.fillText(ed, vx, vy + 22 * u);
+  }
   return out;
 }

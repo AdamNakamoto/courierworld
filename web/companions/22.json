@@ -1,0 +1,20 @@
+{
+  "name": "Mini Rocket · Courier Companion",
+  "description": "A tiny rocket that flies beside you on a little flame. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/22.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Legendary"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Mini Rocket"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Hovers"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Cat · Courier Companion",
+  "description": "A ginger post-office cat. Naps on parcels, chases butterflies, always comes back. A companion that follows your courier around Courier World. Bought with $STAMP.",
+  "image": "https://courierworld.fun/companions/1.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Pet"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Cat"
+    },
+    {
+      "trait_type": "Moves",
+      "value": "Walks"
+    }
+  ]
+}

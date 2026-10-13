@@ -59,6 +59,21 @@ const ERROR_TEXT = {
   NotRunning: "That drop isn't running.",
   BadDrop: "Check the drop's settings: coins out (1 to 48), a wallet's daily coins (up to that), coins paid a day across everyone (a wallet's to 10,000), days (1 to 365), starting within a year.",
   StillRunning: "Players can still claim from this drop: withdraw the day after it ends.",
+  // Courier Companions (CourierCompanions). Its Closed, SoldOut, BadQuantity and PriceChanged share names with the
+  // skins' errors above, so buyCompanion words those itself (COMPANION_ERROR_TEXT).
+  UnknownKind: "That companion isn't in the shop.",
+  WalletLimit: "You've bought as many of that companion as one wallet can.",
+  BadPrice: "A companion's price can't be zero.",
+  BadSupply: "Check the companion's supply (more than zero) and wallet limit.",
+  SupplyCanOnlyShrink: "A companion's supply can only shrink, and never below how many have been bought.",
+  RoyaltyTooHigh: "That royalty is above the contract's 10% limit.",
+};
+/// What the companions contract means by the error names it shares with the skins.
+const COMPANION_ERROR_TEXT = {
+  Closed: "That companion isn't on sale right now.",
+  SoldOut: "Sold out: every one of that companion has been bought.",
+  BadQuantity: "Buy between 1 and 10 companions at a time.",
+  PriceChanged: "That companion's price just went up. Check the new price and try again.",
 };
 
 // Uniswap v4 wraps a hook's revert; the reason inside is what the player needs.
@@ -81,13 +96,20 @@ const QUOTER_ABI = parseAbi([
 ]);
 let knownErrors = [];
 
+/// The name of the contract error behind a failed call or transaction, if there is one.
+function revertName(e) {
+  if (!(e instanceof BaseError)) return null;
+  const revert = e.walk((err) => err instanceof ContractFunctionRevertedError);
+  let name = revert?.data?.errorName;
+  if (name === "WrappedError") {
+    try { name = decodeErrorResult({ abi: knownErrors, data: revert.data.args[2] }).errorName; } catch {}
+  }
+  return name ?? null;
+}
+
 export function explain(e) {
   if (e instanceof BaseError) {
-    const revert = e.walk((err) => err instanceof ContractFunctionRevertedError);
-    let name = revert?.data?.errorName;
-    if (name === "WrappedError") {
-      try { name = decodeErrorResult({ abi: knownErrors, data: revert.data.args[2] }).errorName; } catch {}
-    }
+    const name = revertName(e);
     if (name) return ERROR_TEXT[name] ?? name;
     if (/rejected|denied/i.test(e.shortMessage ?? "")) return "Transaction rejected in wallet.";
     return e.shortMessage ?? e.message;
@@ -126,7 +148,7 @@ export async function connectChain() {
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
     ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []),
-    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...V4_ABI,
+    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -137,6 +159,8 @@ export async function connectChain() {
     drops: dep.contracts.drops ? { address: dep.contracts.drops, abi: withErrors(dep.abis.drops) } : null,
     skins: dep.contracts.skins ? { address: dep.contracts.skins, abi: withErrors(dep.abis.skins) } : null,
     skinsStamp: dep.contracts.skinsStamp ? { address: dep.contracts.skinsStamp, abi: withErrors(dep.abis.skinsStamp) } : null,
+    // Courier Companions: none until the contract is deployed, and every companion feature hides till then.
+    companions: dep.contracts.companions ? { address: dep.contracts.companions, abi: withErrors(dep.abis.companions) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -200,9 +224,47 @@ export async function connectChain() {
     provider.on?.("chainChanged", () => location.reload());
   }
   let onAccount = null;
+  const COMPANIONS_EVERY_MS = 15_000;
+  let companionsLast = null; // { who, at, value }: the shop as last read, for that wallet
+
+  /// Courier Companions: every kind (its price, supply, wallet limit and whether it's on sale) and, for `who`, how
+  /// many of each they hold and have bought (wallet limits count what's been bought, not what's held). Read afresh
+  /// every COMPANIONS_EVERY_MS (and straight after a buy), not with every snapshot; if a read fails, the last answer
+  /// for the same wallet stands (none if there isn't one), so the rest of the snapshot never waits on the shop.
+  async function companionsOf(who) {
+    const last = companionsLast;
+    if (last && last.who === who && Date.now() - last.at < COMPANIONS_EVERY_MS) return last.value;
+    try {
+      const value = await readCompanions(who);
+      companionsLast = { who, at: Date.now(), value };
+      return value;
+    } catch {
+      return last?.who === who ? last.value : null;
+    }
+  }
+  async function readCompanions(who) {
+    const [ids, list] = await read(C.companions, "allKinds");
+    const kinds = list.map((k, i) => ({
+      id: Number(ids[i]), price: k.price, maxSupply: Number(k.maxSupply), minted: Number(k.minted), perWallet: Number(k.perWallet), open: k.open,
+    }));
+    const out = { address: C.companions.address, kinds, owned: {}, bought: {} };
+    if (who && ids.length) {
+      const [held, got] = await Promise.all([
+        read(C.companions, "balanceOfBatch", [ids.map(() => who), ids]),
+        Promise.all(ids.map((id) => read(C.companions, "bought", [who, id]))),
+      ]);
+      kinds.forEach((k, i) => {
+        out.owned[k.id] = Number(held[i]);
+        out.bought[k.id] = Number(got[i]);
+      });
+    }
+    return out;
+  }
 
   const skinDesigns = new Map(); // skin id -> design, after the reveal
   async function snapshot() {
+    // Started first so that, when it's time to read the shop again, those reads overlap the ones below.
+    const companions = C.companions ? companionsOf(account) : null;
     const [block, minted, price, saleOpen, seed] = await Promise.all([
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
     ]);
@@ -230,6 +292,7 @@ export async function connectChain() {
         s.skins.mine = ids.map((id, i) => ({ id, design: designs[i] }));
       }
     }
+    s.companions = companions ? await companions : null;
     if (game) {
       const [totalPower, rewardPerBlock, officePrice, cooldown, levelBase] = await Promise.all([
         read(C.office, "totalPower"), read(C.office, "rewardPerBlock"), read(C.office, "officePrice"),
@@ -700,6 +763,35 @@ export async function connectChain() {
         if ((await pub.waitForTransactionReceipt({ hash })).status !== "success") throw new Error("The top-up didn't go through.");
       },
     } : null,
+    /// The Courier Companions contract's address (null until it's deployed; the snapshot's `companions` is too).
+    companionsAddress: C.companions?.address ?? null,
+    /// Buy `qty` of companion kind `id` with $STAMP, all of it to the treasury: one signature (a permit) and one
+    /// transaction, or an approval first for wallets that can't sign typed data.
+    /// Pays the price the panel showed, at most: if it goes up first, the contract refuses (PriceChanged).
+    async buyCompanion(s, id, qty) {
+      const shop = C.companions, kind = s.companions?.kinds.find((k) => k.id === id);
+      if (!shop || !C.stamp || !kind) throw new Error("That companion isn't in the shop.");
+      if (!account) throw new Error("Log in first.");
+      const n = BigInt(qty), cost = kind.price * n, args = [BigInt(id), n, cost];
+      try {
+        if ((await read(C.stamp, "allowance", [account, shop.address])) >= cost) return await send(shop, "buy", args);
+        const deadline = (await pub.getBlock()).timestamp + 600n;
+        let sig = null;
+        try {
+          sig = await signPermit(shop.address, cost, deadline);
+        } catch (e) {
+          if (rejected(e)) throw e;
+        }
+        if (sig) return await send(shop, "buyWithPermit", [...args, deadline, sig.v, sig.r, sig.s]);
+        await send(C.stamp, "approve", [shop.address, cost]);
+        return await send(shop, "buy", args);
+      } catch (e) {
+        const text = COMPANION_ERROR_TEXT[revertName(e)];
+        throw text ? new Error(text) : e;
+      } finally {
+        companionsLast = null; // (bought or not, the next snapshot reads the shop afresh)
+      }
+    },
     /// The skins contract's owner: open or close the sale, and reveal once it has been closed for a block.
     skinsAdmin: C.skins ? {
       setSaleOpen: (open) => send(C.skins, "setSaleOpen", [open]),
