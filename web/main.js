@@ -57,7 +57,7 @@ const POSTMASTER = [
 const INTRO = [
   { name: "You", text: "Overslept again... the post office opened ages ago." },
   { name: "You", text: "Three letters in the bag. Better get walking." },
-  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around. Follow the arrow at the top." },
+  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around and scroll (or pinch) to zoom. Follow the arrow at the top." },
 ];
 
 // ---------------------------------------------------------------- characters
@@ -709,7 +709,17 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 addEventListener("blur", () => keys.clear());
 
+// The camera you steer: how high it looks down from (pitch, radians; below 0 it's low, looking up past the courier)
+// and how far back it is (metres). Wide, like photo mode's, but always behind and above the ground.
 let pitch = 0.56, dist = 8;
+const PITCH_MIN = -0.3, PITCH_MAX = 1.42, DIST_MIN = 2.5, DIST_MAX = 25;
+let lookHold = 0; // seconds the camera leaves your view alone after you move it (before swinging in behind again)
+/// Zoom by `f` (above 1: out): photo mode's camera, or the one you play with.
+function zoom(f) {
+  if (photo) return photoZoom(f);
+  dist = Math.min(DIST_MAX, Math.max(DIST_MIN, dist * f));
+  lookHold = 3;
+}
 const canvas = $("c");
 let drag = null;
 let tap = null; // where and when a press began, to tell a tap from a drag
@@ -724,9 +734,9 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 canvas.addEventListener("pointermove", (e) => {
   if (presses.has(e.pointerId)) presses.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (photo && presses.size === 2) {
+  if (presses.size === 2) {
     const [a, b] = [...presses.values()], apart = Math.hypot(a.x - b.x, a.y - b.y);
-    if (pinch) photoZoom(pinch / apart);
+    if (pinch) zoom(pinch / apart);
     pinch = apart;
     tap = null;
     return;
@@ -736,7 +746,10 @@ canvas.addEventListener("pointermove", (e) => {
   drag = { x: e.clientX, y: e.clientY };
   yaw(-dx * 0.006);
   if (photo) photo.pitch = Math.min(1.5, Math.max(-1.35, photo.pitch + dy * 0.004));
-  else pitch = Math.min(0.95, Math.max(0.06, pitch + dy * 0.004));
+  else {
+    pitch = Math.min(PITCH_MAX, Math.max(PITCH_MIN, pitch + dy * 0.004));
+    lookHold = 3;
+  }
 });
 canvas.addEventListener("pointercancel", (e) => {
   presses.delete(e.pointerId);
@@ -759,8 +772,7 @@ canvas.addEventListener("pointerup", (e) => {
 });
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
-  if (photo) return photoZoom(Math.exp(e.deltaY * 0.0015));
-  dist = Math.min(12, Math.max(4.5, dist * Math.exp(e.deltaY * 0.001)));
+  zoom(Math.exp(e.deltaY * 0.0015));
 }, { passive: false });
 
 const joy = { x: 0, y: 0, id: null };
@@ -940,15 +952,24 @@ const TITLE_CAM = { pos: new THREE.Vector3(0, 6, 74).multiplyScalar(R / 24), loo
 // The camera you asked for (pitch, dist) and the one in use, which lifts over buildings that would
 // get in the way, or comes in closer, and eases back once the view is clear.
 let camPitch = 0.56, camDist = 8, camDodge = 0, camLift = 0; // camLift rises and falls with the courier
-const followCam = () => ({
-  pos: new THREE.Vector3(0, R + camLift + 1.0 + Math.sin(camPitch) * camDist, Math.cos(camPitch) * camDist),
-  look: new THREE.Vector3(0, R + camLift + 1.05, -1.8),
-});
-/// Whether the view from this camera to the courier is clear of buildings (and tanks and cliffs).
+function followCam() {
+  const pos = new THREE.Vector3(0, R + camLift + 1.0 + Math.sin(camPitch) * camDist, Math.cos(camPitch) * camDist);
+  // No lower than just above the ground; from down there, look up past the courier into the sky (as photo mode does).
+  const under = pos.clone().normalize().applyQuaternion(world.quaternion.clone().invert());
+  const floor = R + Math.min(camLift, W.terrain.surfaceAt(under, camLift + 0.5)) + 0.35;
+  if (pos.length() < floor) pos.setLength(floor);
+  // Looking a little ahead of the courier, less so close in or from overhead (so they stay in the picture).
+  const ahead = 1.8 * Math.min(1, camDist / 8) * Math.min(1, Math.max(0, Math.cos(camPitch)) / 0.85);
+  const look = new THREE.Vector3(0, R + camLift + 1.05, -ahead);
+  if (camPitch < 0) look.y += -Math.sin(camPitch) * camDist * 1.1;
+  return { pos, look };
+}
+/// Whether this camera's spot is clear of buildings (and tanks and cliffs). Only near the camera itself: anything
+/// further along, between it and the courier, the cutaway sees through.
 function camClear(walls, inv, p, d) {
   const from = new THREE.Vector3(0, R + camLift + 1.0, 0), to = new THREE.Vector3(0, R + camLift + 1.0 + Math.sin(p) * d, Math.cos(p) * d);
   const q = new THREE.Vector3(), v = new THREE.Vector3();
-  for (let s = 0.1; s <= 1.0001; s += 0.075) {
+  for (let s = Math.max(0.1, 1 - 2.5 / Math.max(d, 0.1)); s <= 1.0001; s += 0.075) {
     q.lerpVectors(from, to, s).applyQuaternion(inv);
     const len = q.length(), h = len - R;
     q.divideScalar(len);
@@ -968,15 +989,16 @@ function steerCamera(dt) {
   const me = localPos();
   const walls = W.obstacles.filter((o) => o.wall && me.dot(o.d) > Math.cos((dist + 6) / R));
   const inv = playerQ.clone().invert();
-  const tries = [[pitch, dist], [pitch + 0.3, dist], [pitch + 0.55, dist * 0.92], [Math.min(1.3, pitch + 0.8), dist * 0.82],
-    [Math.min(1.3, pitch + 0.8), dist * 0.62], [Math.min(1.3, pitch + 0.8), dist * 0.45]];
+  const up = (x) => Math.min(PITCH_MAX, Math.max(0.06, x));
+  const tries = [[pitch, dist], [up(pitch + 0.3), dist], [up(pitch + 0.55), dist * 0.92], [up(Math.max(1.3, pitch) + 0.1), dist * 0.82],
+    [up(Math.max(1.3, pitch) + 0.1), dist * 0.62], [up(Math.max(1.3, pitch) + 0.1), dist * 0.45]];
   const pickd = tries.find(([p, d]) => camClear(walls, inv, p, d)) ?? tries[tries.length - 1];
   const [p, d] = pickd;
-  // Get out of the way quickly and settle back slowly; otherwise just follow your own camera moves.
+  // Your own camera moves: followed closely, as in photo mode. In a building's way: out of it quickly, back slowly.
   camDodge = pickd === tries[0] ? Math.max(0, camDodge - dt) : 2.5;
-  const back = camDodge > 0 ? 1.5 : 10;
-  camPitch += (p - camPitch) * (1 - Math.exp(-dt * (p > camPitch ? 5 : back)));
-  camDist += (d - camDist) * (1 - Math.exp(-dt * (d < camDist ? 5 : back)));
+  const own = pickd === tries[0] && camDodge === 0, back = camDodge > 0 ? 1.5 : 14;
+  camPitch += (p - camPitch) * (1 - Math.exp(-dt * (own ? 14 : p > camPitch ? 5 : back)));
+  camDist += (d - camDist) * (1 - Math.exp(-dt * (own ? 14 : d < camDist ? 5 : back)));
 }
 
 // ---------------------------------------------------------------- photo mode
@@ -1342,8 +1364,9 @@ function frame() {
       facing = wrap(facing + wrap(aim - facing) * (1 - Math.exp(-dt * 14 * heavy)));
       turnRate = wrap(facing - before) / Math.max(dt, 1e-3);
     }
-    // The camera swings in behind the courier when heading away from it.
-    if (v > 0.3 && !drag) {
+    // The camera swings in behind the courier when heading away from it (a few seconds after you last moved it).
+    lookHold = Math.max(0, lookHold - dt);
+    if (v > 0.3 && !drag && lookHold === 0) {
       const a = Math.atan2(vel.x, vel.y);
       yaw(a * Math.max(0, Math.cos(a)) * Math.min(1, dt * 2.2) * Math.min(1, v / SPEED));
     }
@@ -1431,7 +1454,7 @@ function frame() {
       steerCamera(dt);
       f = followCam();
     }
-    const k = 1 - Math.exp(-dt * (photo ? 12 : 8));
+    const k = 1 - Math.exp(-dt * 12);
     camPos.lerp(f.pos, k);
     camLook.lerp(f.look, k);
     if (photo) player.group.visible = !photo.hide && photo.dist > 0;
