@@ -76,6 +76,13 @@ if [ -f "$GAME" ]; then
       '.contracts.pad = $p[0].pad | .contracts.padRouter = $p[0].router | .contracts.padEthRouter = $p[0].ethRouter
        | .padBlock = $p[0].block | .abis.pad = $padAbi | .abis.padToken = $padTokenAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
+  # Courier Companions, once deployed (script/deploy-companions.sh writes deployments/robinhood-companions.json).
+  COMPANIONS=deployments/robinhood-companions.json
+  if [ -f "$COMPANIONS" ]; then
+    tmp=$(mktemp)
+    jq --slurpfile c "$COMPANIONS" --argjson companionsAbi "$(abi CourierCompanions)" \
+      '.contracts.companions = $c[0].companions | .companionsBlock = $c[0].block | .abis.companions = $companionsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else
   jq -n \
