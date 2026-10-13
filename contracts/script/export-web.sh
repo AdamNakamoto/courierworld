@@ -78,7 +78,10 @@ if [ -f "$GAME" ]; then
   fi
   # Courier Companions, once deployed (script/deploy-companions.sh writes deployments/robinhood-companions.json).
   COMPANIONS=deployments/robinhood-companions.json
-  if [ -f "$COMPANIONS" ]; then
+  # (forge writes that file even when sending fails: skip it if the chain says there's no contract there.)
+  if [ -f "$COMPANIONS" ] && [ "$(cast code "$(jq -r .companions "$COMPANIONS")" --rpc-url "${RPC_URL:-robinhood}" 2>/dev/null)" = "0x" ]; then
+    echo "skipped the companions: no contract at $(jq -r .companions "$COMPANIONS")" >&2
+  elif [ -f "$COMPANIONS" ]; then
     tmp=$(mktemp)
     jq --slurpfile c "$COMPANIONS" --argjson companionsAbi "$(abi CourierCompanions)" \
       '.contracts.companions = $c[0].companions | .companionsBlock = $c[0].block | .abis.companions = $companionsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"

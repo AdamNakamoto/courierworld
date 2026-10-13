@@ -9,8 +9,10 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
-import {CourierCompanions} from "../src/CourierCompanions.sol";
+import {ERC2981} from "@openzeppelin/contracts/token/common/ERC2981.sol";
+import {CourierCompanions, ICreatorToken} from "../src/CourierCompanions.sol";
 import {StampToken} from "../src/StampToken.sol";
+import {DeployCompanions} from "../script/DeployCompanions.s.sol";
 
 /// A contract wallet that tries to buy again while its companion is being minted to it.
 contract GreedyBuyer is IERC1155Receiver {
@@ -46,6 +48,31 @@ contract GreedyBuyer is IERC1155Receiver {
     }
 }
 
+/// Acts like OpenSea's strict registry: holders may move their own companions; any other caller needs the
+/// marketplace's fee check (here, `authorize`). Counts the checks it's asked for.
+contract StrictValidator1155 {
+    error UnauthorizedTransfer();
+
+    mapping(address => bool) public authorized;
+    uint256 public checks;
+
+    function authorize(address operator, bool ok) external {
+        authorized[operator] = ok;
+    }
+
+    function validateTransfer(address caller, address from, address, uint256, uint256) external {
+        ++checks;
+        if (caller != from && !authorized[caller]) revert UnauthorizedTransfer();
+    }
+}
+
+/// A validator that refuses every transfer.
+contract RefuseAll {
+    function validateTransfer(address, address, address, uint256, uint256) external pure {
+        revert("no transfers");
+    }
+}
+
 /// A contract with no way to receive ERC-1155 tokens.
 contract NoReceiver {
     function go(CourierCompanions shop, uint256 id, uint256 cost) external {
@@ -57,6 +84,7 @@ contract NoReceiver {
 contract CourierCompanionsTest is Test {
     StampToken stamp;
     CourierCompanions shop;
+    StrictValidator1155 validator;
 
     address owner = makeAddr("owner");
     address treasury = makeAddr("treasury");
@@ -75,7 +103,8 @@ contract CourierCompanionsTest is Test {
         stamp.setMinter(address(this));
         stamp.mint(alice, 100_000e18);
         stamp.mint(bob, 100_000e18);
-        shop = new CourierCompanions(owner, address(stamp), treasury, "https://courierworld.fun/companions/");
+        validator = new StrictValidator1155();
+        shop = new CourierCompanions(owner, address(stamp), treasury, address(validator), "https://courierworld.fun/companions/");
         vm.startPrank(owner);
         shop.setKind(CAT, 100e18, 300, 0, true);
         shop.setKind(UFO, 250e18, 150, 2, true);
@@ -366,6 +395,264 @@ contract CourierCompanionsTest is Test {
         assertEq(shop.owner(), alice);
     }
 
+    // ---------------------------------------------------------------- after the audit (IMD job 145af84f)
+
+    function test_setTreasuryMovesTheRoyalty() public {
+        address next = makeAddr("next");
+        vm.prank(owner);
+        shop.setTreasury(next);
+        (address to, uint256 fee) = shop.royaltyInfo(CAT, 1000e18);
+        assertEq(to, next);
+        assertEq(fee, 50e18);
+    }
+
+    function test_setTreasuryLeavesARoyaltyPaidElsewhere() public {
+        address studio = makeAddr("studio");
+        address next = makeAddr("next");
+        vm.startPrank(owner);
+        shop.setRoyalty(studio, 700);
+        shop.setTreasury(next);
+        vm.stopPrank();
+        (address to, uint256 fee) = shop.royaltyInfo(CAT, 1000e18);
+        assertEq(to, studio);
+        assertEq(fee, 70e18);
+    }
+
+    function test_cannotRenounce() public {
+        vm.prank(owner);
+        vm.expectRevert(CourierCompanions.CannotRenounce.selector);
+        shop.renounceOwnership();
+        assertEq(shop.owner(), owner);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        shop.renounceOwnership();
+    }
+
+    function test_treasuryCantBeTheShop() public {
+        vm.prank(owner);
+        vm.expectRevert(CourierCompanions.BadTreasury.selector);
+        shop.setTreasury(address(shop));
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(CourierCompanions.BadTreasury.selector);
+        new CourierCompanions(owner, address(stamp), next, address(validator), "x/");
+    }
+
+    function test_royaltyNeedsAReceiver() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ERC2981.ERC2981InvalidDefaultRoyaltyReceiver.selector, address(0)));
+        shop.setRoyalty(address(0), 100);
+    }
+
+    function test_badPermitRevertsPermitFailed() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        // Signed for less than the buy needs.
+        (uint8 v, bytes32 r, bytes32 s) = _permit(alicePk, address(shop), 249e18, deadline);
+        vm.prank(alice);
+        vm.expectRevert(CourierCompanions.PermitFailed.selector);
+        shop.buyWithPermit(UFO, 1, 250e18, deadline, v, r, s);
+        // Signed for another spender.
+        (v, r, s) = _permit(alicePk, bob, 250e18, deadline);
+        vm.prank(alice);
+        vm.expectRevert(CourierCompanions.PermitFailed.selector);
+        shop.buyWithPermit(UFO, 1, 250e18, deadline, v, r, s);
+        assertEq(stamp.nonces(alice), 0, "nothing was used up");
+    }
+
+    function test_expiredPermitRevertsPermitFailed() public {
+        uint256 deadline = block.timestamp - 1;
+        (uint8 v, bytes32 r, bytes32 s) = _permit(alicePk, address(shop), 250e18, deadline);
+        vm.prank(alice);
+        vm.expectRevert(CourierCompanions.PermitFailed.selector);
+        shop.buyWithPermit(UFO, 1, 250e18, deadline, v, r, s);
+    }
+
+    function test_permitForTheExactCostLeavesNoAllowance() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permit(alicePk, address(shop), 250e18, deadline);
+        vm.prank(alice);
+        shop.buyWithPermit(UFO, 1, 250e18, deadline, v, r, s);
+        assertEq(stamp.allowance(alice, address(shop)), 0);
+    }
+
+    function test_permitSlackStaysApprovedButOnlyForItsOwnBuys() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permit(alicePk, address(shop), 400e18, deadline);
+        vm.prank(alice);
+        shop.buyWithPermit(UFO, 1, 400e18, deadline, v, r, s);
+        assertEq(stamp.allowance(alice, address(shop)), 150e18);
+        // Bob can't spend Alice's leftover allowance: his buy pulls from his own wallet.
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(shop), 0, 250e18));
+        shop.buy(UFO, 1, 250e18);
+        assertEq(stamp.balanceOf(alice), 100_000e18 - 250e18);
+    }
+
+    function test_rescueReturnsTokensSentByMistake() public {
+        vm.prank(bob);
+        stamp.transfer(address(shop), 77e18);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        shop.rescue(stamp, alice);
+        vm.prank(owner);
+        vm.expectRevert(CourierCompanions.ZeroAddress.selector);
+        shop.rescue(stamp, address(0));
+        vm.prank(owner);
+        shop.rescue(stamp, bob);
+        assertEq(stamp.balanceOf(address(shop)), 0);
+        assertEq(stamp.balanceOf(bob), 100_000e18);
+    }
+
+    function test_contractURI() public {
+        assertEq(shop.contractURI(), "https://courierworld.fun/companions/collection.json");
+        vm.expectEmit(false, false, false, false);
+        emit CourierCompanions.ContractURIUpdated();
+        vm.prank(owner);
+        shop.setBase("ipfs://new/");
+        assertEq(shop.contractURI(), "ipfs://new/collection.json");
+    }
+
+    function test_newKindAnnouncesItsURI() public {
+        vm.expectEmit(true, false, false, true);
+        emit IERC1155.URI("https://courierworld.fun/companions/7.json", 7);
+        vm.prank(owner);
+        shop.setKind(7, 1e18, 10, 0, true);
+    }
+
+    function test_batchTransferAndBalances() public {
+        _buy(alice, CAT, 3);
+        _buy(alice, UFO, 2);
+        uint256[] memory ids = new uint256[](2);
+        uint256[] memory amounts = new uint256[](2);
+        (ids[0], ids[1], amounts[0], amounts[1]) = (CAT, UFO, 2, 1);
+        vm.prank(alice);
+        shop.safeBatchTransferFrom(alice, bob, ids, amounts, "");
+        address[] memory who = new address[](4);
+        uint256[] memory which = new uint256[](4);
+        (who[0], who[1], who[2], who[3]) = (alice, alice, bob, bob);
+        (which[0], which[1], which[2], which[3]) = (CAT, UFO, CAT, UFO);
+        uint256[] memory bal = shop.balanceOfBatch(who, which);
+        assertEq(bal[0], 1);
+        assertEq(bal[1], 1);
+        assertEq(bal[2], 2);
+        assertEq(bal[3], 1);
+        assertEq(shop.bought(bob, CAT), 0, "receiving isn't buying");
+    }
+
+    // ---------------------------------------------------------------- royalty enforcement
+
+    function test_marketplacesSeeTheEnforcement() public view {
+        assertTrue(shop.supportsInterface(0xad0d7f6c), "ICreatorToken (v3)");
+        assertEq(shop.getTransferValidator(), address(validator));
+        (bytes4 fn, bool isView) = shop.getTransferValidationFunction();
+        assertEq(fn, bytes4(keccak256("validateTransfer(address,address,address,uint256,uint256)")));
+        assertFalse(isView, "the registry counts down authorized amounts");
+    }
+
+    function test_holdersCanMoveTheirOwnCompanions() public {
+        _buy(alice, CAT, 2);
+        vm.prank(alice);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+        assertEq(shop.balanceOf(bob, CAT), 1);
+        assertEq(validator.checks(), 1);
+    }
+
+    function test_marketplacesNeedTheFeeCheck() public {
+        _buy(alice, CAT, 2);
+        address market = makeAddr("market");
+        vm.prank(alice);
+        shop.setApprovalForAll(market, true);
+        vm.prank(market);
+        vm.expectRevert(StrictValidator1155.UnauthorizedTransfer.selector);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+        validator.authorize(market, true);
+        vm.prank(market);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+        assertEq(shop.balanceOf(bob, CAT), 1);
+    }
+
+    function test_batchTransfersAreCheckedKindByKind() public {
+        _buy(alice, CAT, 2);
+        _buy(alice, UFO, 1);
+        uint256[] memory ids = new uint256[](2);
+        uint256[] memory amounts = new uint256[](2);
+        (ids[0], ids[1], amounts[0], amounts[1]) = (CAT, UFO, 2, 1);
+        address market = makeAddr("market");
+        vm.prank(alice);
+        shop.setApprovalForAll(market, true);
+        vm.prank(market);
+        vm.expectRevert(StrictValidator1155.UnauthorizedTransfer.selector);
+        shop.safeBatchTransferFrom(alice, bob, ids, amounts, "");
+        uint256 before = validator.checks();
+        vm.prank(alice);
+        shop.safeBatchTransferFrom(alice, bob, ids, amounts, "");
+        assertEq(validator.checks() - before, 2);
+    }
+
+    /// Buys mint, and mints never ask the validator: not even one that refuses everything can stop a sale.
+    function test_buysNeverTouchTheValidator() public {
+        RefuseAll refuse = new RefuseAll();
+        vm.prank(owner);
+        shop.setTransferValidator(address(refuse));
+        _buy(alice, CAT, 1);
+        assertEq(shop.balanceOf(alice, CAT), 1);
+        vm.prank(alice);
+        vm.expectRevert("no transfers");
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+    }
+
+    function test_enforcementCanMoveButNeverBeSwitchedOff() public {
+        vm.startPrank(owner);
+        vm.expectRevert(CourierCompanions.NotAContract.selector);
+        shop.setTransferValidator(address(0));
+        vm.expectRevert(CourierCompanions.NotAContract.selector);
+        shop.setTransferValidator(makeAddr("eoa"));
+        StrictValidator1155 next = new StrictValidator1155();
+        vm.expectEmit(false, false, false, true);
+        emit ICreatorToken.TransferValidatorUpdated(address(validator), address(next));
+        shop.setTransferValidator(address(next));
+        vm.stopPrank();
+        assertEq(shop.getTransferValidator(), address(next));
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        shop.setTransferValidator(address(validator));
+        vm.expectRevert(CourierCompanions.NotAContract.selector);
+        new CourierCompanions(owner, address(stamp), treasury, makeAddr("eoa"), "x/");
+    }
+
+    /// The deploy script's lineup, as it will go on sale: 13 kinds, each with a wallet limit.
+    function test_deployLineup() public {
+        DeployCompanions script = new DeployCompanions();
+        DeployCompanions.Lineup[13] memory l = script.lineup();
+        uint256[13] memory ids = [uint256(1), 2, 3, 11, 12, 13, 21, 22, 31, 32, 41, 42, 43];
+        uint256[13] memory prices = [uint256(100), 100, 100, 250, 250, 250, 500, 500, 2500, 2500, 3000, 3000, 3000];
+        uint256[13] memory supplies = [uint256(300), 300, 300, 150, 150, 150, 50, 50, 30, 30, 25, 25, 25];
+        uint256[13] memory limits = [uint256(5), 5, 5, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1];
+        for (uint256 i; i < 13; ++i) {
+            assertEq(l[i].id, ids[i]);
+            assertEq(l[i].price, prices[i]);
+            assertEq(l[i].supply, supplies[i]);
+            assertEq(l[i].perWallet, limits[i]);
+        }
+        // And it runs: deployed by the broadcaster, who owns it, with the whole lineup open.
+        vm.setEnv("STAMP", vm.toString(address(stamp)));
+        vm.setEnv("TREASURY", vm.toString(treasury));
+        CourierCompanions deployed = script.run();
+        // Owned by the wallet that broadcast it (in a test, forge's default sender).
+        assertEq(deployed.owner(), DEFAULT_SENDER);
+        assertEq(deployed.kindCount(), 13);
+        assertEq(deployed.treasury(), treasury);
+        (uint128 price, uint32 maxSupply,, uint32 perWallet, bool open,) = deployed.kinds(41);
+        assertEq(price, 3000e18);
+        assertEq(maxSupply, 25);
+        assertEq(perWallet, 1);
+        assertTrue(open);
+        (address to, uint256 fee) = deployed.royaltyInfo(41, 1000e18);
+        assertEq(to, treasury);
+        assertEq(fee, 50e18);
+        // (No registry on a bare local chain: it brings its own validator, which holders' transfers pass.)
+        assertGt(deployed.getTransferValidator().code.length, 0);
+    }
+
     // ---------------------------------------------------------------- fuzz
 
     /// Whatever the price and quantity, the buyer pays exactly price × quantity, all to the treasury, and the counts add up.
@@ -396,5 +683,126 @@ contract CourierCompanionsTest is Test {
             holder, spender, value, stamp.nonces(holder), deadline
         ));
         return vm.sign(pk, keccak256(abi.encodePacked("\x19\x01", stamp.DOMAIN_SEPARATOR(), structHash)));
+    }
+}
+
+/// The registry's side of OpenSea's fee-checked ERC-1155 sales, called by the SignedZone around a transfer.
+interface IAuthorizer1155 {
+    function beforeAuthorizedTransferWithAmount(address token, uint256 tokenId, uint256 amount) external;
+    function afterAuthorizedTransferWithAmount(address token, uint256 tokenId) external;
+}
+
+/// Stand-in for the SignedZone's calls around a sale of `amount` of kind `id`.
+contract CompanionZoneFlow {
+    function sell(address registry, address token, address market, address from, address to, uint256 id, uint256 amount) external {
+        IAuthorizer1155(registry).beforeAuthorizedTransferWithAmount(token, id, amount);
+        CompanionMarketMove(market).move(token, from, to, id, amount);
+        IAuthorizer1155(registry).afterAuthorizedTransferWithAmount(token, id);
+    }
+}
+
+/// Stand-in for the marketplace moving what was sold.
+contract CompanionMarketMove {
+    function move(address token, address from, address to, uint256 id, uint256 amount) external {
+        IERC1155(token).safeTransferFrom(from, to, id, amount, "");
+    }
+}
+
+/// @notice Against OpenSea's real creator fee enforcement registry on Robinhood Chain.
+///   forge test --match-contract CourierCompanionsForkTest --fork-url robinhood
+/// Skipped when not forked.
+contract CourierCompanionsForkTest is Test {
+    address constant REGISTRY = 0xA000027A9B2802E1ddf7000061001e5c005A0000; // StrictAuthorizedTransferSecurityRegistry
+    address constant SEAPORT = 0x0000000000000068F116a894984e2DB1123eB395; // Seaport 1.6
+    bytes4 constant UNAUTHORIZED = 0x1de5204e; // StrictAuthorizedTransferSecurityRegistry__UnauthorizedTransfer()
+    address constant SIGNED_ZONE = 0x000056F7000000EcE9003ca63978907a00FFD100; // OpenSea's SignedZone
+    uint256 constant CAT = 1;
+
+    StampToken stamp;
+    CourierCompanions shop;
+    address owner = makeAddr("owner");
+    address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
+
+    function setUp() public {
+        if (block.chainid != 4663) return;
+        stamp = new StampToken(owner, address(0), 0);
+        vm.prank(owner);
+        stamp.setMinter(address(this));
+        stamp.mint(alice, 1000e18);
+        shop = new CourierCompanions(owner, address(stamp), makeAddr("treasury"), REGISTRY, "https://courierworld.fun/companions/");
+        vm.prank(owner);
+        shop.setKind(CAT, 100e18, 300, 5, true);
+        vm.startPrank(alice);
+        stamp.approve(address(shop), 300e18);
+        shop.buy(CAT, 3, 300e18);
+        vm.stopPrank();
+    }
+
+    function test_Fork_HolderTransfersPass() public {
+        if (block.chainid != 4663) return;
+        vm.prank(alice);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+        assertEq(shop.balanceOf(bob, CAT), 1);
+    }
+
+    /// A real OpenSea sale, as one transaction like Seaport runs it: the SignedZone (which checks the order pays the
+    /// creator fee) authorizes an amount of the kind on the live registry, the approved marketplace moves it, and the
+    /// zone clears the authorization. The zone and Seaport addresses get stand-in code that makes exactly those calls.
+    function test_Fork_SaleAuthorizedByOpenSeaGoesThrough() public {
+        if (block.chainid != 4663) return;
+        vm.etch(SIGNED_ZONE, address(new CompanionZoneFlow()).code);
+        vm.etch(SEAPORT, address(new CompanionMarketMove()).code);
+        vm.prank(alice);
+        shop.setApprovalForAll(SEAPORT, true);
+        CompanionZoneFlow(SIGNED_ZONE).sell(REGISTRY, address(shop), SEAPORT, alice, bob, CAT, 2);
+        assertEq(shop.balanceOf(bob, CAT), 2);
+        // Without the zone, the same marketplace is refused.
+        vm.prank(SEAPORT);
+        vm.expectRevert(UNAUTHORIZED);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+    }
+
+    /// The zone authorizes an amount: a marketplace can't move more than was sold.
+    function test_Fork_SaleCantMoveMoreThanAuthorized() public {
+        if (block.chainid != 4663) return;
+        vm.etch(SEAPORT, address(new CompanionMarketMove()).code);
+        vm.prank(alice);
+        shop.setApprovalForAll(SEAPORT, true);
+        vm.startPrank(SIGNED_ZONE);
+        IAuthorizer1155(REGISTRY).beforeAuthorizedTransferWithAmount(address(shop), CAT, 1);
+        vm.stopPrank();
+        vm.expectRevert(UNAUTHORIZED);
+        CompanionMarketMove(SEAPORT).move(address(shop), alice, bob, CAT, 2);
+        assertEq(shop.balanceOf(alice, CAT), 3);
+    }
+
+    /// Only an authorizer on the collection's list (OpenSea's zone on the default list) can authorize.
+    function test_Fork_StrangersCantAuthorize() public {
+        if (block.chainid != 4663) return;
+        vm.etch(SEAPORT, address(new CompanionMarketMove()).code);
+        CompanionZoneFlow stranger = new CompanionZoneFlow();
+        vm.prank(alice);
+        shop.setApprovalForAll(SEAPORT, true);
+        vm.expectRevert();
+        stranger.sell(REGISTRY, address(shop), SEAPORT, alice, bob, CAT, 1);
+        assertEq(shop.balanceOf(alice, CAT), 3);
+    }
+
+    /// Seaport, or any approved operator, can't move a companion outside OpenSea's fee-checked flow.
+    function test_Fork_MarketplaceWithoutFeeCheckReverts() public {
+        if (block.chainid != 4663) return;
+        address otherMarket = makeAddr("otherMarket");
+        vm.startPrank(alice);
+        shop.setApprovalForAll(SEAPORT, true);
+        shop.setApprovalForAll(otherMarket, true);
+        vm.stopPrank();
+        vm.prank(SEAPORT);
+        vm.expectRevert(UNAUTHORIZED);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+        vm.prank(otherMarket);
+        vm.expectRevert(UNAUTHORIZED);
+        shop.safeTransferFrom(alice, bob, CAT, 1, "");
+        assertEq(shop.balanceOf(alice, CAT), 3);
     }
 }
