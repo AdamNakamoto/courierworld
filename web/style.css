@@ -125,7 +125,11 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%) rotate(.6deg);
   padding: 6px 16px; display: flex; gap: 10px; align-items: center; white-space: nowrap; max-width: calc(100% - 28px);
 }
-#arrow { display: inline-block; font-size: 20px; line-height: 1; color: var(--blue); transition: transform .08s linear; }
+/* The way to the goal: a blue badge whose arrow turns toward it (up is straight ahead). */
+#arrow {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; border-radius: 50%;
+  background: var(--blue); color: #fff; border: 2px solid var(--ink); font-size: 13px; line-height: 1; transition: transform .12s linear;
+}
 #target { overflow: hidden; text-overflow: ellipsis; }
 .help { position: absolute; right: 14px; bottom: 14px; padding: 4px 12px; font-size: 17px; transform: rotate(.8deg); }
 
