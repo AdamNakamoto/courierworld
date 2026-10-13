@@ -1,5 +1,5 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { createWorld, R, UP, arc, texFromCanvas, toon } from "./world.js";
+import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
@@ -66,7 +66,7 @@ const POSTMASTER = [
 const INTRO = [
   { name: "You", text: "Overslept again... the post office opened ages ago." },
   { name: "You", text: "Three letters in the bag. Better get walking." },
-  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around and scroll (or pinch) to zoom. Follow the blue arrow on the ground (and the golden light) to each delivery." },
+  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around and scroll (or pinch) to zoom. Follow the arrow at the top (and the golden light) to each delivery." },
 ];
 
 // ---------------------------------------------------------------- characters
@@ -1476,7 +1476,7 @@ function frame() {
     }
     if (onMoon) {
       moonTick(p, dt, t);
-      guide.visible = beam.visible = false;
+      beam.visible = false;
     } else {
       compass(p, t);
       placeTitle(p, dt);
@@ -1583,38 +1583,22 @@ function compass(p, t = 0) {
     if (!best || dd < best.dd) best = { ...tgt, dd };
   }
   const w = best.d.clone().applyQuaternion(world.quaternion);
-  pointArrow(Math.atan2(w.x, -w.z));
-  $("target").textContent = `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name} · ${Math.round(best.dd)}m`;
+  $("target").textContent = `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name}`;
+  pointArrow(Math.atan2(w.x, -w.z), `· ${Math.round(best.dd)}m`);
   guideTo(best, t);
 }
 /// The arrow in the top bar: turned toward the goal (up is straight ahead of the camera), always the short way round,
-/// so it never spins right round when the goal passes behind you.
+/// so it never spins right round when the goal passes behind you. The end of the line (`lead`, the distance, then the
+/// way in words) never gets cut off on a narrow screen; the name does.
 let arrowAngle = 0;
-function pointArrow(a) {
+function pointArrow(a, lead, there = false) {
   arrowAngle += Math.atan2(Math.sin(a - arrowAngle), Math.cos(a - arrowAngle));
   $("arrow").style.transform = `rotate(${arrowAngle}rad)`;
+  const deg = Math.abs(a) * (180 / Math.PI);
+  $("way").textContent = there ? lead : `${lead} ${deg < 30 ? "straight ahead" : deg > 150 ? "behind you" : a < 0 ? "on your left" : "on your right"}`;
 }
-// The way to the next delivery, in the world: a blue arrow on the ground just in front of the courier, pointing
-// toward it, and a column of golden light rising from it, seen over the roofs. Both step aside close by.
-const guide = (() => {
-  const s = new THREE.Shape();
-  s.moveTo(0, 0.55);
-  s.lineTo(0.42, 0.06);
-  s.lineTo(0.16, 0.06);
-  s.lineTo(0.16, -0.42);
-  s.lineTo(-0.16, -0.42);
-  s.lineTo(-0.16, 0.06);
-  s.lineTo(-0.42, 0.06);
-  s.closePath();
-  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.05, bevelEnabled: false });
-  geo.rotateX(Math.PI / 2); // (lying flat, its tip along +z, its thickness below)
-  geo.translate(0, 0.05, 0);
-  geo.scale(1.2, 1, 1.2);
-  const m = new THREE.Mesh(geo, toon(0x5ea9dd, { emissive: 0x1d4f73 }));
-  m.visible = false;
-  scene.add(m);
-  return m;
-})();
+// The way to the next delivery, in the world: a column of golden light rising from it, seen over the roofs and
+// fading as you arrive.
 const beam = (() => {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 16, 16, 1, true),
     new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
@@ -1623,29 +1607,14 @@ const beam = (() => {
   W.noNormals.push(m);
   return m;
 })();
-const _up = new THREE.Vector3(), _tan = new THREE.Vector3(), _x = new THREE.Vector3(), _basis = new THREE.Matrix4();
 function guideTo(goal, t) {
   const show = mode === "play" && !photo && !dialog && !onMoon;
-  // The light: on the goal itself, fading out as you arrive.
   beam.visible = show && goal.dd > 3;
   if (beam.visible) {
     beam.position.copy(goal.top).multiplyScalar(R + 8);
     beam.quaternion.setFromUnitVectors(UP, goal.top);
     beam.material.opacity = Math.min(0.32, (goal.dd - 3) / 12) * (0.75 + 0.25 * Math.sin(t * 2.4));
   }
-  // The arrow: on the ground a couple of steps ahead (clear of the courier), toward the goal, until you're nearly there.
-  guide.visible = show && goal.dd > 4;
-  if (!guide.visible) return;
-  _up.copy(player.group.position).sub(G.center).normalize();
-  const g = goal.d.clone().applyQuaternion(world.quaternion);
-  _tan.copy(g).addScaledVector(_up, -g.dot(_up));
-  if (_tan.lengthSq() < 1e-8) return (guide.visible = false);
-  _tan.normalize();
-  const spot = _up.clone().multiplyScalar(G.R).addScaledVector(_tan, 2.3 + 0.15 * Math.sin(t * 4)).normalize();
-  const ground = G.terrain.surfaceAt(spot.clone().applyQuaternion(world.quaternion.clone().invert()), footY + 0.3);
-  guide.position.copy(G.center).addScaledVector(spot, G.R + ground + 0.02);
-  _x.crossVectors(_up, _tan).normalize();
-  guide.quaternion.setFromRotationMatrix(_basis.makeBasis(_x, _up, _tan));
 }
 
 // ---------------------------------------------------------------- the post office (on-chain)
@@ -1833,8 +1802,8 @@ function moonTick(p, dt, t) {
   const left = moonLeft();
   if (huntState?.wallet && left <= 0 && !flying) return flyHome("Your moon ticket ran out, so the rocket brought you home.");
   const home = moon.rocket, dd = gArc(p, home.d), w = home.d.clone().applyQuaternion(world.quaternion);
-  pointArrow(Math.atan2(w.x, -w.z));
-  $("target").textContent = `🌙 Moon stamps ${moon.found}/${moon.out}${huntState?.wallet ? ` · ticket ${minutes(left)}` : ""} · ${dd < home.reach ? "E to fly home" : `rocket ${Math.round(dd)}m`}`;
+  $("target").textContent = `🌙 Moon stamps ${moon.found}/${moon.out}${huntState?.wallet ? ` · ticket ${minutes(left)}` : ""}`;
+  pointArrow(Math.atan2(w.x, -w.z), dd < home.reach ? "· E to fly home" : `· rocket ${Math.round(dd)}m`, dd < home.reach);
   const got = moon.update(dt, t, { me: p, chest: bodyY + 0.85, active: !dialog && !flying });
   if (got !== null) {
     sounds.collect();
