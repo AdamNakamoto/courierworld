@@ -6,9 +6,10 @@
 // and residents stay, under a tower, and the golden stamps and the players' lots are kept clear.
 //
 // The screens show posters for the game and for shows that only play on this planet; a few show the ad
-// that's on the Orb (orb.json) at the time. None of them name a real brand. One poster shows the newest
+// that's on the Orb (orb.json) at the time. None of them name a real brand. One poster shows the biggest
 // tokens players launched in the Launchpad, on the corner tower's ground floor (pad.js), and the ticker
-// carries the biggest ones; tokens on the game's hide list never show.
+// carries them too; tokens on the game's hide list never show. While the treasury drops a token's coins
+// round the planet, the hunt poster, a banner on the Launchpad's and the ticker say so.
 import * as THREE from "https://esm.sh/three@0.160.0";
 
 export const SQUARE_R = 13; // metres from the crossing that the square covers
@@ -69,6 +70,66 @@ function leds(g, w, h) {
   g.fillStyle = "rgba(0,0,0,0.13)";
   for (let y = 0; y < h; y += 4) g.fillRect(0, y, w, 1);
   for (let x = 0; x < w; x += 4) g.fillRect(x, 0, 1, h);
+}
+
+/// "$PEPE", or "$PEPE + $LCAT": the tokens a running drop is paying out.
+const dropSymbols = (drops) => drops.slice(0, 2).map((d) => `$${d.symbol}`).join(" + ");
+/// A gold coin at (cx, cy) with a token's picture on its face (or its symbol, until the picture loads).
+function coin(g, cx, cy, r, d) {
+  const disc = (rr, color) => {
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(cx, cy, rr, 0, Math.PI * 2);
+    g.fill();
+  };
+  disc(r, "#a8740a");
+  disc(r * 0.92, "#f2c94c");
+  disc(r * 0.76, "#ffe27a");
+  if (d.picture) {
+    g.save();
+    g.beginPath();
+    g.arc(cx, cy, r * 0.72, 0, Math.PI * 2);
+    g.clip();
+    g.drawImage(d.picture, cx - r * 0.72, cy - r * 0.72, r * 1.44, r * 1.44);
+    g.restore();
+  } else say(g, d.symbol.slice(0, 4), cx, cy + r * 0.04, r * 1.2, r * 0.5, bungee, "#a8740a");
+}
+/// A red "LIVE NOW" badge centred at (cx, cy), its letters `size` high.
+function liveBadge(g, cx, cy, size) {
+  g.font = bungee(size);
+  const bw = g.measureText("LIVE NOW").width + size * 2.1, bh = size * 1.55;
+  g.fillStyle = "#e8364a";
+  g.beginPath();
+  g.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, bh / 2);
+  g.fill();
+  g.fillStyle = "#ffffff";
+  g.beginPath();
+  g.arc(cx - bw / 2 + size * 0.8, cy, size * 0.22, 0, Math.PI * 2);
+  g.fill();
+  say(g, "LIVE NOW", cx + size * 0.32, cy + 1, bw, size, bungee, "#ffffff");
+}
+/// A token drop's poster: its coins are out round the planet today.
+function coinDrop(g, w, h, wide, drops) {
+  gradient(g, w, h, "#0d3b66", "#0b1f3a");
+  for (let i = 0; i < 14; i++) star(g, ((i * 61 + 17) % 100) / 100 * w, ((i * 29 + 11) % 100) / 100 * h, Math.min(w, h) * (0.012 + (i % 3) * 0.008), "#ffd23f");
+  const names = dropSymbols(drops);
+  if (wide) {
+    coin(g, w * 0.19, h * 0.5, h * 0.33, drops[0]);
+    const tx = w * 0.65, tw = w * 0.62;
+    say(g, "COLLECT", tx, h * 0.15, tw * 0.6, h * 0.12, bungee, "#ffffff");
+    say(g, `${names} COINS`, tx, h * 0.35, tw * 0.96, h * 0.2, bungee, "#ffd23f");
+    liveBadge(g, tx, h * 0.58, h * 0.1);
+    say(g, "FIND THEM ROUND THE PLANET", tx, h * 0.78, tw * 0.92, h * 0.08, hand, "#ffffff");
+    say(g, "POST OFFICE OWNERS REDEEM", tx, h * 0.9, tw * 0.86, h * 0.06, bungee, "#7ef0ff");
+  } else {
+    coin(g, w / 2, h * 0.23, w * 0.36, drops[0]);
+    say(g, "COLLECT", w / 2, h * 0.47, w * 0.6, h * 0.06, bungee, "#ffffff");
+    say(g, names, w / 2, h * 0.56, w * 0.92, h * 0.1, bungee, "#ffd23f");
+    say(g, "COINS", w / 2, h * 0.65, w * 0.7, h * 0.07, bungee, "#ffd23f");
+    liveBadge(g, w / 2, h * 0.75, h * 0.045);
+    say(g, "FIND THEM ROUND THE PLANET", w / 2, h * 0.85, w * 0.92, h * 0.04, hand, "#ffffff");
+    say(g, "POST OFFICE OWNERS REDEEM", w / 2, h * 0.92, w * 0.9, h * 0.032, bungee, "#7ef0ff");
+  }
 }
 
 /// Each poster draws itself to fit a landscape (wide) or portrait canvas. `img` holds the pictures it uses.
@@ -228,7 +289,9 @@ const POSTERS = [
     say(g, "POST OFFICE", tx, ty + h * (wide ? 0.2 : 0.1), (wide ? w * 0.66 : w) * 0.92, h * (wide ? 0.2 : 0.1), bungee, "#fbf6ea");
     say(g, "EARN $STAMP EVERY DAY", tx, ty + h * (wide ? 0.38 : 0.19), (wide ? w * 0.66 : w) * 0.86, h * (wide ? 0.09 : 0.045), hand, "#ffe1a8");
   },
-  function hunt(g, w, h, wide) {
+  // The treasure hunt: a token drop's coins while one is running (img.drops, from showDrops), else the golden stamps.
+  function hunt(g, w, h, wide, img) {
+    if (img.drops?.length) return coinDrop(g, w, h, wide, img.drops);
     gradient(g, w, h, "#16958d", "#0e5f5a");
     for (let i = 0; i < 9; i++) star(g, ((i * 71 + 13) % 100) / 100 * w, ((i * 43 + 7) % 100) / 100 * h, Math.min(w, h) * (0.04 + (i % 3) * 0.02), "#f2c94c");
     say(g, "GOLDEN STAMP", w / 2, h * (wide ? 0.36 : 0.4), w * 0.9, h * (wide ? 0.2 : 0.1), bungee, "#ffe27a");
@@ -263,10 +326,22 @@ const POSTERS = [
     say(g, "DELIVERING HAPPINESS", w / 2, h * (wide ? 0.82 : 0.62), w * 0.86, h * (wide ? 0.11 : 0.055), bungee, "#283033");
     if (!wide) envelope(g, w / 2, h * 0.8, w * 0.48, w * 0.3, "#fbf8ef", "#283033");
   },
-  // The newest tokens from the Launchpad (img.launches, from showLaunches), or an invitation to launch one.
-  function launchpad(g, w, h, wide, img) {
-    gradient(g, w, h, "#1b1046", "#3a1c8c");
-    for (let i = 0; i < 12; i++) star(g, ((i * 67 + 11) % 100) / 100 * w, ((i * 37 + 5) % 100) / 100 * h, Math.min(w, h) * 0.012, "#ffffff");
+  // The three biggest tokens from the Launchpad (img.launches, from showLaunches), or an invitation to launch one;
+  // and while a token drop is running (img.drops), a banner along the bottom saying so.
+  function launchpad(g, w, h0, wide, img) {
+    gradient(g, w, h0, "#1b1046", "#3a1c8c");
+    for (let i = 0; i < 12; i++) star(g, ((i * 67 + 11) % 100) / 100 * w, ((i * 37 + 5) % 100) / 100 * h0, Math.min(w, h0) * 0.012, "#ffffff");
+    const drops = img.drops ?? [], h = drops.length ? h0 * (wide ? 0.84 : 0.88) : h0; // (the rest is the banner's)
+    if (drops.length) {
+      g.fillStyle = "#ffd23f";
+      g.fillRect(0, h, w, h0 - h);
+      const coins = `COLLECT ${dropSymbols(drops)} COINS`;
+      if (wide) say(g, `${coins} · LIVE NOW`, w / 2, h + (h0 - h) / 2 + 1, w * 0.92, (h0 - h) * 0.62, bungee, "#2a1060");
+      else {
+        say(g, coins, w / 2, h + (h0 - h) * 0.32, w * 0.9, (h0 - h) * 0.34, bungee, "#2a1060");
+        say(g, "LIVE NOW", w / 2, h + (h0 - h) * 0.72, w * 0.9, (h0 - h) * 0.34, bungee, "#d62246");
+      }
+    }
     const list = img.launches ?? [];
     if (!list.length) {
       say(g, "LAUNCHPAD", w / 2, h * (wide ? 0.34 : 0.36), w * 0.9, h * (wide ? 0.24 : 0.12), bungee, "#ffd23f");
@@ -274,7 +349,7 @@ const POSTERS = [
       say(g, img.padOpen ? "RIGHT HERE IN TIMES SQUARE" : "COMING SOON TO TIMES SQUARE", w / 2, h * (wide ? 0.76 : 0.6), w * 0.84, h * (wide ? 0.08 : 0.04), bungee, "#7ef0ff");
       return;
     }
-    say(g, "JUST LAUNCHED", w / 2, h * (wide ? 0.13 : 0.08), w * 0.86, h * (wide ? 0.13 : 0.06), bungee, "#ffd23f");
+    say(g, `TOP ${Math.min(3, list.length)} COINS`, w / 2, h * (wide ? 0.13 : 0.08), w * 0.86, h * (wide ? 0.13 : 0.06), bungee, "#ffd23f");
     const n = Math.min(3, list.length);
     for (let i = 0; i < n; i++) {
       const t = list[i];
@@ -778,11 +853,13 @@ export function createSquare(k) {
 
     const pictures = new Map(); // picture URL -> Image, once loaded
     const at = POSTERS.findIndex((p) => p.name === "launchpad");
-    let launchKey = "";
+    let launchKey = "", dropsKey = "";
     const usd = (n) => (Number.isFinite(n) && n > 0 ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(n) : "");
+    // Biggest market cap first (tokens without a price yet after them, newest first).
+    const biggest = (list) => [...list].sort((a, b) => (Number.isFinite(b.mcapUsd) ? b.mcapUsd : 0) - (Number.isFinite(a.mcapUsd) ? a.mcapUsd : 0));
     function paintLaunches(list) {
-      img.launches = list.slice(0, 3).map((t) => ({ address: t.address, symbol: t.symbol, mcap: usd(t.mcapUsd), pic: pictures.get(t.meta?.image) ?? null }));
-      const top = list.filter((t) => Number.isFinite(t.mcapUsd) && t.mcapUsd > 0).sort((a, b) => b.mcapUsd - a.mcapUsd).slice(0, 5);
+      img.launches = biggest(list).slice(0, 3).map((t) => ({ address: t.address, symbol: t.symbol, mcap: usd(t.mcapUsd), pic: pictures.get(t.meta?.image) ?? null }));
+      const top = biggest(list).filter((t) => Number.isFinite(t.mcapUsd) && t.mcapUsd > 0).slice(0, 5);
       tickerTokens = " ★ LAUNCH YOUR TOKEN AT THE LAUNCHPAD" + top.map((t) => ` ★ $${t.symbol} ${usd(t.mcapUsd)}`).join("");
       L[at].paint();
       P[at].paint();
@@ -794,21 +871,30 @@ export function createSquare(k) {
       key: "square", name: "Times Square", d: centre, r: SQUARE_R, adMeshes,
       /// The Launchpad's door (stand within `reach` and press E) and its sign (tap it).
       pad: padDoor ? { d: padDoor, reach: 2.6, meshes: padMeshes } : null,
-      /// The token drops running today (their symbols): the ticker tells everyone their coins are out.
-      showDrops(symbols) {
-        const line = symbols.map((s) => ` ★ $${s} COINS ARE OUT: GO FIND THEM`).join("");
-        if (line === tickerDrops) return;
-        tickerDrops = line;
+      /// The token drops running today ({ symbol, picture }: the coin's picture, once loaded): their coins are out,
+      /// so the hunt poster, a banner on the Launchpad's poster and the ticker say so.
+      showDrops(drops) {
+        const key = drops.map((d) => `${d.symbol}:${d.picture ? 1 : 0}`).join(",");
+        if (key === dropsKey) return;
+        dropsKey = key;
+        img.drops = drops;
+        tickerDrops = drops.length ? ` ★ COLLECT ${dropSymbols(drops)} COINS: LIVE NOW` : "";
+        for (const name of ["hunt", "launchpad"]) {
+          const i = POSTERS.findIndex((p) => p.name === name);
+          L[i].paint();
+          P[i].paint();
+        }
         ticker.paint();
       },
-      /// The tokens the Launchpad shows, newest first (pad.js onTokens): the newest on a poster, the biggest on the
-      /// ticker. Until the first call (no launchpad deployed yet) the sign and the poster say it's coming soon.
+      /// The tokens the Launchpad shows, newest first (pad.js onTokens): the three biggest on a poster, the five
+      /// biggest on the ticker. Until the first call (no launchpad deployed yet) the sign and the poster say it's
+      /// coming soon.
       showLaunches(list) {
-        const key = "open:" + list.slice(0, 8).map((t) => `${t.address}:${Math.round(t.mcapUsd || 0)}`).join(",");
+        const key = "open:" + list.map((t) => `${t.address}:${Math.round(t.mcapUsd || 0)}`).join(",");
         if (key === launchKey) return;
         img.padOpen = true;
         launchKey = key;
-        for (const t of list.slice(0, 3)) {
+        for (const t of biggest(list).slice(0, 3)) {
           const url = t.meta?.image;
           if (!url || pictures.has(url)) continue;
           const im = new Image();

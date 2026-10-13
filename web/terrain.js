@@ -217,6 +217,31 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
   }
   const roadT = (road, d) => Math.atan2(d.dot(road.v), d.dot(road.u));
   const DECK_HW = ROAD_HW + WALK; // bridges carry the sidewalks across too
+  // Where two streets cross over water, the two bridges meet level: each rises to the higher deck at the
+  // crossing, stays flat across it, and ramps back down to its own height either side.
+  {
+    const FLAT = DECK_HW + 0.6, SLOPE = 0.42, stepM = (Math.PI * 2 * R) / SAMPLES; // (the ramps' slope, per metre)
+    const raise = [];
+    for (let i = 0; i < ROADS.length; i++) {
+      for (let j = i + 1; j < ROADS.length; j++) {
+        const x = new THREE.Vector3().crossVectors(ROADS[i].axis, ROADS[j].axis);
+        if (x.lengthSq() < 1e-6) continue;
+        for (const s of [1, -1]) {
+          const d = x.clone().normalize().multiplyScalar(s), ti = roadT(ROADS[i], d), tj = roadT(ROADS[j], d);
+          const top = Math.max(deckAt(i, ti), deckAt(j, tj));
+          if (top) raise.push([i, ti, top], [j, tj, top]); // (no deck on either: a crossing on land)
+        }
+      }
+    }
+    for (const [ri, t, top] of raise) {
+      const h = decks[ri], road = ROADS[ri].h, x = ((((t / (Math.PI * 2)) % 1) + 1) % 1) * SAMPLES;
+      const n = Math.ceil((FLAT + (top - road) / SLOPE + 1) / stepM);
+      for (let k = Math.floor(x) - n; k <= Math.ceil(x) + n; k++) {
+        const dist = Math.abs(k - x) * stepM, want = dist < FLAT ? top : top - SLOPE * (dist - FLAT), at = ((k % SAMPLES) + SAMPLES) % SAMPLES;
+        if (want > road + 0.005 && want > h[at]) h[at] = want;
+      }
+    }
+  }
 
   // ---- other walkable things: ramps (stairs) and flat platforms, added by the builders
   const ramps = [], plates = [];
@@ -267,7 +292,8 @@ export function createTerrain({ R, ROADS, ROAD_HW, WALK, nearestRoad, spawnDir, 
       const lat = Math.abs(d.dot(road.axis)) * R;
       if (lat < DECK_HW) {
         const h = deckAt(i, roadT(road, d));
-        if (h > road.h + 0.005) hs.push(lat > ROAD_HW ? h + KERB : h);
+        // (No walkway where it would cross the other street at a crossing: it's level with the road there.)
+        if (h > road.h + 0.005) hs.push(lat > ROAD_HW && nearestRoad(d, i) > ROAD_HW ? h + KERB : h);
       }
     });
     for (const r of ramps) {

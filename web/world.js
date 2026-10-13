@@ -684,6 +684,25 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   {
     const asphalt = new THREE.Color(C.asphalt), paint = new THREE.Color(C.paint), walkC = new THREE.Color(C.walk), curbC = new THREE.Color(C.curb);
     const SEG = Math.round(480 * R / 24); // strips ~0.31 m long, whatever the planet's size
+    /// A bridge's quad a-b-c-d (planet space), trimmed to the part at least `gap` metres from the nearest
+    /// other street (on whichever side of it the quad is), so pieces end exactly at a crossing's edge.
+    function trimmed(ri, gap, color, out, ...pts) {
+      const c = pts.reduce((s, p) => s.add(p), new THREE.Vector3()).normalize();
+      let j = -1, near = Infinity;
+      ROADS.forEach((r, k) => {
+        const x = Math.abs(c.dot(r.axis)) * R;
+        if (k !== ri && x < near) [j, near] = [k, x];
+      });
+      if (near > gap + 2) return batch.quad(...pts, color, out ?? undefined);
+      const side = Math.sign(c.dot(ROADS[j].axis)) || 1, f = (p) => (side * p.clone().normalize().dot(ROADS[j].axis)) * R - gap;
+      const kept = []; // the polygon clipped to f >= 0
+      pts.forEach((p, k) => {
+        const q = pts[(k + 1) % pts.length], fp = f(p), fq = f(q);
+        if (fp >= 0) kept.push(p);
+        if (fp >= 0 !== fq >= 0) kept.push(p.clone().lerp(q, fp / (fp - fq)));
+      });
+      for (let k = 1; k + 1 < kept.length; k += 2) batch.quad(kept[0], kept[k], kept[k + 1], kept[k + 2] ?? kept[k + 1], color, out ?? undefined);
+    }
     ROADS.forEach((road, ri) => {
       let poleRun = null, lastNear = Infinity;
       for (let i = 0; i < SEG; i++) {
@@ -704,24 +723,26 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
         const zone = terrain.zoneAt(p0).key;
         if (bridge) {
           // The deck carries kerb-high walkways across (level with the sidewalks it starts from),
-          // with a railing each side once it's off the ground, and piers down to the water.
-          const k0 = h0 + KERB, k1 = h1 + KERB, railed = Math.max(h0, h1) > road.h + 0.15;
+          // with a railing each side once it's off the ground, and piers down to the water. Where another
+          // bridge crosses, the two meet level (terrain.js) and these are trimmed at it: the walkways stop at
+          // its road and the edges at its deck, so the crossing is open, and the railings meet at the corners.
+          const k0 = h0 + KERB, k1 = h1 + KERB, railed = Math.max(h0, h1) > road.h + 0.15, DECK = ROAD_HW + WALK;
           for (const sg of [1, -1]) {
-            const a = ROAD_HW * sg, b = (ROAD_HW + WALK) * sg;
-            batch.quad(at(p0, s0, a, k0), at(p0, s0, b, k0), at(p1, s1, b, k1), at(p1, s1, a, k1), walkC);
-            batch.quad(at(p0, s0, a, h0), at(p0, s0, a, k0), at(p1, s1, a, k1), at(p1, s1, a, h1), curbC, s0.clone().multiplyScalar(-sg));
-            batch.quad(at(p0, s0, b, h0 - 0.4), at(p0, s0, b, k0), at(p1, s1, b, k1), at(p1, s1, b, h1 - 0.4), curbC, s0.clone().multiplyScalar(sg));
+            const a = ROAD_HW * sg, b = DECK * sg;
+            trimmed(ri, ROAD_HW, walkC, null, at(p0, s0, a, k0), at(p0, s0, b, k0), at(p1, s1, b, k1), at(p1, s1, a, k1));
+            trimmed(ri, ROAD_HW, curbC, s0.clone().multiplyScalar(-sg), at(p0, s0, a, h0), at(p0, s0, a, k0), at(p1, s1, a, k1), at(p1, s1, a, h1));
+            trimmed(ri, DECK, curbC, s0.clone().multiplyScalar(sg), at(p0, s0, b, h0 - 0.4), at(p0, s0, b, k0), at(p1, s1, b, k1), at(p1, s1, b, h1 - 0.4));
+            const r = DECK - 0.06, RAIL = DECK - 0.16; // (the railings run on until they meet the other bridge's)
             if (railed) {
-              const r = ROAD_HW + WALK - 0.06;
-              batch.quad(at(p0, s0, r * sg, k0 + 0.9), at(p0, s0, (r - 0.1) * sg, k0 + 0.9), at(p1, s1, (r - 0.1) * sg, k1 + 0.9), at(p1, s1, r * sg, k1 + 0.9), curbC);
-              batch.quad(at(p0, s0, r * sg, k0 + 0.45), at(p0, s0, (r - 0.08) * sg, k0 + 0.45), at(p1, s1, (r - 0.08) * sg, k1 + 0.45), at(p1, s1, r * sg, k1 + 0.45), curbC);
-              if (i % 3 === 0) {
+              trimmed(ri, RAIL, curbC, null, at(p0, s0, r * sg, k0 + 0.9), at(p0, s0, (r - 0.1) * sg, k0 + 0.9), at(p1, s1, (r - 0.1) * sg, k1 + 0.9), at(p1, s1, r * sg, k1 + 0.9));
+              trimmed(ri, RAIL, curbC, null, at(p0, s0, r * sg, k0 + 0.45), at(p0, s0, (r - 0.08) * sg, k0 + 0.45), at(p1, s1, (r - 0.08) * sg, k1 + 0.45), at(p1, s1, r * sg, k1 + 0.45));
+              if (i % 3 === 0 && nearestRoad(offsetOnSphere(p0, s0, r * sg), ri) > RAIL) {
                 const post = new THREE.Group();
                 box(post, 0.08, 0.9, 0.08, C.curb, 0, 0.45, 0);
                 bake(post, offsetOnSphere(p0, s0, r * sg), 0, k0);
-                // Solid while you're on the deck, but a jump clears it.
-                const rail = offsetOnSphere(p0, s0, r * sg);
-                addRect(rail, spinToward(rail, offsetOnSphere(p1, s1, r * sg)), 0.08, 0.6, null, { y0: h0 - 0.3, y1: k0 + 0.5 });
+                // Solid while you're on the deck, but a jump clears it (and short of a crossing's open deck).
+                const rail = offsetOnSphere(p0, s0, r * sg), reach = Math.min(0.6, nearestRoad(rail, ri) - (ROAD_HW + WALK));
+                if (reach > 0.1) addRect(rail, spinToward(rail, offsetOnSphere(p1, s1, r * sg)), 0.08, reach, null, { y0: h0 - 0.3, y1: k0 + 0.5 });
               }
             }
           }

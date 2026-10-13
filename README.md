@@ -104,8 +104,9 @@ each launch) or $STAMP, which pays for the golden stamps. Each drop sets the tok
 out a day (1 to 48; 24 golden stamps for $STAMP), how many one wallet is paid for a day, how many are paid a day
 across everyone (required, up to 10,000: every player can collect each coin, so this caps a day, and it's the most a
 leaked server key could take from a drop a day), and for how many days. The treasury can top a drop up, end it after today, take what's left
-back once nobody can claim, and pause every claim (if the server's key leaks, say). Times Square's ticker
-announces the drops that are running.
+back once nobody can claim, and pause every claim (if the server's key leaks, say). In Times Square, a drop
+poster with the coin's picture, a "live now" banner on the Launchpad's poster and the ticker announce the drops
+that are running.
 
 ```bash
 cd contracts
@@ -190,8 +191,8 @@ In the game (`web/pad.js`): the Launchpad is the ground floor of Times Square's 
 "coming soon" until the pad is deployed). Walk up and press E, tap the sign, press L, or use the button in
 the Post Office panel. It lists every token (newest or biggest), shows each with its own trade box (ETH or
 IMD, the same as $STAMP's), and has the launch form: name, symbol, picture, description and links, then one
-permit signature for the fee. A "Just launched" poster and the ticker in the square show the newest and
-biggest tokens.
+permit signature for the fee. A "Top 3 coins" poster in the square shows the three biggest tokens by market
+cap, and the ticker the five biggest.
 
 - Pictures are shrunk to 512 px in the browser and kept by the multiplayer server (`/pad/image`, its own
   Durable Object, by SHA-256): only a wallet with a post office can upload, signing for the picture, 12 a day.

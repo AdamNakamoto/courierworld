@@ -431,7 +431,7 @@ async function refreshDrops() {
     droppingToday = tokens;
     dropsDay = day;
     stamps.setDrops(day, tokens);
-    W.square?.showDrops?.(tokens.filter((d) => !d.empty).map((d) => d.symbol));
+    W.square?.showDrops?.(tokens.filter((d) => !d.empty).map((d) => ({ symbol: d.symbol, picture: d.picture })));
   } catch (e) {
     console.warn("drops: couldn't read today's", e);
   }
