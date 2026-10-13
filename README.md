@@ -149,6 +149,25 @@ Signing in to the hunt also gives the browser a token (`["hunttoken"]`, kept for
 picks the hunt up again (`["resume"]`) without another signature. For local testing, `MOON_DEV=1` in
 `multiplayer/.dev.vars` makes the room accept any ticket; never set it in production.
 
+## MOON letters
+
+MOON is the game's play-to-earn currency, deployed by the IMD swarm (explorer.imd.fun/jobs/ee210497-4d31-4153-9cc8-ca23b7898f70):
+the MOON token, `MoonRewards` (a permanent reward pool: nothing leaves it but verified mission claims, capped at 20,000
+MOON a wallet and 1,000,000 MOON for everyone per UTC day, and only to wallets with an open post office) and `MoonShop`
+(companions for MOON, half burned and half recycled into the pool). Addresses are in
+`contracts/deployments/robinhood-moon.json` and `web/deployments/robinhood.json`.
+
+The game pays MOON for MOON letters (`web/missions.js`): a signed-in courier with an open post office asks at the post
+office or a post box (`["mission"]`, checked against where the room last saw them); the room picks a door on that world
+from `web/mission-spots.json` (every door on the planet and every local on the moon and Mars, made from the game's own
+layout: remake it if they move) and remembers the letter; at the door (`["deliver"]`, checked against where they are and
+how fast anyone can travel) it signs an EIP-712 `MissionVoucher` (player, amount, day, nonce, deadline) for
+MoonRewards with `MOON_KEY` (a Worker secret; its address is the contract's voucher signer). Letters pay 500 MOON on
+the planet, 1,000 on the moon and 2,000 on Mars, up to 10,000 a wallet a day; the room stops handing them out at the
+contract's daily cap. The Post Office panel lists the day's vouchers (`["moonv"]`) and claims them, one transaction
+each, and gives the treasury its two buttons: deposit its MOON into the pool for good, and set the voucher signer to
+the server's address. `MOON_DEV=1` in `multiplayer/.dev.vars` also opens MOON letters locally without the live pool.
+
 ## Courier Skins
 
 `CourierSkins.sol`: 999 cosmetic NFTs, 16 outfits and rides (`web/skins.js`), minted blind for ETH

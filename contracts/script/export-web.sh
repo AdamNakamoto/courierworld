@@ -76,6 +76,14 @@ if [ -f "$GAME" ]; then
       '.contracts.pad = $p[0].pad | .contracts.padRouter = $p[0].router | .contracts.padEthRouter = $p[0].ethRouter
        | .padBlock = $p[0].block | .abis.pad = $padAbi | .abis.padToken = $padTokenAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
+  # MOON (deployed by the IMD swarm; deployments/robinhood-moon.json): the game's play-to-earn currency, its reward
+  # pool, its shop, and the multiplayer server's voucher-signing address. chain.js carries the few ABI lines it needs.
+  MOON=deployments/robinhood-moon.json
+  if [ -f "$MOON" ]; then
+    tmp=$(mktemp)
+    jq --slurpfile m "$MOON" '.contracts.moon = $m[0].moon | .contracts.moonRewards = $m[0].rewards | .contracts.moonShop = $m[0].shop
+       | .moonSigner = $m[0].signer' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else
   jq -n \

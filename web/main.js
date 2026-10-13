@@ -20,6 +20,7 @@ import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { createMoon } from "./moon.js";
 import { createMars } from "./mars.js";
 import { TRIPS } from "./trips.js";
+import { MISSION_PAY, MISSION_DAILY } from "./missions.js";
 import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
@@ -1484,6 +1485,7 @@ function frame() {
         fillBag();
         say([{ name: "Postmaster", text: POSTMASTER[random(POSTMASTER.length)] }]);
       }
+      jobTick(p, arc(p, W.spawn.post) < 1.8, "Postmaster");
     }
     if (away) {
       tripTick(p, dt, t);
@@ -1584,17 +1586,19 @@ function nearby(p) {
   return out;
 }
 
-/// Arrow toward the nearest letter's door, or back to the post office.
+/// Arrow toward your MOON letter's door, or the nearest letter's, or back to the post office.
 function compass(p, t = 0) {
   let best = null;
-  const targets = bag.length ? bag.map((i) => ({ d: W.addresses[i].dir, top: W.addresses[i].markerDir, name: `${W.addresses[i].name} · No. ${W.addresses[i].no}` }))
+  const job = jobHere(), jt = job && jobTarget(job);
+  const targets = jt ? [{ ...jt, pay: job.pay }]
+    : bag.length ? bag.map((i) => ({ d: W.addresses[i].dir, top: W.addresses[i].markerDir, name: `${W.addresses[i].name} · No. ${W.addresses[i].no}` }))
     : [{ d: W.spawn.post, top: W.spawn.post, name: "post office", post: true }];
   for (const tgt of targets) {
     const dd = arc(p, tgt.d);
     if (!best || dd < best.dd) best = { ...tgt, dd };
   }
   const w = best.d.clone().applyQuaternion(world.quaternion);
-  $("target").textContent = `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name}`;
+  $("target").textContent = best.pay ? `🌕 Deliver to ${best.name} (${best.pay.toLocaleString()} MOON)` : `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name}`;
   pointArrow(Math.atan2(w.x, -w.z), `· ${Math.round(best.dd)}m`);
   guideTo(best, t);
 }
@@ -1882,14 +1886,16 @@ function tripTick(p, dt, t) {
     if (i !== undefined) deliverAway(i);
     else if (!trip.bag.length && gArc(p, w.post.d) < w.post.reach) fillAwayBag();
   }
+  jobTick(p, gArc(p, w.post.d) < w.post.reach, w.post.name);
   const ticket = huntState?.wallet ? ` · ticket ${minutes(left)}` : "";
-  let goal = null;
-  for (const j of trip.bag) {
+  const job = jobHere(), jt = job && jobTarget(job);
+  let goal = jt ? { ...jt, dd: gArc(p, jt.d), pay: job.pay } : null;
+  for (const j of goal ? [] : trip.bag) {
     const r = w.residents[j], dd = gArc(p, r.d);
     if (!goal || dd < goal.dd) goal = { ...r, dd };
   }
   if (goal) {
-    $("target").textContent = `${EMOJI[k]} Deliver to ${goal.name}${left < 10 * 60_000 ? ticket : ""}`;
+    $("target").textContent = goal.pay ? `🌕 Deliver to ${goal.name} (${goal.pay.toLocaleString()} MOON)` : `${EMOJI[k]} Deliver to ${goal.name}${left < 10 * 60_000 ? ticket : ""}`;
     pointArrow(angleTo(goal.d), `· ${Math.round(goal.dd)}m`);
   } else {
     const home = w.rocket, dd = gArc(p, home.d);
@@ -1914,6 +1920,65 @@ function tripTick(p, dt, t) {
       toast("🌪️ A dust storm is blowing in! It passes in a minute or so.");
     } else if (w.dust < 0.02) stormSaid = false;
   }
+}
+
+// ---------------------------------------------------------------- MOON letters (missions.js)
+// A courier signed in to the hunt, with an open post office, is handed a MOON letter at the post office (or the
+// moon's or Mars's post box) and walks it to the door; the room checks, and signs a voucher for the MOON, which they
+// claim in the Post Office panel the same UTC day.
+let jobAskedAt = -1e9, jobPending = false;
+const jobSaid = new Set(); // reasons already shown this session (so standing at the post office doesn't repeat them)
+/// Where a MOON letter goes: { d (its direction on its world), top (for the light), name }, or null.
+function jobTarget(job) {
+  if (job.world === "planet") {
+    const a = W.addresses[job.i];
+    return a ? { d: a.dir, top: a.markerDir, name: `${a.name} · No. ${a.no}`, who: a.name } : null;
+  }
+  const r = trips[job.world]?.w?.residents[job.i];
+  return r ? { d: r.d, top: r.d, name: r.name, who: r.name } : null;
+}
+/// The MOON letter you carry, if it's for the world you're on.
+function jobHere() {
+  const job = huntState?.mission;
+  return job && job.world === (away?.key ?? "planet") ? job : null;
+}
+function jobNope(why) {
+  if (jobSaid.has(why)) return;
+  jobSaid.add(why);
+  toast(`🌕 ${why}`, "error");
+}
+/// Each frame: at the door, deliver your MOON letter; at the post office or post box (`atPost`, whose name is
+/// `postName`), ask for one.
+function jobTick(p, atPost, postName) {
+  if (jobPending || dialog || flying || !chainRef?.moon || !signedIn()) return;
+  const job = huntState.mission, k = away?.key ?? "planet";
+  if (job) {
+    const t = job.world === k ? jobTarget(job) : null;
+    if (!t || gArc(p, t.d) > 1.6 || performance.now() - jobAskedAt < 3000) return;
+    jobAskedAt = performance.now();
+    jobPending = true;
+    net.deliver().then(({ voucher, today }) => {
+      huntState.mission = null;
+      huntState.moonToday = today;
+      delivered++;
+      try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
+      hud();
+      sounds.chime();
+      say([{ name: t.who, text: "A MOON letter, for me? You're a star, courier." }]);
+      toast(`🌕 +${voucher.pay.toLocaleString()} MOON! Claim it in the Post Office panel before 00:00 UTC.`);
+      office?.huntChanged();
+    }).catch((e) => jobNope(e.message)).finally(() => (jobPending = false));
+    return;
+  }
+  if (!atPost || performance.now() - jobAskedAt < 20_000 || (huntState.moonToday ?? 0) + MISSION_PAY[k] > MISSION_DAILY) return;
+  jobAskedAt = performance.now();
+  jobPending = true;
+  net.mission().then((j) => {
+    huntState.mission = j;
+    const t = jobTarget(j);
+    say([{ name: postName, text: `A MOON letter for ${t?.name ?? "someone"}. ${j.world === "planet" ? "Walk it to the door" : "Take it to them"} for ${j.pay.toLocaleString()} MOON.` }]);
+    office?.huntChanged();
+  }).catch((e) => jobNope(e.message)).finally(() => (jobPending = false));
 }
 
 function padHint(p) {
@@ -1952,6 +2017,9 @@ const chainReady = connectChain()
           await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
         },
         vouchers: () => net.vouchers(),
+        moonVouchers: () => net.moonVouchers(),
+        /// Who a MOON voucher's letter went to.
+        letterTo: (v) => jobTarget(v)?.name ?? "a neighbour",
       } : null,
       onSnapshot(s) {
         autoAvatar(s);

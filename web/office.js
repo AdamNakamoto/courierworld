@@ -3,6 +3,7 @@
 import { formatEther, isAddress, parseEther } from "https://esm.sh/viem@2";
 import { huntDay, newSpotsIn, HUNT_STAMPS } from "./hunt-pick.js";
 import { TRIPS } from "./trips.js";
+import { MISSION_PAY, MISSION_DAILY } from "./missions.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { renderStamp } from "./portrait.js";
@@ -46,6 +47,7 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0; // the TokenDrops contract (today's drops, what you'd be paid, the owner), every few seconds
+  let moonInfo = null, moonAt = 0; // MoonRewards (the pool, your MOON) and your unclaimed MOON vouchers, every few seconds
   // The treasury's "start a drop" form, while it's typed.
   const dropForm = { token: "", perCoin: "", spots: "10", maxPerWallet: "5", dailyCoins: "100", days: "7", amount: "", topUp: "" };
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
@@ -86,6 +88,10 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
         huntAt = Date.now();
         huntInfo = await treasure();
       }
+      if (chain.moon && hunt?.moonVouchers && !panel.hidden && Date.now() - moonAt > 6000) {
+        moonAt = Date.now();
+        moonInfo = await moonView();
+      }
       draw();
     } catch (e) {
       console.error(e);
@@ -113,6 +119,21 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       out.tokens = [{ address: "stamp", symbol: "STAMP" }, ...launched.map((t) => ({ address: t.address, symbol: t.symbol }))];
     }
     return out;
+  }
+
+  /// The MOON pool, your MOON, and today's vouchers for your MOON letters that aren't claimed yet.
+  async function moonView() {
+    const st = hunt.state(), mine = st?.wallet && snap?.account && st.wallet.toLowerCase() === snap.account.toLowerCase();
+    const status = await chain.moon.status();
+    let vouchers = [];
+    if (mine) {
+      try {
+        vouchers = (await hunt.moonVouchers()).filter((v) => v.day === huntDay());
+      } catch {}
+      const used = await Promise.all(vouchers.map((v) => chain.moon.used(v.nonce)));
+      vouchers = vouchers.filter((_, i) => !used[i]);
+    }
+    return { ...status, vouchers };
   }
 
   /// Why your finds (the room's vouchers) would pay nothing now, in words.
@@ -326,6 +347,43 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
           <p class="note">Claim by the end of the next day (UTC). Each drop pays a few coins per wallet a day, while its tokens last.</p>`;
       }
       if (h.isOwner) html += dropAdmin(h);
+      html += `</section>`;
+    }
+
+    // ---- MOON letters: earn MOON by walking letters to the door (missions.js), claim the vouchers here
+    if (chain.moon && hunt?.moonVouchers && moonInfo) {
+      const m = moonInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
+      const open = m.funded && m.signerOk && !m.paused, owed = m.vouchers.reduce((t, v) => t + BigInt(v.amount), 0n);
+      html += `<section class="hunt moon"><h3>🌕 MOON letters <span class="muted">earn MOON by delivering</span></h3>
+        <p class="note">Take a MOON letter at the post office, or at the post box on the moon or Mars, and walk it to the door:
+        ${MISSION_PAY.planet.toLocaleString()} MOON on the planet, ${MISSION_PAY.moon.toLocaleString()} on the moon, ${MISSION_PAY.mars.toLocaleString()} on Mars,
+        up to ${MISSION_DAILY.toLocaleString()} a day.</p>`;
+      if (!open) html += `<p class="on">${m.paused ? "MOON claims are paused right now." : "MOON letters start once the treasury opens the MOON reward pool."}</p>`;
+      html += `<div class="kv"><span>Earned today</span><b>${st ? `${(st.moonToday ?? 0).toLocaleString()} / ${MISSION_DAILY.toLocaleString()}` : "–"}</b></div>`;
+      if (s.account) html += `<div class="kv"><span>Your MOON</span><b>${fmt(m.balance, 0)}</b></div>`;
+      html += `<div class="kv"><span>Reward pool</span><b>${compact(m.pool)} MOON</b></div>`;
+      if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get MOON letters.</p>`;
+      else if (!s.office?.open) html += `<p class="note">MOON pays couriers with an open post office. Open one to get MOON letters.</p>`;
+      else if (!st?.wallet) html += `<button class="pbtn primary wide" data-act="huntSignIn" ${busy ? "disabled" : ""}>Sign in for MOON letters</button>
+        <p class="note">One signature proves this wallet is yours. It costs nothing and can't move anything.</p>`;
+      else {
+        for (const v of m.vouchers) {
+          html += `<div class="kv"><span>${Number(formatEther(BigInt(v.amount))).toLocaleString()} MOON · letter to ${esc(hunt.letterTo(v))}</span>
+            <button class="pbtn" data-act="moonClaim" data-nonce="${esc(v.nonce)}" ${busy ? "disabled" : ""}>Claim</button></div>`;
+        }
+        if (m.vouchers.length > 1) html += `<button class="pbtn primary wide" data-act="moonClaimAll" ${busy ? "disabled" : ""}>Claim all ${fmt(owed, 0)} MOON</button>`;
+        html += `<p class="note">${m.vouchers.length ? "Claim before 00:00 UTC: a MOON voucher only pays on the day it's earned. Each claim is one transaction."
+          : st.mission ? "You're carrying a MOON letter: follow the 🌕 line at the top." : "Nothing to claim yet."}</p>`;
+      }
+      if (m.isOwner) {
+        html += `<div class="admin-hunt"><h4>The MOON pool <span class="muted">your wallet owns it</span></h4>`;
+        if (!m.funded) html += `<button class="pbtn wide" data-act="moonFund" ${busy ? "disabled" : ""}>Deposit all this wallet's MOON into the pool</button>
+          <p class="note">Permanent: nobody, including you, can take it back out. The pool opens at 700,000,000 MOON.</p>`;
+        if (!m.signerOk && chain.moon.serverSigner) html += `<button class="pbtn wide" data-act="moonSigner" ${busy ? "disabled" : ""}>Let the game server sign MOON vouchers</button>
+          <p class="note">Sets the voucher signer to the game server's address, ${short(chain.moon.serverSigner)}. You can change it again any time.</p>`;
+        if (open) html += `<p class="note">The pool is open: ${compact(m.totalPaid)} MOON paid so far, ${compact(m.paidToday)} of 1M today.</p>`;
+        html += `</div>`;
+      }
       html += `</section>`;
     }
 
@@ -562,7 +620,30 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       }
       case "huntSignIn": return run("Signing in to the hunt", async () => {
         await hunt.signIn();
-        huntAt = 0;
+        huntAt = moonAt = 0;
+      });
+      case "moonClaim": {
+        const v = moonInfo?.vouchers.find((x) => x.nonce === b.dataset.nonce);
+        if (!v) return;
+        return run("Claiming MOON", async () => {
+          await chain.moon.claim(v);
+          moonAt = 0;
+        });
+      }
+      case "moonClaimAll": return run("Claiming MOON", async () => {
+        for (const v of moonInfo?.vouchers ?? []) await chain.moon.claim(v);
+        moonAt = 0;
+      });
+      case "moonFund": {
+        if (!confirm("Deposit all this wallet's MOON into the MOON reward pool?\n\nThis is permanent: nobody, including you, can ever take it back out. Players earn it by delivering MOON letters.")) return;
+        return run("Funding the MOON pool", async () => {
+          await chain.moon.admin.fundAll();
+          moonAt = 0;
+        });
+      }
+      case "moonSigner": return run("Setting the MOON signer", async () => {
+        await chain.moon.admin.setSigner();
+        moonAt = 0;
       });
       case "huntClaim": return run("Claiming treasure", async () => {
         // Only ask the wallet for claims that pay: otherwise say why, rather than send a transaction that fails.

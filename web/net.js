@@ -290,6 +290,9 @@ export function createNet(W, {
   // group and radius (null if it isn't built yet).
   let mine = "planet", ticketWait = null;
   const wgrabs = []; // stamps picked up on the moon or Mars this frame: [world, spot]
+  // MOON letters (missions.js): asking for one and saying you're at its door go right after where you are, so the
+  // room checks the spot; the replies the game is waiting for, by request ("mission", "deliver", "moonv").
+  const acts = [], waits = new Map();
   /// Put a player (or your emote anchor) in their world's group.
   function home(obj, w) {
     const g = world(w);
@@ -442,6 +445,14 @@ export function createNet(W, {
           if (m[1] && me?.addr) sessionStorage.setItem(`courier:hunt:${me.addr.toLowerCase()}`, m[1]);
         } catch {}
         return;
+      case "mission":
+      case "delivered":
+      case "moonv": {
+        const kind = m[0] === "delivered" ? "deliver" : m[0], w = waits.get(kind);
+        waits.delete(kind);
+        w?.resolve(m[0] === "delivered" ? { voucher: m[1], today: m[2] } : m[1]);
+        return;
+      }
       case "ticketok":
         ticketWait?.resolve(Number(m[2]));
         ticketWait = null;
@@ -496,6 +507,10 @@ export function createNet(W, {
         } else if (m[1] === -2) {
           ticketWait?.reject(new Error(m[2]));
           ticketWait = null;
+        } else if (m[1] === -3) {
+          const w = waits.get(m[3]);
+          waits.delete(m[3]);
+          w?.reject(new Error(m[2]));
         } else onNope(m[1], m[2]);
         return;
       case "join":
@@ -529,6 +544,21 @@ export function createNet(W, {
       }
     }
     count();
+  }
+
+  function request(kind) {
+    if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
+    return new Promise((resolve, reject) => {
+      waits.set(kind, { resolve, reject });
+      if (kind === "moonv") send([kind]);
+      else acts.push(kind);
+      setTimeout(() => {
+        if (waits.get(kind)?.resolve === resolve) {
+          waits.delete(kind);
+          reject(new Error("The server didn't answer. Try again."));
+        }
+      }, 15_000);
+    });
   }
 
   /// On a new connection, pick the hunt up again with the token the room gave this browser when you signed in.
@@ -625,16 +655,17 @@ export function createNet(W, {
         }
         // Send where you are when your movement changes, or now and then while it keeps on (see HEARTBEAT).
         since += dt;
-        if (state && (since >= MIN_GAP || grabs.length || wgrabs.length)) {
+        if (state && (since >= MIN_GAP || grabs.length || wgrabs.length || acts.length)) {
           const moving = state.spd > 0.05;
           // Where the others' games put you now: your last update, carried on along the curve it gave.
           const seen = last && carried(last, since);
           const changed = !last || moving !== last.spd > 0.05 || (state.air > 0) !== (last.air > 0) || state.f.dot(seen.f) < 0.94 ||
             Math.abs(state.spd - last.spd) > 0.25 || Math.abs(state.h - last.h) > 0.25 || Math.abs(state.swim - last.swim) > 0.3 ||
             arc(state.p, seen.p) > DRIFT;
-          if (changed || (moving && since >= HEARTBEAT) || grabs.length || wgrabs.length) sendState(state);
+          if (changed || (moving && since >= HEARTBEAT) || grabs.length || wgrabs.length || acts.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
           while (wgrabs.length) send(["wgrab", ...wgrabs.shift()]);
+          while (acts.length) send([acts.shift()]);
         }
       }
       // Everyone else eases toward where they should be by now: their last update, carried on along the curve
@@ -699,6 +730,12 @@ export function createNet(W, {
     huntState: () => send(["hunt"]),
     /// You just picked up the stamp or coin at `spot`: ask the room to count it.
     grab: (spot) => grabs.push(spot),
+    /// MOON letters: ask for one at the post office or post box (resolves with { world, i, pay }), say you're at its
+    /// door (resolves with { voucher, today }: the signed voucher and the MOON earned today), or fetch today's
+    /// vouchers. Each rejects with the room's reason.
+    mission: () => request("mission"),
+    deliver: () => request("deliver"),
+    moonVouchers: () => request("moonv"),
     /// A stamp picked up on the moon or Mars (`w`: "moon" or "mars"; `spot`: its index in that world's spots).
     worldGrab: (w, spot) => wgrabs.push([w, spot]),
     /// Show the room a ticket to `w` ("moon" or "mars"): the hash of the transaction that paid for it. Resolves with
