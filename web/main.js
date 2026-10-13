@@ -1,5 +1,5 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
+import { createWorld, R, UP, arc, texFromCanvas, toon, ROAD_HW } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
@@ -15,11 +15,12 @@ import { createOffice } from "./office.js";
 import { createPad } from "./pad.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
-import { createStamps, STAMPS } from "./stamps.js";
+import { createStamps, STAMPS, stampGlow } from "./stamps.js";
 import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { createMoon } from "./moon.js";
 import { createMars } from "./mars.js";
 import { TRIPS } from "./trips.js";
+import { facing as faceToward, missionBoard } from "./space.js";
 import { MISSION_PAY, MISSION_DAILY } from "./missions.js";
 import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
@@ -908,6 +909,7 @@ function interact() {
   if (away) {
     const w = away.w;
     if (gArc(me, w.rocket.d) < w.rocket.reach) return flyHome();
+    if (gArc(me, w.board.d) < w.board.reach) return showJobCard();
     if (player.rideKey === "rover") return hopOut();
     if (w.rover?.near(me)) return hopIn();
     const who = w.nearestLocal(me, 2.4);
@@ -921,6 +923,7 @@ function interact() {
     return;
   }
   if (W.rocket && arc(me, W.rocket.d) < W.rocket.reach) return showTripCard();
+  if (arc(me, planetBoard.d) < planetBoard.reach) return showJobCard();
   const who = life.nearest(me, 2.4, bodyY);
   if (!who && W.orb && arc(me, W.orb.d) < W.orb.reach) {
     showAd();
@@ -1485,13 +1488,15 @@ function frame() {
         fillBag();
         say([{ name: "Postmaster", text: POSTMASTER[random(POSTMASTER.length)] }]);
       }
-      jobTick(p, arc(p, W.spawn.post) < 1.8, "Postmaster");
+      jobTick(p);
     }
+    jobBar(p, t);
     if (away) {
       tripTick(p, dt, t);
       beam.visible = false;
     } else {
       compass(p, t);
+      boardHint(p, planetBoard);
       placeTitle(p, dt);
       padHint(p);
       rocketHint(p);
@@ -1586,32 +1591,33 @@ function nearby(p) {
   return out;
 }
 
-/// Arrow toward your MOON letter's door, or the nearest letter's, or back to the post office.
+/// Arrow toward the nearest letter's door, or back to the post office. (A MOON letter has its own line: jobBar.)
 function compass(p, t = 0) {
   let best = null;
-  const job = jobHere(), jt = job && jobTarget(job);
-  const targets = jt ? [{ ...jt, pay: job.pay }]
-    : bag.length ? bag.map((i) => ({ d: W.addresses[i].dir, top: W.addresses[i].markerDir, name: `${W.addresses[i].name} · No. ${W.addresses[i].no}` }))
+  const targets = bag.length ? bag.map((i) => ({ d: W.addresses[i].dir, top: W.addresses[i].markerDir, name: `${W.addresses[i].name} · No. ${W.addresses[i].no}` }))
     : [{ d: W.spawn.post, top: W.spawn.post, name: "post office", post: true }];
   for (const tgt of targets) {
     const dd = arc(p, tgt.d);
     if (!best || dd < best.dd) best = { ...tgt, dd };
   }
   const w = best.d.clone().applyQuaternion(world.quaternion);
-  $("target").textContent = best.pay ? `🌕 Deliver to ${best.name} (${best.pay.toLocaleString()} MOON)` : `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name}`;
+  $("target").textContent = `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name}`;
   pointArrow(Math.atan2(w.x, -w.z), `· ${Math.round(best.dd)}m`);
   guideTo(best, t);
 }
-/// The arrow in the top bar: turned toward the goal (up is straight ahead of the camera), always the short way round,
-/// so it never spins right round when the goal passes behind you. The end of the line (`lead`, the distance, then the
-/// way in words) never gets cut off on a narrow screen; the name does.
-let arrowAngle = 0;
-function pointArrow(a, lead, there = false) {
-  arrowAngle += Math.atan2(Math.sin(a - arrowAngle), Math.cos(a - arrowAngle));
-  $("arrow").style.transform = `rotate(${arrowAngle}rad)`;
-  const deg = Math.abs(a) * (180 / Math.PI);
-  $("way").textContent = there ? lead : `${lead} ${deg < 30 ? "straight ahead" : deg > 150 ? "behind you" : a < 0 ? "on your left" : "on your right"}`;
+/// An arrow in the top bar (the element `arrowId`), turned toward a goal (up is straight ahead of the camera), always
+/// the short way round, so it never spins right round when the goal passes behind you; and the end of its line
+/// (`wayId`: `lead`, the distance, then the way in words), which never gets cut off on a narrow screen (the name does).
+function makeArrow(arrowId, wayId) {
+  let angle = 0;
+  return (a, lead, there = false) => {
+    angle += Math.atan2(Math.sin(a - angle), Math.cos(a - angle));
+    $(arrowId).style.transform = `rotate(${angle}rad)`;
+    const deg = Math.abs(a) * (180 / Math.PI);
+    $(wayId).textContent = there ? lead : `${lead} ${deg < 30 ? "straight ahead" : deg > 150 ? "behind you" : a < 0 ? "on your left" : "on your right"}`;
+  };
 }
+const pointArrow = makeArrow("arrow", "way"), pointJob = makeArrow("jobArrow", "jobWay");
 // The way to the next delivery, in the world: a column of golden light rising from it, seen over the roofs and
 // fading as you arrive.
 const beam = (() => {
@@ -1886,16 +1892,15 @@ function tripTick(p, dt, t) {
     if (i !== undefined) deliverAway(i);
     else if (!trip.bag.length && gArc(p, w.post.d) < w.post.reach) fillAwayBag();
   }
-  jobTick(p, gArc(p, w.post.d) < w.post.reach, w.post.name);
+  jobTick(p);
   const ticket = huntState?.wallet ? ` · ticket ${minutes(left)}` : "";
-  const job = jobHere(), jt = job && jobTarget(job);
-  let goal = jt ? { ...jt, dd: gArc(p, jt.d), pay: job.pay } : null;
-  for (const j of goal ? [] : trip.bag) {
+  let goal = null;
+  for (const j of trip.bag) {
     const r = w.residents[j], dd = gArc(p, r.d);
     if (!goal || dd < goal.dd) goal = { ...r, dd };
   }
   if (goal) {
-    $("target").textContent = goal.pay ? `🌕 Deliver to ${goal.name} (${goal.pay.toLocaleString()} MOON)` : `${EMOJI[k]} Deliver to ${goal.name}${left < 10 * 60_000 ? ticket : ""}`;
+    $("target").textContent = `${EMOJI[k]} Deliver to ${goal.name}${left < 10 * 60_000 ? ticket : ""}`;
     pointArrow(angleTo(goal.d), `· ${Math.round(goal.dd)}m`);
   } else {
     const home = w.rocket, dd = gArc(p, home.d);
@@ -1909,6 +1914,7 @@ function tripTick(p, dt, t) {
     toast(w.found === w.out ? `Every ${NOUN[k].toLowerCase()} stamp today!` : `${EMOJI[k]} ${NOUN[k]} stamp! ${w.found} of ${w.out}`);
     if (huntState?.wallet) net.worldGrab(k, got);
   }
+  boardHint(p, w.board);
   trip.puffs.update(dt, 1);
   trip.sparkle.update(dt, 1);
   if (w.rover) {
@@ -1923,63 +1929,194 @@ function tripTick(p, dt, t) {
 }
 
 // ---------------------------------------------------------------- MOON letters (missions.js)
-// A courier signed in to the hunt, with an open post office, is handed a MOON letter at the post office (or the
-// moon's or Mars's post box) and walks it to the door; the room checks, and signs a voucher for the MOON, which they
-// claim in the Post Office panel the same UTC day.
-let jobAskedAt = -1e9, jobPending = false;
-const jobSaid = new Set(); // reasons already shown this session (so standing at the post office doesn't repeat them)
-/// Where a MOON letter goes: { d (its direction on its world), top (for the light), name }, or null.
-function jobTarget(job) {
-  if (job.world === "planet") {
-    const a = W.addresses[job.i];
-    return a ? { d: a.dir, top: a.markerDir, name: `${a.name} · No. ${a.no}`, who: a.name } : null;
+// A courier signed in to the hunt, with an open post office, picks up a MOON letter at a MOON Missions board (by the
+// post office, or by the landing pad on the moon and Mars) for someone on any of the three worlds, and walks it to
+// them; the room checks, and signs a voucher for the MOON, which they claim in the Post Office panel the same UTC day.
+// The letter has its own line at the top, with its own arrow, and a gold moon floats over whoever it's for.
+let jobAskedAt = -1e9, jobPending = false, boardHinted = false;
+const jobSaid = new Set(); // reasons already shown this session (so they don't repeat)
+const WORLD_NAME = { planet: "Courier World", moon: "the moon", mars: "Mars" };
+/// The planet's MOON Missions board: beside the post office, clear of walls, the players' lots and the street.
+const planetBoard = (() => {
+  const door = W.spawn.post, fromOffice = door.clone().sub(W.spawn.office.d);
+  const out = fromOffice.addScaledVector(door, -fromOffice.dot(door)).normalize(), side = new THREE.Vector3().crossVectors(door, out).normalize();
+  let d = null;
+  for (const along of [3.2, -3.2, 4.2, -4.2, 5.2, -5.2, 6.4, -6.4]) {
+    for (const ahead of [0.4, 1.4, -0.4, 2.2]) {
+      const c = door.clone().multiplyScalar(R).addScaledVector(side, along).addScaledVector(out, ahead).normalize();
+      if (!d && !W.blocked(c, 0.9) && W.lots.every((l) => arc(l.d, c) > 3.4) && W.nearestRoad(c) > ROAD_HW + 0.4) d = c;
+    }
   }
-  const r = trips[job.world]?.w?.residents[job.i];
-  return r ? { d: r.d, top: r.d, name: r.name, who: r.name } : null;
-}
-/// The MOON letter you carry, if it's for the world you're on.
-function jobHere() {
-  const job = huntState?.mission;
-  return job && job.world === (away?.key ?? "planet") ? job : null;
+  d ??= door.clone().multiplyScalar(R).addScaledVector(side, 3.2).normalize();
+  const { g, moon } = missionBoard((geo, color) => {
+    const m = new THREE.Mesh(geo, toon(color));
+    m.castShadow = m.receiveShadow = true;
+    return m;
+  });
+  g.position.copy(d).multiplyScalar(R + W.terrain.baseAt(d));
+  g.quaternion.copy(faceToward(d, out));
+  W.world.add(g);
+  W.obstacles.push({ d: d.clone(), kind: "circle", r: 0.6, y1: 2.4, cos: Math.cos(1.6 / R) });
+  return { d, reach: 2.2, moon };
+})();
+/// Who a MOON letter is for: { d (their direction on their world), top (where the gold moon floats), h (how high),
+/// name, who }, or null if their world isn't built yet.
+function jobTarget(job) {
+  const id = job.id ?? `${job.world === "planet" ? "a" : "r"}${job.i}`, n = Number(id.slice(1)); // (old letters: by index)
+  if (job.world === "planet") {
+    if (id[0] === "n") {
+      const s = W.npcs[n], d = s?.d.clone().normalize();
+      return s ? { d, top: d, h: s.y + 2.8, name: s.name, who: s.name } : null;
+    }
+    const a = W.addresses[n];
+    return a ? { d: a.dir, top: a.markerDir, h: a.markerH + 1.0, name: `${a.name} · No. ${a.no}`, who: a.name } : null;
+  }
+  const w = trips[job.world]?.w, r = w?.residents[n];
+  return r ? { d: r.d, top: r.d, h: w.ground.terrain.surfaceAt(r.d) + 2.6, name: r.name, who: r.name } : null;
 }
 function jobNope(why) {
   if (jobSaid.has(why)) return;
   jobSaid.add(why);
   toast(`🌕 ${why}`, "error");
 }
-/// Each frame: at the door, deliver your MOON letter; at the post office or post box (`atPost`, whose name is
-/// `postName`), ask for one.
-function jobTick(p, atPost, postName) {
+/// Each frame: at the door (or beside whoever it's for), deliver your MOON letter.
+function jobTick(p) {
   if (jobPending || dialog || flying || !chainRef?.moon || !signedIn()) return;
   const job = huntState.mission, k = away?.key ?? "planet";
-  if (job) {
-    const t = job.world === k ? jobTarget(job) : null;
-    if (!t || gArc(p, t.d) > 1.6 || performance.now() - jobAskedAt < 3000) return;
-    jobAskedAt = performance.now();
-    jobPending = true;
-    net.deliver().then(({ voucher, today }) => {
-      huntState.mission = null;
-      huntState.moonToday = today;
-      delivered++;
-      try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
-      hud();
-      sounds.chime();
-      say([{ name: t.who, text: "A MOON letter, for me? You're a star, courier." }]);
-      toast(`🌕 +${voucher.pay.toLocaleString()} MOON! Claim it in the Post Office panel before 00:00 UTC.`);
-      office?.huntChanged();
-    }).catch((e) => jobNope(e.message)).finally(() => (jobPending = false));
-    return;
-  }
-  if (!atPost || performance.now() - jobAskedAt < 20_000 || (huntState.moonToday ?? 0) + MISSION_PAY[k] > MISSION_DAILY) return;
+  const t = job?.world === k ? jobTarget(job) : null;
+  if (!t || gArc(p, t.d) > 1.6 || performance.now() - jobAskedAt < 3000) return;
   jobAskedAt = performance.now();
   jobPending = true;
-  net.mission().then((j) => {
-    huntState.mission = j;
-    const t = jobTarget(j);
-    say([{ name: postName, text: `A MOON letter for ${t?.name ?? "someone"}. ${j.world === "planet" ? "Walk it to the door" : "Take it to them"} for ${j.pay.toLocaleString()} MOON.` }]);
+  net.deliver().then(({ voucher, today }) => {
+    huntState.mission = null;
+    huntState.moonToday = today;
+    delivered++;
+    try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
+    hud();
+    sounds.chime();
+    say([{ name: t.who, text: "A MOON letter, for me? You're a star, courier." }]);
+    toast(`🌕 +${voucher.pay.toLocaleString()} MOON! Claim it in the Post Office panel before 00:00 UTC.`);
     office?.huntChanged();
   }).catch((e) => jobNope(e.message)).finally(() => (jobPending = false));
 }
+/// By a MOON Missions board: say so, once.
+function boardHint(p, board) {
+  const d = gArc(p, board.d);
+  if (!boardHinted && d < board.reach + 0.6) {
+    boardHinted = true;
+    toast(`🌕 MOON Missions: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to pick up a letter that pays MOON`);
+  } else if (boardHinted && d > board.reach + 6) boardHinted = false;
+}
+/// The gold moon over whoever your MOON letter is for.
+const jobMark = (() => {
+  const g = new THREE.Group(), spin = new THREE.Group();
+  g.add(spin);
+  const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.09, 28).rotateX(Math.PI / 2), toon(0xf2c94c, { emissive: 0x6b4a00 }));
+  spin.add(coin);
+  for (const z of [0.05, -0.05]) {
+    const face = new THREE.Mesh(new THREE.CircleGeometry(0.29, 24), new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
+    face.position.z = z;
+    if (z < 0) face.rotation.y = Math.PI;
+    spin.add(face);
+  }
+  const halo = new THREE.Sprite(stampGlow());
+  halo.scale.set(1.7, 1.7, 1);
+  g.add(halo);
+  W.noNormals.push(halo);
+  g.visible = false;
+  return { g, spin };
+})();
+/// Each frame: the MOON letter's own line at the top (who it's for, and the way: to them, or to the rocket if
+/// they're on another world), and the gold moon over them.
+function jobBar(p, t) {
+  const job = mode === "play" && signedIn() ? huntState.mission : null, k = away?.key ?? "planet";
+  planetBoard.moon.scale.setScalar(1 + 0.06 * Math.sin(t * 2.2));
+  $("jobBar").hidden = !job;
+  document.body.classList.toggle("jobbing", !!job);
+  const tgt = job?.world === k ? jobTarget(job) : null;
+  jobMark.g.visible = !!tgt;
+  if (!job) return;
+  if (tgt) {
+    $("jobTarget").textContent = `🌕 MOON letter for ${tgt.name} (${job.pay.toLocaleString()} MOON)`;
+    pointJob(angleTo(tgt.d), `· ${Math.round(gArc(p, tgt.d))}m`);
+    if (jobMark.g.parent !== world) world.add(jobMark.g);
+    jobMark.g.position.copy(tgt.top).multiplyScalar(G.R + tgt.h + Math.sin(t * 2.4) * 0.15);
+    jobMark.g.quaternion.copy(W.frameAt(tgt.top, 0));
+    jobMark.spin.rotation.y = t * 1.8;
+    return;
+  }
+  // On another world: the way to the rocket (the neon district's, or the one home).
+  const rocket = away ? away.w.rocket.d : W.rocket?.d;
+  $("jobTarget").textContent = `🌕 MOON letter for ${job.name ?? "someone"} on ${WORLD_NAME[job.world]}`;
+  if (rocket) pointJob(angleTo(rocket), `· ${away ? "rocket home" : "fly from the rocket"} ${Math.round(gArc(p, rocket))}m`);
+}
+
+/// The MOON Missions card at a board: what you're carrying, or a letter to pick up for someone on any world.
+function showJobCard() {
+  if (!chainRef?.moon) return toast("MOON missions aren't open yet.", "error");
+  $("jobCard").hidden = false;
+  paintJobCard();
+}
+function paintJobCard(note = null) {
+  const chain = chainRef, job = signedIn() ? huntState.mission : null, today = (signedIn() && huntState.moonToday) || 0;
+  const go = $("jobGo"), pick = $("jobPick");
+  pick.hidden = go.hidden = true;
+  if (!chain.account) {
+    $("jobText").textContent = "MOON letters pay MOON, the game's own currency: 500 for a letter on Courier World, 1,000 on the moon, 2,000 on Mars.";
+    [go.hidden, go.textContent] = [false, "Log in"];
+  } else if (!signedIn()) {
+    $("jobText").textContent = "Sign in to pick up MOON letters. You'll need an open post office to be paid.";
+    [go.hidden, go.textContent] = [false, "Sign in for MOON letters"];
+  } else if (job) {
+    $("jobText").textContent = `You're carrying a MOON letter for ${job.name ?? jobTarget(job)?.name ?? "someone"} on ${WORLD_NAME[job.world]}: ${job.pay.toLocaleString()} MOON when it arrives.`;
+    [go.hidden, go.textContent] = [false, "Put it back"];
+  } else {
+    $("jobText").textContent = `Pick which world your MOON letter goes to, and the 🌕 line at the top shows you the way. Earned today: ${today.toLocaleString()} of ${MISSION_DAILY.toLocaleString()} MOON.`;
+    pick.hidden = false;
+    for (const b of pick.querySelectorAll("button")) b.disabled = today + MISSION_PAY[b.dataset.world] > MISSION_DAILY;
+  }
+  $("jobNote").textContent = note ?? (!chain.account ? "Claim what you earn in the Post Office panel, the same UTC day."
+    : !signedIn() ? "One signature proves the wallet is yours. It costs nothing and moves nothing."
+    : job ? "Put it back to pick a different one." : "Moon and Mars letters need a ticket from the neon district's rocket.");
+}
+const hideJobCard = () => ($("jobCard").hidden = true);
+$("jobClose").addEventListener("click", hideJobCard);
+for (const b of $("jobPick").querySelectorAll("button")) b.addEventListener("click", async () => {
+  if (jobPending) return;
+  jobPending = true;
+  try {
+    const j = await net.mission(b.dataset.world);
+    huntState.mission = j;
+    hideJobCard();
+    say([{ name: "MOON Missions", text: `A MOON letter for ${j.name ?? jobTarget(j)?.name ?? "someone"} on ${WORLD_NAME[j.world]}. Deliver it for ${j.pay.toLocaleString()} MOON: the 🌕 line at the top shows the way.` }]);
+    office?.huntChanged();
+  } catch (e) {
+    paintJobCard(e.message);
+  } finally {
+    jobPending = false;
+  }
+});
+$("jobGo").addEventListener("click", async () => {
+  const chain = chainRef, btn = $("jobGo");
+  if (!chain || btn.disabled) return;
+  btn.disabled = true;
+  try {
+    if (!chain.account) await chain.login();
+    else if (!signedIn()) {
+      btn.textContent = "Sign in your wallet…";
+      await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
+      await waitFor(signedIn, 10_000, "The room didn't answer. Try again.");
+    } else if (huntState.mission) {
+      await net.missionDrop();
+      huntState.mission = null;
+    }
+    if (!$("jobCard").hidden) paintJobCard();
+  } catch (e) {
+    paintJobCard(explain(e));
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 function padHint(p) {
   const door = launchpad && W.square?.pad;
@@ -2019,7 +2156,7 @@ const chainReady = connectChain()
         vouchers: () => net.vouchers(),
         moonVouchers: () => net.moonVouchers(),
         /// Who a MOON voucher's letter went to.
-        letterTo: (v) => jobTarget(v)?.name ?? "a neighbour",
+        letterTo: (v) => v.name ?? jobTarget(v)?.name ?? "a neighbour",
       } : null,
       onSnapshot(s) {
         autoAvatar(s);

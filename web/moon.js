@@ -8,7 +8,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, toon, mulberry32, texFromCanvas } from "./world.js";
 import { MOON_R, MOON_GRAVITY, LANDING, MOON_SPOTS, moonHeight, moonSpots } from "./moon-pick.js";
-import { facing, padAndRocket, postBox, createLocals, dayStamps, homePlanet } from "./space.js";
+import { facing, padAndRocket, postBox, missionBoard, createLocals, dayStamps, homePlanet } from "./space.js";
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const arr = (v) => [v.x, v.y, v.z];
@@ -171,6 +171,13 @@ export function createMoon(W) {
     group.add(box);
     circle(postD.clone(), 0.35, { y1: 1.5 });
   }
+  // ---- the MOON Missions board, ahead of you as you step out (out of the rocket's reach, clear of the stamp spots)
+  const boardD = along(along(top, east, -6.5), north, -0.5);
+  const board = missionBoard(mesh);
+  board.g.position.copy(boardD).multiplyScalar(MOON_R + moonHeight(arr(boardD)));
+  board.g.quaternion.copy(facing(boardD, arrive.clone().sub(boardD)));
+  group.add(board.g);
+  circle(boardD.clone(), 0.6, { y1: 2.4 });
 
   // ---- a flag by the pad
   {
@@ -188,7 +195,7 @@ export function createMoon(W) {
 
   // ---- the moon base: a domed station on legs, where the moon frogs live; and the frogs themselves. Kept off the
   // stamp spots (the server knows where those are) and the pad, on ground flat enough to stand on.
-  const keepOut = [{ d: top, r: 4.6 }]; // (rocks stay clear of these)
+  const keepOut = [{ d: top, r: 4.6 }, { d: boardD, r: 1.6 }]; // (rocks stay clear of these)
   const locals = createLocals(MOON_R), residents = []; // (residents: the frogs who get letters)
   const spotDirs = MOON_SPOTS.map((s) => V(...s.d));
   let baseD = null;
@@ -197,7 +204,7 @@ export function createMoon(W) {
     for (let i = 0; i < 600; i++) {
       const a = i * 2.39996, m = 6.2 + (i % 9) * 0.45, tan = east.clone().multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a));
       const d = along(top, tan, m), clear = Math.min(...spotDirs.map((p) => marc(p, d)));
-      if (clear < 4.3) continue;
+      if (clear < 4.3 || marc(d, boardD) < 5.5) continue;
       const t1 = new THREE.Vector3().crossVectors(d, east).normalize(), t2 = new THREE.Vector3().crossVectors(d, t1);
       let rough = 0;
       for (let k = 0; k < 10; k++) {
@@ -208,7 +215,7 @@ export function createMoon(W) {
       if (score > best) [best, baseD] = [score, d];
     }
   }
-  const frogAt = (d, name, lines, color, glowColor, look, mail = true) => {
+  const frogAt = (d, name, lines, color, glowColor, look) => {
     const f = frogMesh(color, glowColor, mesh);
     f.g.position.copy(d).multiplyScalar(MOON_R + moonHeight(arr(d)));
     f.g.quaternion.copy(facing(d, look));
@@ -216,7 +223,7 @@ export function createMoon(W) {
     circle(d.clone(), 0.42, { y1: moonHeight(arr(d)) + 1.5 });
     keepOut.push({ d, r: 1.1 });
     locals.add(f, d, name, lines, rnd() * 6);
-    if (mail) residents.push({ name, d });
+    residents.push({ name, d });
   };
   /// The flattest spot about `m` metres round from the pad (toward `az`, give or take `spread` radians), at least
   /// `clear` metres from every stamp spot and clear of what's already here.
@@ -319,7 +326,7 @@ export function createMoon(W) {
     "The moon stamps are golden, like on your planet, but floatier. Some only a big jump reaches.",
     "Moon Base is that way. Tell Captain Gloop that Zorp sent you. He'll pretend he knows me.",
     "Got moon mail? The Moon Post box by the pad has letters for the frogs. Some of them live a long hop away.",
-  ], 0x5cbf4a, 0x7dff6a, along(top, north, 2.8), false);
+  ], 0x5cbf4a, 0x7dff6a, along(top, north, 2.8));
 
   // ---- further out: Professor Tadwick at his telescope, and Old Croak in his stone hut on the far side
   const baseAz = baseD ? Math.atan2(baseD.dot(north), baseD.dot(east)) : 0;
@@ -447,6 +454,8 @@ export function createMoon(W) {
     rocket: { d: top.clone(), reach: 2.9 },
     /// The Moon Post box (stand within `reach` with an empty bag for letters), and who the letters are for.
     post: { d: postD, reach: 1.8, name: "Moon Post box" },
+    /// The MOON Missions board (stand within `reach` and press E to pick up a MOON letter).
+    board: { d: boardD, reach: 2.2 },
     residents,
     thanks: [
       "A letter! Nobody ever writes to the moon.",
@@ -465,6 +474,7 @@ export function createMoon(W) {
     /// are, moon-local; `chest`: how high) is picked up. Returns the spot picked up, or null.
     update(dt, t, { me, chest, active }) {
       locals.update(dt, t, me);
+      board.moon.scale.setScalar(1 + 0.06 * Math.sin(t * 2.2));
       for (const b of blinkers) b.m.visible = (t + (b.ph ?? 0)) % b.every < b.on;
       // The saucer: round the moon over the pad and the base, bobbing and spinning, its beam pulsing.
       const a = t * ((Math.PI * 2) / 55), dir = ufoU.clone().multiplyScalar(Math.cos(a)).addScaledVector(ufoV, Math.sin(a)).normalize();

@@ -291,7 +291,7 @@ export function createNet(W, {
   let mine = "planet", ticketWait = null;
   const wgrabs = []; // stamps picked up on the moon or Mars this frame: [world, spot]
   // MOON letters (missions.js): asking for one and saying you're at its door go right after where you are, so the
-  // room checks the spot; the replies the game is waiting for, by request ("mission", "deliver", "moonv").
+  // room checks the spot (as messages); the replies the game is waiting for, by request ("mission", "deliver", "moonv").
   const acts = [], waits = new Map();
   /// Put a player (or your emote anchor) in their world's group.
   function home(obj, w) {
@@ -546,12 +546,13 @@ export function createNet(W, {
     count();
   }
 
-  function request(kind) {
+  /// Send `message` (`now`: straight away, otherwise right after where you are) and wait for the reply to `kind`.
+  function request(kind, message, now = false) {
     if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
     return new Promise((resolve, reject) => {
       waits.set(kind, { resolve, reject });
-      if (kind === "moonv") send([kind]);
-      else acts.push(kind);
+      if (now) send(message);
+      else acts.push(message);
       setTimeout(() => {
         if (waits.get(kind)?.resolve === resolve) {
           waits.delete(kind);
@@ -665,7 +666,7 @@ export function createNet(W, {
           if (changed || (moving && since >= HEARTBEAT) || grabs.length || wgrabs.length || acts.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
           while (wgrabs.length) send(["wgrab", ...wgrabs.shift()]);
-          while (acts.length) send([acts.shift()]);
+          while (acts.length) send(acts.shift());
         }
       }
       // Everyone else eases toward where they should be by now: their last update, carried on along the curve
@@ -730,12 +731,13 @@ export function createNet(W, {
     huntState: () => send(["hunt"]),
     /// You just picked up the stamp or coin at `spot`: ask the room to count it.
     grab: (spot) => grabs.push(spot),
-    /// MOON letters: ask for one at the post office or post box (resolves with { world, i, pay }), say you're at its
-    /// door (resolves with { voucher, today }: the signed voucher and the MOON earned today), or fetch today's
-    /// vouchers. Each rejects with the room's reason.
-    mission: () => request("mission"),
-    deliver: () => request("deliver"),
-    moonVouchers: () => request("moonv"),
+    /// MOON letters: pick one up at the MOON Missions board for someone on `world` (resolves with { world, id, name,
+    /// pay }), put it back (resolves with null), say you're at its door (resolves with { voucher, today }: the signed
+    /// voucher and the MOON earned today), or fetch today's vouchers. Each rejects with the room's reason.
+    mission: (world) => request("mission", ["mission", world]),
+    missionDrop: () => request("mission", ["missiondrop"], true),
+    deliver: () => request("deliver", ["deliver"]),
+    moonVouchers: () => request("moonv", ["moonv"], true),
     /// A stamp picked up on the moon or Mars (`w`: "moon" or "mars"; `spot`: its index in that world's spots).
     worldGrab: (w, spot) => wgrabs.push([w, spot]),
     /// Show the room a ticket to `w` ("moon" or "mars"): the hash of the transaction that paid for it. Resolves with

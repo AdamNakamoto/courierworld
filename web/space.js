@@ -95,6 +95,57 @@ export function postBox(mesh, label) {
   return g;
 }
 
+/// The MOON Missions board, where couriers pick up MOON letters (missions.js): a signboard on two posts under a little
+/// roof, with a glowing full moon on top. Its base at y 0, its face toward +z. Returns { g, moon } (the moon, to pulse).
+export function missionBoard(mesh) {
+  const g = new THREE.Group();
+  for (const x of [-0.95, 0.95]) {
+    const post = mesh(new THREE.CylinderGeometry(0.06, 0.07, 2.2, 8), 0x3b4145);
+    post.position.set(x, 1.1, 0);
+    g.add(post);
+  }
+  const back = mesh(new THREE.BoxGeometry(2.1, 1.2, 0.08), 0x2a2340);
+  back.position.set(0, 1.45, -0.05);
+  g.add(back);
+  const roof = mesh(new THREE.BoxGeometry(2.4, 0.1, 0.55), 0xf2c94c);
+  roof.position.set(0, 2.15, 0.05);
+  g.add(roof);
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 288;
+  const x = c.getContext("2d");
+  x.fillStyle = "#2a2340";
+  x.fillRect(0, 0, 512, 288);
+  x.strokeStyle = "#f2c94c";
+  x.lineWidth = 10;
+  x.strokeRect(10, 10, 492, 268);
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.shadowColor = "#ffe9a8";
+  x.shadowBlur = 18;
+  x.fillStyle = "#ffe9a8";
+  x.font = "400 64px Bungee, Impact, sans-serif";
+  x.fillText("🌕 MOON", 256, 92, 400);
+  x.fillText("MISSIONS", 256, 160, 400);
+  x.shadowBlur = 0;
+  x.fillStyle = "#f2c94c";
+  x.font = "400 26px Bungee, Impact, sans-serif";
+  x.fillText("LETTERS THAT PAY MOON", 256, 234, 400);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.95, 1.1), new THREE.MeshBasicMaterial({ map: texFromCanvas(c) }));
+  face.position.set(0, 1.45, 0.0);
+  g.add(face);
+  const moon = new THREE.Mesh(new THREE.CircleGeometry(0.42, 32), new THREE.MeshBasicMaterial({ color: 0xffe9a8, side: THREE.DoubleSide }));
+  moon.position.set(0, 2.72, 0.05);
+  g.add(moon);
+  const ring = mesh(new THREE.TorusGeometry(0.46, 0.05, 6, 32), 0xf2c94c);
+  ring.position.copy(moon.position);
+  g.add(ring);
+  const stem = mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 6), 0x3b4145);
+  stem.position.set(0, 2.25, 0.05);
+  g.add(stem);
+  return { g, moon };
+}
+
 /// The locals on a world of radius `R` (moon frogs, Martians, astronauts): `add` each one once it's built and placed
 /// ({ g, body, eyes, tips, tick? }: the group, the part that turns and hops, the eyes that blink, the bits that glow,
 /// and anything else it does each frame), with where it stands, its name and what it says.

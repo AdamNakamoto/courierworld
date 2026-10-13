@@ -12,7 +12,7 @@ import { mergeVertices, mergeGeometries } from "https://esm.sh/three@0.160.0/exa
 import { R, toon, mulberry32, texFromCanvas, Batch } from "./world.js";
 import { LANDING } from "./moon-pick.js";
 import { MARS_R, MARS_GRAVITY, MARS_SPOTS, MARS_CRATERS, MOUNTAINS, marsHeight, marsSpots, CITY, VOLCANO, ICE, RADIO, CANYON, canyonAt, canyonFloor } from "./mars-pick.js";
-import { facing, padAndRocket, postBox, createLocals, dayStamps, homePlanet } from "./space.js";
+import { facing, padAndRocket, postBox, missionBoard, createLocals, dayStamps, homePlanet } from "./space.js";
 import { createRide } from "./rides.js";
 import { createCharacter } from "./character.js";
 
@@ -236,6 +236,10 @@ export function createMars(W) {
   const postD = round(round(top, east, 3.0), north, 0.6);
   stand(postBox(mesh, "MARS POST"), postD, arrive.clone().sub(postD));
   circle(postD.clone(), 0.35, { y1: 1.5 });
+  // The MOON Missions board, ahead and to the right as you step out, by the way into the city.
+  const boardD = round(round(top, east, 4.0), north, 4.8), board = missionBoard(mesh);
+  stand(board.g, boardD, arrive.clone().sub(boardD), 0, group);
+  circle(boardD.clone(), 0.6, { y1: 2.4 });
   /// A tall silver rocket on its stand.
   const bigRocket = (d) => {
     const g = new THREE.Group();
@@ -863,6 +867,8 @@ export function createMars(W) {
     rocket: { d: top.clone(), reach: 2.9 },
     /// The Mars Post box (stand within `reach` with an empty bag for letters), and who the letters are for.
     post: { d: postD, reach: 1.8, name: "Mars Post box" },
+    /// The MOON Missions board (stand within `reach` and press E to pick up a MOON letter).
+    board: { d: boardD, reach: 2.2 },
     residents,
     thanks: [
       "Mail! The last letter took seven months. You took seven minutes.",
@@ -903,6 +909,7 @@ export function createMars(W) {
     /// or null.
     update(dt, t, { me, chest, active }) {
       locals.update(dt, t, me);
+      board.moon.scale.setScalar(1 + 0.06 * Math.sin(t * 2.2));
       for (const b of blinkers) {
         if (b.pulse) b.m.material.opacity = 0.3 + 0.25 * (0.5 + 0.5 * Math.sin(t * 1.3));
         else b.m.visible = (t + (b.ph ?? 0)) % b.every < b.on;

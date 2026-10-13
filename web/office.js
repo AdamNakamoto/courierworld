@@ -355,9 +355,9 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       const m = moonInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
       const open = m.funded && m.signerOk && !m.paused, owed = m.vouchers.reduce((t, v) => t + BigInt(v.amount), 0n);
       html += `<section class="hunt moon"><h3>🌕 MOON letters <span class="muted">earn MOON by delivering</span></h3>
-        <p class="note">Take a MOON letter at the post office, or at the post box on the moon or Mars, and walk it to the door:
-        ${MISSION_PAY.planet.toLocaleString()} MOON on the planet, ${MISSION_PAY.moon.toLocaleString()} on the moon, ${MISSION_PAY.mars.toLocaleString()} on Mars,
-        up to ${MISSION_DAILY.toLocaleString()} a day.</p>`;
+        <p class="note">Pick up a MOON letter at the 🌕 MOON Missions board beside the post office (or by the landing pad on the moon
+        or Mars) and take it to whoever it's for: ${MISSION_PAY.planet.toLocaleString()} MOON on Courier World, ${MISSION_PAY.moon.toLocaleString()} on the moon,
+        ${MISSION_PAY.mars.toLocaleString()} on Mars, up to ${MISSION_DAILY.toLocaleString()} a day.</p>`;
       if (!open) html += `<p class="on">${m.paused ? "MOON claims are paused right now." : "MOON letters start once the treasury opens the MOON reward pool."}</p>`;
       html += `<div class="kv"><span>Earned today</span><b>${st ? `${(st.moonToday ?? 0).toLocaleString()} / ${MISSION_DAILY.toLocaleString()}` : "–"}</b></div>`;
       if (s.account) html += `<div class="kv"><span>Your MOON</span><b>${fmt(m.balance, 0)}</b></div>`;

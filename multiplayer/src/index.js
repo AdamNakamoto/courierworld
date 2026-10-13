@@ -207,7 +207,7 @@ export class Planet extends DurableObject {
     if (m[0] === "ticket") return this.ticket(ws, a, m[1], m[2], now);
     if (m[0] === "moon") return this.ticket(ws, a, "moon", m[1], now, true); // (from a game loaded before Mars)
     if (m[0] === "world") return this.goTo(ws, a, m[1], now);
-    if (m[0] === "mission" || m[0] === "deliver" || m[0] === "moonv") return this.mission(ws, a, m[0], now);
+    if (m[0] === "mission" || m[0] === "missiondrop" || m[0] === "deliver" || m[0] === "moonv") return this.mission(ws, a, m, now);
   }
 
   // ---------------------------------------------------------------- chat
@@ -646,14 +646,21 @@ export class Planet extends DurableObject {
     }
   }
 
-  /// ["mission"]: a MOON letter, handed out at the post office (or the post box on the moon or Mars) to a signed-in
-  /// courier with an open post office, while they and everyone together are under today's limits. ["deliver"]: at its
-  /// door, a voucher for it (["delivered", voucher]). ["moonv"]: today's vouchers. Refusals are ["nope", -3, why, kind].
-  async mission(ws, a, kind, now) {
+  /// ["mission", world]: a MOON letter for someone on `world` ("planet", "moon" or "mars"; by default the one they're
+  /// on), handed out at the MOON Missions board on the world they're on to a signed-in courier with an open post
+  /// office, while they and everyone together are under today's limits. ["missiondrop"]: put it back. ["deliver"]: at
+  /// its door, a voucher for it (["delivered", voucher]). ["moonv"]: today's vouchers. Refusals are
+  /// ["nope", -3, why, kind].
+  async mission(ws, a, m, now) {
+    const kind = m[0] === "missiondrop" ? "mission" : m[0];
     const no = (why) => send(ws, ["nope", -3, why, kind]);
     if (!a.wallet) return no("Sign in to the hunt first, so the room knows your wallet.");
     const day = huntDay(now), jobKey = `mission:${a.wallet}`, mineKey = `moonday:${day}:${a.wallet}`, allKey = `moonday:${day}`, listKey = `moonv:${day}:${a.wallet}`;
     if (kind === "moonv") return send(ws, ["moonv", (await this.ctx.storage.get(listKey)) ?? []]);
+    if (m[0] === "missiondrop") {
+      await this.ctx.storage.delete(jobKey);
+      return send(ws, ["mission", null]);
+    }
     const world = worldOf(a), spots = MISSION_SPOTS[world], r = TRIPS[world]?.R ?? R;
     const here = a.s && now - a.sAt <= 4000 ? a.s : null; // (where they are, if they've said lately)
     const [mine, all] = [(await this.ctx.storage.get(mineKey)) ?? 0, (await this.ctx.storage.get(allKey)) ?? 0];
@@ -661,27 +668,29 @@ export class Planet extends DurableObject {
     if (kind === "mission") {
       const held = await this.ctx.storage.get(jobKey);
       if (held) return send(ws, ["mission", held]); // (still theirs)
-      const pay = MISSION_PAY[world];
+      const to = MISSION_SPOTS[m[1]] ? m[1] : world, pay = MISSION_PAY[to];
       if (mine + pay > MISSION_DAILY) return no(`That's today's ${MISSION_DAILY.toLocaleString("en-US")} MOON earned. New MOON letters at 00:00 UTC.`);
       if (all + pay > MISSION_GLOBAL) return no("Today's MOON is all handed out. New MOON letters at 00:00 UTC.");
       if (!(await this.moonOpen(now))) return no("MOON letters start once the MOON reward pool is open.");
       if (!(await this.hasOffice(a.wallet, now))) return no("MOON letters are for couriers with an open post office.");
-      if (!here || arcBetween(here, spots.post, r) > MISSION_TAKE) return no("Come right up to the post office for a MOON letter.");
-      const far = spots.targets.filter((t) => arcBetween(t.d, spots.post, r) >= MISSION_FAR[world]);
+      if (!here || arcBetween(here, spots.board, r) > MISSION_TAKE) return no("Come right up to the MOON Missions board for a MOON letter.");
+      // Someone on that world: on this one, not right by the board.
+      const people = MISSION_SPOTS[to].targets, far = to === world ? people.filter((t) => arcBetween(t.d, spots.board, r) >= MISSION_FAR[to]) : people;
       const t = far[Math.floor(Math.random() * far.length)];
-      const job = { world, i: t.i, pay, at: now, from: here.slice(0, 3) };
+      const job = { world: to, id: t.id, name: t.name, pay, at: now, from: here.slice(0, 3), fromWorld: world };
       await this.ctx.storage.put(jobKey, job);
       return send(ws, ["mission", job]);
     }
 
-    // ["deliver"]: they say they're at the door. Check they are, and could have got there from the post office.
+    // ["deliver"]: they say they're at the door. Check they are, and could have got there from the board.
     const job = await this.ctx.storage.get(jobKey);
     if (!job) return no("You aren't carrying a MOON letter.");
     if (job.world !== world) return no("That MOON letter is for another world.");
     if ((a.strikes ?? 0) >= 3) return no("Something looked off with your movement, so deliveries aren't counting this session. Reload to try again.");
-    const t = spots.targets.find((x) => x.i === job.i);
+    const id = job.id ?? `${job.world === "planet" ? "a" : "r"}${job.i}`; // (letters handed out before the boards: by index)
+    const t = spots.targets.find((x) => x.id === id);
     if (!t || !here || arcBetween(here, t.d, r) > MISSION_REACH) return no("You're not at the door yet.");
-    if ((now - job.at) / 1000 < arcBetween(job.from, t.d, r) / TOP_SPEED) return no("That was quicker than anyone can travel.");
+    if ((job.fromWorld ?? job.world) === job.world && (now - job.at) / 1000 < arcBetween(job.from, t.d, r) / TOP_SPEED) return no("That was quicker than anyone can travel.");
     if (mine + job.pay > MISSION_DAILY || all + job.pay > MISSION_GLOBAL) {
       await this.ctx.storage.delete(jobKey);
       return no("Today's MOON ran out before that letter arrived. New MOON letters at 00:00 UTC.");
@@ -692,7 +701,7 @@ export class Planet extends DurableObject {
       domain: { ...VOUCHER_DOMAIN, chainId: Number(this.env.MOON_CHAIN_ID ?? 4663), verifyingContract: this.env.MOON_REWARDS }, // (Robinhood Chain)
       types: VOUCHER_TYPES, primaryType: "MissionVoucher", message,
     });
-    const v = { player: a.wallet, amount: String(message.amount), day, nonce: String(message.nonce), deadline: Number(message.deadline), signature, pay: job.pay, world, i: job.i };
+    const v = { player: a.wallet, amount: String(message.amount), day, nonce: String(message.nonce), deadline: Number(message.deadline), signature, pay: job.pay, world, id, name: t.name };
     const list = (await this.ctx.storage.get(listKey)) ?? [];
     list.push(v);
     await this.ctx.storage.put({ [listKey]: list, [mineKey]: mine + job.pay, [allKey]: all + job.pay });

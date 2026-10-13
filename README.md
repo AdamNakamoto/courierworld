@@ -158,11 +158,13 @@ MOON a wallet and 1,000,000 MOON for everyone per UTC day, and only to wallets w
 (companions for MOON, half burned and half recycled into the pool). Addresses are in
 `contracts/deployments/robinhood-moon.json` and `web/deployments/robinhood.json`.
 
-The game pays MOON for MOON letters (`web/missions.js`): a signed-in courier with an open post office asks at the post
-office or a post box (`["mission"]`, checked against where the room last saw them); the room picks a door on that world
-from `web/mission-spots.json` (every door on the planet and every local on the moon and Mars, made from the game's own
-layout: remake it if they move) and remembers the letter; at the door (`["deliver"]`, checked against where they are and
-how fast anyone can travel) it signs an EIP-712 `MissionVoucher` (player, amount, day, nonce, deadline) for
+The game pays MOON for MOON letters (`web/missions.js`): a signed-in courier with an open post office picks one up at a
+MOON Missions board (by the post office, and by the landing pads on the moon and Mars) for someone on any of the three
+worlds (`["mission", world]`, checked against where the room last saw them; `["missiondrop"]` puts it back); the room
+picks someone on that world from `web/mission-spots.json` (each world's board, and every door and character on the
+planet and every local on the moon and Mars, with names, made from the game's own layout: remake it if they move) and
+remembers the letter; at the door (`["deliver"]`, checked against where they are and, on the same world, how fast
+anyone can travel) it signs an EIP-712 `MissionVoucher` (player, amount, day, nonce, deadline) for
 MoonRewards with `MOON_KEY` (a Worker secret; its address is the contract's voucher signer). Letters pay 500 MOON on
 the planet, 1,000 on the moon and 2,000 on Mars, up to 10,000 a wallet a day; the room stops handing them out at the
 contract's daily cap. The Post Office panel lists the day's vouchers (`["moonv"]`) and claims them, one transaction
