@@ -457,16 +457,23 @@ function paintTicker() {
   document.body.classList.toggle("ticking", on);
   ticker.hidden = !on;
   if (!on) return;
+  // Drops of the same token read as one hunt: their coins, claims and tokens added up.
+  const byToken = new Map();
+  for (const d of live) byToken.set(d.token, [...(byToken.get(d.token) ?? []), d]);
+  const sum = (ds, f) => ds.reduce((n, d) => n + f(d), 0);
   const parts = [];
-  for (const d of live) {
-    const sym = `$${tickEsc(d.symbol)}`, daily = Number(d.dailyCoins), left = Math.max(0, daily - Number(d.paid ?? 0));
-    const mine = huntState?.wallet && huntState.day === dropsDay ? huntState.coins?.[d.id]?.length ?? 0 : null;
+  for (const ds of byToken.values()) {
+    const sym = `$${tickEsc(ds[0].symbol)}`, daily = sum(ds, (d) => Number(d.dailyCoins));
+    const left = sum(ds, (d) => Math.max(0, Number(d.dailyCoins) - Number(d.paid ?? 0)));
+    const mine = huntState?.wallet && huntState.day === dropsDay ? sum(ds, (d) => huntState.coins?.[d.id]?.length ?? 0) : null;
+    const pays = [...new Set(ds.map((d) => d.perCoin))].sort((a, b) => (a < b ? -1 : 1)).map((v) => tickNum(v));
+    const start = Math.min(...ds.map((d) => d.startDay)), end = Math.max(...ds.map((d) => d.endDay));
     parts.push(`🪙 THE ${sym} TREASURE HUNT IS ON`);
-    parts.push(`<b>${d.spots}</b> ${sym} COINS HIDDEN ROUND THE PLANET TODAY${mine !== null ? ` · YOU'VE FOUND <b>${mine}</b>` : ""}`);
+    parts.push(`<b>${sum(ds, (d) => d.spots)}</b> ${sym} COINS HIDDEN ROUND THE PLANET TODAY${mine !== null ? ` · YOU'VE FOUND <b>${mine}</b>` : ""}`);
     parts.push(left > 0 ? `<b>${left} OF ${daily}</b> COINS LEFT TO CLAIM TODAY · FIRST COME, FIRST SERVED`
       : `<span class="hot">TODAY'S ${daily} COINS ARE ALL CLAIMED</span>`);
-    parts.push(`<b>${tickNum(d.perCoin)}</b> ${sym} A COIN · UP TO ${d.maxPerWallet} A WALLET A DAY`);
-    parts.push(`DAY ${dropsDay - d.startDay + 1} OF ${d.endDay - d.startDay + 1} · ${tickNum(d.left, true)} ${sym} LEFT IN THE DROP`);
+    parts.push(`<b>${pays.join("–")}</b> ${sym} A COIN · UP TO ${sum(ds, (d) => d.maxPerWallet)} A WALLET A DAY`);
+    parts.push(`DAY ${dropsDay - start + 1} OF ${end - start + 1} · ${tickNum(ds.reduce((n, d) => n + d.left, 0n), true)} ${sym} LEFT TO HUNT`);
   }
   parts.push(`NEW COINS IN <b>${newSpotsIn().toUpperCase()}</b> (00:00 UTC)`);
   parts.push("OPEN A POST OFFICE TO REDEEM · PRESS P");
