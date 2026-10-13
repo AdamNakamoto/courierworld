@@ -898,6 +898,12 @@ function interact() {
   const me = localPos();
   if (onMoon) {
     if (gArc(me, moon.rocket.d) < moon.rocket.reach) return flyHome();
+    const frog = moon.nearestFrog(me, 2.4);
+    if (frog) {
+      frog.talk(true);
+      say([{ name: frog.name, text: frog.line() }], () => frog.talk(false));
+      return;
+    }
     waveT = 1.6;
     net.say(-1);
     return;
@@ -1727,7 +1733,7 @@ function flyToMoon() {
     if (huntState?.wallet) m.setFound(huntState.day, huntState.moon ?? []);
     net.setWorld("moon");
     hud();
-    setTimeout(() => toast(`🌙 Welcome to the moon! Gravity is low, so jump. ${MOON_STAMPS} golden moon stamps are out today; the rocket flies you home.`), 1200);
+    setTimeout(() => toast(`🌙 Welcome to the moon! Gravity is low, so jump. ${MOON_STAMPS} golden moon stamps are out today, the moon frogs at Moon Base say hi (E), and the rocket flies you home.`), 1200);
   });
 }
 function flyHome(why = null) {
