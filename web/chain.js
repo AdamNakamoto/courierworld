@@ -6,6 +6,7 @@ import {
   BaseError, ContractFunctionRevertedError,
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
+import { MOON_PRICE, MOON_PRICE_TEXT, MOON_TREASURY } from "./moon-pick.js";
 
 const ERROR_TEXT = {
   // Courier Skins for $STAMP (SkinsStampSale)
@@ -623,6 +624,14 @@ export async function connectChain() {
   return {
     local: dep.local,
     drops,
+    /// A moon ticket: MOON_PRICE $STAMP from you to the treasury. Resolves with the transaction's hash (the
+    /// multiplayer server checks it and opens the moon).
+    async moonTicket() {
+      if (!account) throw new Error("Log in first.");
+      if (!C.stamp) throw new Error("The moon isn't open yet.");
+      if ((await read(C.stamp, "balanceOf", [account])) < MOON_PRICE) throw new Error(`A moon ticket is ${MOON_PRICE_TEXT} $STAMP. Get some in the Post Office panel's trade box first.`);
+      return (await send(C.stamp, "transfer", [MOON_TREASURY, MOON_PRICE])).transactionHash;
+    },
     /// The $STAMP token's address (once the game is out).
     stampAddress: C.stamp?.address ?? null,
     browserWallet,

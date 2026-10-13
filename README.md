@@ -119,6 +119,26 @@ npx wrangler deploy --var DROPS_ADDRESS:0x…
 `./dev.sh` deploys local drops and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs them too (token
 drops need the launchpad: `./dev.sh --fork`). `StampHunt.sol`, the $STAMP-only version, was never deployed.
 
+## The moon
+
+The neon district's rocket flies couriers to a small moon (`web/moon.js`; its rules, shared with the server, are in
+`web/moon-pick.js`): radius 12 m, low gravity (0.35 of the planet's), craters and rocks, the landing pad with the
+rocket home, a flag, and the planet in a black, starry sky (the painted sky's "space" mode). The moon's group sits
+so its top is where the planet's is, so the sun, the shadows and the camera work unchanged; `main.js` walks on
+whichever world you're on (its radius, centre, ground, obstacles and gravity) and turns that one under you.
+
+A ticket is 100 $STAMP sent from the player's wallet to the treasury (`chain.moonTicket()`), good for an hour. The
+room checks it (`["moon", txHash]`): a successful transaction from the player's signed-in hunt wallet that moved at
+least 100 $STAMP to the treasury, less than three hours old, never used before; the ticket is kept per wallet, so a
+reload doesn't lose it. Players tell the room which world they're on (`["world", "moon" | "planet"]`, moon only
+with a ticket), and positions and emotes go only to players on the same world; a newcomer gets everyone there
+(`["here", …]`). Twelve golden moon stamps a day (`["mgrab", spot]`, checked against the moon's spots with the
+moon's radius) count with the golden stamps: the vouchers for the $STAMP drop add them up, within its limits.
+
+Signing in to the hunt now also gives the browser a token (`["hunttoken"]`, kept for the session) so a new
+connection picks the hunt up again (`["resume"]`) without another signature. For local testing, `MOON_DEV=1` in
+`multiplayer/.dev.vars` makes the room accept any ticket; never set it in production.
+
 ## Courier Skins
 
 `CourierSkins.sol`: 999 cosmetic NFTs, 16 outfits and rides (`web/skins.js`), minted blind for ETH

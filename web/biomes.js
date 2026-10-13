@@ -961,6 +961,7 @@ export function buildBiomes(k) {
         glow(g, new THREE.SphereGeometry(0.1, 8, 6), 0xff3b3b, 1.9, 6.75, 0);
         k.bake(g, pad, spin);
         k.addCircle(pad, 0.85, { wall: { h: 6.8 } });
+        k.rocket?.({ d: pad.clone(), reach: 2.5, spin }); // (the moon flights leave from here: stand by the rocket)
         k.addCircle(pad.clone().multiplyScalar(R).add(V(1.9, 0, 0).applyQuaternion(q)).normalize(), 0.7, { wall: { h: 6.6 } });
         k.taken.push({ d: pad, r: 3.2 });
         neonSign("MARS POST", PINK, 2.4, 0.5, pad.clone().multiplyScalar(R).add(V(-1.6, 0, 1.9).applyQuaternion(q)).normalize(), spin, 1.6);
@@ -974,9 +975,10 @@ export function buildBiomes(k) {
         k.npc({ d: elon, y: T.landAt(elon), face, name: "Elon Tusk", own: true, hi: ["To Mars!", "Hello, Earthling!", "Ship it!"],
           look: { hairStyle: "short", hair: 0x3a2a24, skin: 0xf2d3be, shirt: 0x1f2024, accent: 0x1f2024, bottoms: 0x2f3a4a, bottomsStyle: "pants", shoes: 0x2b2b2e, headwear: "none", bag: "none", height: 1.08 },
           lines: ["We're going to deliver letters to Mars. The stamps will have to be very, very big.", "This rocket is fully reusable. Like envelopes, if you're careful.",
-            "Doge keeps saying it's going to the moon. I told him the moon has no post office. Yet.", "I'm thinking of renaming the alphabet to just X. Saves ink.", "Some nights I sleep at the post office. Have you tried delivering faster?"] });
+            "The Moon Express leaves from right here. Stand by the rocket and press E. The view is free, the seat isn't.",
+            "Doge keeps saying it's going to the moon. Now it actually does. Low gravity, very good for jumping.", "I'm thinking of renaming the alphabet to just X. Saves ink.", "Some nights I sleep at the post office. Have you tried delivering faster?"] });
         k.npc({ d: doge, y: T.landAt(doge), face, name: "Doge", kind: "doge", own: true, hi: ["Wow!", "Such wow!", "Much hi!"],
-          lines: ["Wow. Such letters. Very delivery. Much stamps.", "Many courier. So planet. Wow.", "(Doge looks at the rocket, then at you, then back at the rocket. Much hope.)", "To the moon? Very far. Much walk."] });
+          lines: ["Wow. Such letters. Very delivery. Much stamps.", "Many courier. So planet. Wow.", "(Doge looks at the rocket, then at you, then back at the rocket. Much hope.)", "To the moon! Such ticket. Very jump. Wow.", "Golden stamps on the moon. Much shiny. So float."] });
         k.stampSpot(pad.clone().multiplyScalar(R).add(V(-1.7, 0, -1.3).applyQuaternion(q)).normalize(), 0.08);
       }
 

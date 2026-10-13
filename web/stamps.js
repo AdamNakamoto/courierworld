@@ -75,7 +75,7 @@ export function huntCandidates(W, total = 120) {
   return spots;
 }
 
-function stampMesh() {
+export function stampMesh() {
   const g = new THREE.Group();
   const part = (geo, color, z, extra) => {
     const m = new THREE.Mesh(geo, toon(color, extra));
@@ -92,9 +92,10 @@ function stampMesh() {
   return g;
 }
 
-export function createStamps(W, spots) {
-  const rng = mulberry32(777);
-  const glow = (() => {
+/// The warm glow round a stamp or coin (a sprite material, shared).
+let haloMat = null;
+export function stampGlow() {
+  return (haloMat ??= (() => {
     const c = document.createElement("canvas");
     c.width = c.height = 64;
     const g = c.getContext("2d");
@@ -104,7 +105,12 @@ export function createStamps(W, spots) {
     g.fillStyle = grad;
     g.fillRect(0, 0, 64, 64);
     return new THREE.SpriteMaterial({ map: texFromCanvas(c), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-  })();
+  })());
+}
+
+export function createStamps(W, spots) {
+  const rng = mulberry32(777);
+  const glow = stampGlow();
   let day = huntDay(), found = loadFound(day), coinsFound = loadCoins(day), stamps = [];
   let running = []; // the token drops with coins out today: [{ id, token, symbol, picture }]
   const rim = toon(0xe8b93a, { emissive: 0x4a3300 });

@@ -416,7 +416,7 @@ const POST_FRAG = /* glsl */ `
   uniform mat4 invProj;
   uniform mat3 camRot, worldInv;
   uniform vec3 horizon, zenith, cloudShade, cloudLight, ink;
-  uniform float stars, overcast;
+  uniform float stars, overcast, space;
   varying vec2 vUv;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -457,7 +457,11 @@ const POST_FRAG = /* glsl */ `
     c = mix(c, cloudLight, step(cover + 0.05, n + 0.04 * fbm3(q * 9.0)));
     float h = hash(floor(uv * res / (5.0 * thickness)) + floor(time * 0.25));
     c = mix(c, vec3(1.0), step(0.9991, h) * 0.5);
-    return c;
+    // Space (on the moon): a deep blue-black, more stars than any night, no clouds.
+    vec3 sp = mix(vec3(0.03, 0.035, 0.07), vec3(0.06, 0.05, 0.12), smoothstep(-0.2, 0.8, dW.y));
+    sp = mix(sp, vec3(1.0, 0.97, 0.9), step(0.9955, hash3(floor(dL * 260.0))));
+    sp = mix(sp, vec3(0.75, 0.82, 1.0), step(0.9988, hash3(floor(dL * 90.0 + 7.0))));
+    return mix(c, sp, space);
   }
 
   void main() {
@@ -485,7 +489,7 @@ const POST_FRAG = /* glsl */ `
     vec3 base;
     // Over the sky the colour pass is black except for additive rain streaks, which show through.
     if (raw >= 0.99999) base = sky(vUv) + texture2D(tColor, vUv).rgb;
-    else base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45);
+    else base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45 * (1.0 - space));
     gl_FragColor = vec4(mix(base, ink, edge * 0.9), 1.0);
     #include <colorspace_fragment>
   }`;
@@ -883,6 +887,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   // ---- the seaside, Falls Hill, the woods, the works and the footbridge (before the houses, so
   // the houses keep out of their way)
   const npcs = [], stampSpots = [], animators = [], ambient = {};
+  let rocketPad = null; // the neon district's rocket, where the moon flights leave from
   const spray = createDust(world, noNormals, 70, 0xffffff);
   const smoke = createDust(world, noNormals, 40, 0xd9d5cc);
   buildBiomes({
@@ -902,6 +907,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     },
     npc: (spot) => npcs.push(spot),
     stampSpot: (d, y) => stampSpots.push({ d, y }),
+    rocket: (r) => (rocketPad = r),
     ramp: (...a) => terrain.addRamp(...a),
     plate: (p) => terrain.addPlate(p),
     animate: (fn) => animators.push(fn),
@@ -1320,6 +1326,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       cloudShade: { value: new THREE.Color(0x93d2c8) },
       cloudLight: { value: new THREE.Color(0xd5efe6) },
       ink: { value: new THREE.Color(0x283033) },
+      space: { value: 0 },
       stars: { value: 0 },
       overcast: { value: 0 },
     },
@@ -1451,7 +1458,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   setTimeOfDay(0.42);
 
   const rot4 = new THREE.Matrix4();
-  let lastFrame = 0;
+  let lastFrame = 0, skyFrame = world; // what the stars and clouds turn with
   function render(t) {
     const dt = Math.min(0.05, Math.max(0, t - lastFrame));
     lastFrame = t;
@@ -1466,7 +1473,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     CUT.windTime.value = t;
     post.uniforms.invProj.value.copy(camera.projectionMatrixInverse);
     post.uniforms.camRot.value.setFromMatrix4(rot4.extractRotation(camera.matrixWorld));
-    post.uniforms.worldInv.value.setFromMatrix4(rot4.extractRotation(world.matrixWorld)).transpose();
+    post.uniforms.worldInv.value.setFromMatrix4(rot4.extractRotation(skyFrame.matrixWorld)).transpose();
 
     // 1) colour + depth (with shadows), 2) view-space normals, 3) ink + sky composite.
     gl.shadowMap.needsUpdate = true;
@@ -1516,6 +1523,13 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
       resize();
     },
+    /// Space overhead instead of the sky (on the moon), its stars turning with `frame` (the moon's group).
+    setSpace(on, frame = null) {
+      post.uniforms.space.value = on ? 1 : 0;
+      skyFrame = on && frame ? frame : world;
+    },
+    /// The rocket pad in the neon district ({ d, reach }), where the moon flights leave from, or null.
+    rocket: rocketPad,
     /// Cut a see-through path from the camera to this point (world space), or pass null to stop.
     setCutaway(target) {
       CUT.cutR.value = target ? 0.85 : 0;

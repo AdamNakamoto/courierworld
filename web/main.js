@@ -17,6 +17,8 @@ import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
 import { huntDay, newSpotsIn } from "./hunt-pick.js";
+import { createMoon } from "./moon.js";
+import { MOON_R, MOON_PRICE_TEXT, MOON_STAMPS } from "./moon-pick.js";
 import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
@@ -26,7 +28,14 @@ const $ = (id) => document.getElementById(id);
 // Golden stamp spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
 const HUNT_SPOTS = await fetch("./hunt-spots.json").then((r) => r.json());
 const W = createWorld($("c"), { keepClear: HUNT_SPOTS });
-const { scene, camera, world } = W;
+const { scene, camera } = W;
+let world = W.world; // the world group that turns under the courier: the planet's, or the moon's on a trip
+// What you walk on: the planet, or on a trip the moon (moon.js). Its radius, centre (the moon's sits lower, so its
+// top is where the planet's is), what you can stand on, what's in the way, and gravity.
+const planetGround = { key: "planet", R, center: new THREE.Vector3(), group: W.world, gravity: 1, terrain: W.terrain, obstacles: W.obstacles };
+let G = planetGround, onMoon = false, moon = null;
+/// Metres along the ground you're on between two directions.
+const gArc = (a, b) => G.R * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
 
 // ---------------------------------------------------------------- words
 
@@ -207,7 +216,7 @@ function splashAt(size, n) {
 function kick(opts) {
   world.updateMatrixWorld();
   const at = world.worldToLocal(player.group.position.clone());
-  dust.puff(at, at.clone().normalize(), opts);
+  (onMoon ? moonDust : dust).puff(at, at.clone().normalize(), opts);
 }
 
 // Residents by their doors and out walking, birds, cats, butterflies and fireflies.
@@ -248,6 +257,8 @@ const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 const net = createNet(W, {
   url: MP_URL, makeRider: rider, dispose,
+  // Where each world's couriers are drawn (the moon's only once it's built).
+  world: (w) => (w === "moon" ? (moon ? { group: moon.group, r: MOON_R } : null) : { group: W.world, r: R }),
   tier(addr) {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
@@ -256,13 +267,18 @@ const net = createNet(W, {
   onHunt(state) {
     huntState = state;
     paintTicker();
-    if (state?.wallet) stamps.setFound(state.day, state.found, state.coins);
+    if (state?.wallet) {
+      stamps.setFound(state.day, state.found, state.coins);
+      moon?.setFound(state.day, state.moon ?? []);
+      // Back on a new connection while on the moon: the room has your ticket again, so it shows you there.
+      if (onMoon && state.moonUntil > Date.now()) net.setWorld("moon");
+    }
     office?.huntChanged();
     hud();
   },
   onFound(day, spot, count, owner) {
     if (huntState && huntState.day === day) {
-      const list = owner === "golden" ? huntState.found : (huntState.coins[owner] ??= []);
+      const list = owner === "golden" ? huntState.found : owner === "moon" ? (huntState.moon ??= []) : (huntState.coins[owner] ??= []);
       if (!list.includes(spot)) list.push(spot);
     }
     paintTicker();
@@ -761,7 +777,7 @@ canvas.addEventListener("pointerup", (e) => {
   drag = null;
   // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad;
   // on the Launchpad's sign, the Launchpad.
-  if (tap && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
+  if (tap && !onMoon && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
     const r = canvas.getBoundingClientRect();
     orbRay.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), W.camera);
     const signs = launchpad ? W.square?.pad?.meshes ?? [] : [];
@@ -832,39 +848,40 @@ function localPos() {
 /// Whether an obstacle stops you at height y here (railings only up on the deck, cliffs only below
 /// their top, and never on the stairs cut into them). The blocks under a staircase only keep things from
 /// being put there: what keeps you out from under it is in pushOut.
-const solidAt = (o, p, y) => !(o.under || (o.y1 !== undefined && y >= o.y1) || (o.y0 !== undefined && y < o.y0) || (o.except && W.terrain.inRamp(o.except, p, 0.2) !== null));
+const solidAt = (o, p, y) => !(o.under || (o.y1 !== undefined && y >= o.y1) || (o.y0 !== undefined && y < o.y0) || (o.except && G.terrain.inRamp(o.except, p, 0.2) !== null));
 /// Push a spot on the planet (a unit vector) out of anything solid at height y (by default where your feet
 /// are: the step you're on while you rise to it, or higher in a jump), so you slide along walls.
 function pushOut(p, y = Math.max(bodyY, footY)) {
   const v = new THREE.Vector3();
   for (let pass = 0; pass < 2; pass++) {
     // Never in under a staircase (inside its steps, or under a flight): out to the nearer side.
-    for (const r of W.terrain.ramps) {
-      const h = W.terrain.inRamp(r, p, BODY_R);
+    const r0 = G.R;
+    for (const r of G.terrain.ramps) {
+      const h = G.terrain.inRamp(r, p, BODY_R);
       if (h === null || y >= h - STEP) continue;
-      const lat = p.clone().sub(r.bottom).multiplyScalar(R).dot(r.side);
-      p.addScaledVector(r.side, ((Math.sign(lat) || 1) * (r.hw + BODY_R - Math.abs(lat))) / R).normalize();
+      const lat = p.clone().sub(r.bottom).multiplyScalar(r0).dot(r.side);
+      p.addScaledVector(r.side, ((Math.sign(lat) || 1) * (r.hw + BODY_R - Math.abs(lat))) / r0).normalize();
     }
-    for (const o of W.obstacles) {
+    for (const o of G.obstacles) {
       if (p.dot(o.d) < o.cos || !solidAt(o, p, y)) continue;
       if (o.kind === "circle") {
-        const gap = arc(p, o.d) - (o.r + BODY_R);
+        const gap = gArc(p, o.d) - (o.r + BODY_R);
         if (gap >= 0) continue;
         v.subVectors(p, o.d);
         v.addScaledVector(p, -v.dot(p));
         if (v.lengthSq() < 1e-12) continue;
-        p.addScaledVector(v.normalize(), -gap / R).normalize();
+        p.addScaledVector(v.normalize(), -gap / r0).normalize();
       } else {
-        v.subVectors(p, o.d).multiplyScalar(R);
+        v.subVectors(p, o.d).multiplyScalar(r0);
         const x = v.dot(o.right), z = v.dot(o.front);
         const ex = o.hw + BODY_R - Math.abs(x), ez = o.hd + BODY_R - Math.abs(z);
         if (ex <= 0 || ez <= 0) continue;
-        if (ex < ez) p.addScaledVector(o.right, ((Math.sign(x) || 1) * ex) / R);
-        else p.addScaledVector(o.front, ((Math.sign(z) || 1) * ez) / R);
+        if (ex < ez) p.addScaledVector(o.right, ((Math.sign(x) || 1) * ex) / r0);
+        else p.addScaledVector(o.front, ((Math.sign(z) || 1) * ez) / r0);
         p.normalize();
       }
     }
-    for (const b of life.bodies) {
+    for (const b of onMoon ? [] : life.bodies) {
       const gap = arc(p, b.d) - (b.r + BODY_R);
       if (gap >= 0 || b.d.dot(p) < 0.99 || Math.abs((b.y ?? 0) - y) > 1.2) continue;
       v.subVectors(p, b.d);
@@ -879,6 +896,13 @@ function pushOut(p, y = Math.max(bodyY, footY)) {
 let waveT = 0;
 function interact() {
   const me = localPos();
+  if (onMoon) {
+    if (gArc(me, moon.rocket.d) < moon.rocket.reach) return flyHome();
+    waveT = 1.6;
+    net.say(-1);
+    return;
+  }
+  if (W.rocket && arc(me, W.rocket.d) < W.rocket.reach) return showMoonCard();
   const who = life.nearest(me, 2.4, bodyY);
   if (!who && W.orb && arc(me, W.orb.d) < W.orb.reach) {
     showAd();
@@ -907,7 +931,7 @@ function step(dt) {
   const inv = playerQ.clone().invert();
   const from = UP.clone().applyQuaternion(inv);
   // The step in the camera's frame at the top of the planet (forward is -z), then onto the planet.
-  const d = new THREE.Vector3(vel.x, 0, -vel.y).multiplyScalar(dt / R).applyQuaternion(inv);
+  const d = new THREE.Vector3(vel.x, 0, -vel.y).multiplyScalar(dt / G.R).applyQuaternion(inv);
   const want = from.clone().add(d).normalize();
   const to = pushOut(want.clone());
   const push = to.clone().sub(want);
@@ -920,7 +944,7 @@ function step(dt) {
   }
   // Roll the planet the shortest way to bring the new spot to the top (the camera keeps its heading).
   playerQ.premultiply(new THREE.Quaternion().setFromUnitVectors(to.clone().applyQuaternion(playerQ), UP));
-  return arc(from, to);
+  return gArc(from, to);
 }
 /// Where the courier stands in the scene: on top of the planet, offset by however far the view still
 /// lags behind, leaning into turns and into speeding up or slowing down.
@@ -928,7 +952,7 @@ let leanSide = 0, leanFwd = 0, lastV = 0;
 const leanE = new THREE.Euler(0, 0, 0, "YXZ");
 function placePlayer(dt, v, turnRate) {
   const lag = world.quaternion.clone().multiply(playerQ.clone().invert());
-  player.group.position.copy(UP).applyQuaternion(lag).multiplyScalar(R + bodyY);
+  player.group.position.copy(UP).applyQuaternion(lag).multiplyScalar(G.R + bodyY).add(G.center);
   const accel = (v - lastV) / Math.max(dt, 1e-3);
   lastV = v;
   const wheels = player.ride ? 1.8 : 1;
@@ -955,9 +979,9 @@ let camPitch = 0.56, camDist = 8, camDodge = 0, camLift = 0; // camLift rises an
 function followCam() {
   const pos = new THREE.Vector3(0, R + camLift + 1.0 + Math.sin(camPitch) * camDist, Math.cos(camPitch) * camDist);
   // No lower than just above the ground; from down there, look up past the courier into the sky (as photo mode does).
-  const under = pos.clone().normalize().applyQuaternion(world.quaternion.clone().invert());
-  const floor = R + Math.min(camLift, W.terrain.surfaceAt(under, camLift + 0.5)) + 0.35;
-  if (pos.length() < floor) pos.setLength(floor);
+  const under = pos.clone().sub(G.center).normalize().applyQuaternion(world.quaternion.clone().invert());
+  const floor = G.R + Math.min(camLift, G.terrain.surfaceAt(under, camLift + 0.5)) + 0.35;
+  if (pos.distanceTo(G.center) < floor) pos.sub(G.center).setLength(floor).add(G.center);
   // Looking a little ahead of the courier, less so close in or from overhead (so they stay in the picture).
   const ahead = 1.8 * Math.min(1, camDist / 8) * Math.min(1, Math.max(0, Math.cos(camPitch)) / 0.85);
   const look = new THREE.Vector3(0, R + camLift + 1.05, -ahead);
@@ -987,7 +1011,7 @@ function camClear(walls, inv, p, d) {
 }
 function steerCamera(dt) {
   const me = localPos();
-  const walls = W.obstacles.filter((o) => o.wall && me.dot(o.d) > Math.cos((dist + 6) / R));
+  const walls = G.obstacles.filter((o) => o.wall && me.dot(o.d) > Math.cos((dist + 6) / R));
   const inv = playerQ.clone().invert();
   const up = (x) => Math.min(PITCH_MAX, Math.max(0.06, x));
   const tries = [[pitch, dist], [up(pitch + 0.3), dist], [up(pitch + 0.55), dist * 0.92], [up(Math.max(1.3, pitch) + 0.1), dist * 0.82],
@@ -1053,9 +1077,9 @@ function photoCam() {
   const p = photo.pitch, d = photo.dist, target = new THREE.Vector3(0, base + 1.0, 0);
   const pos = target.clone().add(new THREE.Vector3(0, Math.sin(p) * d, Math.cos(p) * d));
   // No lower than just above the ground; from down there, look up past the courier into the sky.
-  const under = pos.clone().normalize().applyQuaternion(world.quaternion.clone().invert()); // (on the planet itself)
-  const floor = R + Math.min(camLift, W.terrain.surfaceAt(under, camLift + 0.5)) + 0.35;
-  if (pos.length() < floor) pos.setLength(floor);
+  const under = pos.clone().sub(G.center).normalize().applyQuaternion(world.quaternion.clone().invert()); // (on the ground itself)
+  const floor = G.R + Math.min(camLift, G.terrain.surfaceAt(under, camLift + 0.5)) + 0.35;
+  if (pos.distanceTo(G.center) < floor) pos.sub(G.center).setLength(floor).add(G.center);
   const look = target.clone();
   if (p < 0) look.y += -Math.sin(p) * d * 1.1;
   return { pos, look };
@@ -1334,7 +1358,7 @@ function frame() {
     }
   } else {
     let ix = 0, iy = 0;
-    if (!dialog) {
+    if (!dialog && !flying) {
       if (keys.has("w") || keys.has("arrowup")) iy += 1;
       if (keys.has("s") || keys.has("arrowdown")) iy -= 1;
       if (keys.has("a") || keys.has("arrowleft")) ix -= 1;
@@ -1379,7 +1403,7 @@ function frame() {
     let air = jumpV !== 0 || bodyY > footY + 0.02;
     // (On foot, from the step you're standing on, not the height you're still easing up to: on a fast ride you'd
     // fall behind a staircase and through it. And up the stairs, as far as you've come up them this frame.)
-    const ground = W.terrain.surfaceAt(p, air ? bodyY : Math.max(bodyY, footY), air ? 0.05 : STEP, air ? 0 : dist * 0.7);
+    const ground = G.terrain.surfaceAt(p, air ? bodyY : Math.max(bodyY, footY), air ? 0.05 : STEP, air ? 0 : dist * 0.7);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
     if (jumpBuffer > 0 && !air && !dialog && !swimming) {
       jumpBuffer = 0;
@@ -1390,7 +1414,7 @@ function frame() {
     // Walked off an edge: fall.
     if (!air && ground < bodyY - 0.3) air = true;
     if (air) {
-      jumpV -= GRAVITY * dt;
+      jumpV -= GRAVITY * G.gravity * dt;
       bodyY += jumpV * dt;
       if (bodyY <= ground) {
         landSquash = Math.min(1, -jumpV / JUMP_V);
@@ -1405,7 +1429,7 @@ function frame() {
     footY = ground;
     jumpY = Math.max(0, bodyY - ground);
     // Feet in the water: slower, and splashing; out of your depth, you swim.
-    const water = W.terrain.waterAt(p);
+    const water = G.terrain.waterAt(p);
     wading = water !== null && bodyY < water + 0.05;
     swimming = wading && !air && ground <= SWIM + 0.02;
     splashIn -= dt;
@@ -1431,8 +1455,8 @@ function frame() {
       skidIn = 0.05;
     }
 
-    // Deliveries and the post office.
-    if (!dialog) {
+    // Deliveries and the post office (not from the moon).
+    if (!dialog && !onMoon) {
       for (const i of bag) {
         if (arc(p, W.addresses[i].dir) < 1.4) {
           deliver(i);
@@ -1444,9 +1468,13 @@ function frame() {
         say([{ name: "Postmaster", text: POSTMASTER[random(POSTMASTER.length)] }]);
       }
     }
-    compass(p);
-    placeTitle(p, dt);
-    padHint(p);
+    if (onMoon) moonTick(p, dt, t);
+    else {
+      compass(p);
+      placeTitle(p, dt);
+      padHint(p);
+      rocketHint(p);
+    }
 
     let f;
     if (photo) f = photoCam();
@@ -1467,9 +1495,9 @@ function frame() {
   sparkle.update(dt);
   district.tick(t);
   splash.update(dt, 1 - 0.5 * W.night);
-  const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog });
+  const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog && !onMoon });
   if (got) collected(got);
-  life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
+  if (!onMoon) life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
   orbAds?.update(dt);
   // Times Square's big screens show the Orb's ad too.
   if (W.square && orbAds && orbAds.current() !== squareAd) {
@@ -1483,10 +1511,11 @@ function frame() {
     if (!photo) timeOfDay += dt / DAY_SECONDS; // (photo mode holds the clock where you set it)
     stepWeather(dt);
   }
-  W.setRain(weather.rain);
-  W.setTimeOfDay(photo ? photo.time : timeOfDay);
+  // (On the moon there's no weather, and the sun is always out.)
+  W.setRain(onMoon ? 0 : weather.rain);
+  W.setTimeOfDay(photo ? photo.time : onMoon ? 0.45 : timeOfDay);
   sounds.update(dt, {
-    speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: weather.rain, step: stepped && mode === "play" && !wading,
+    speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: onMoon ? 0 : weather.rain, step: stepped && mode === "play" && !wading,
     ...(mode === "play" ? nearby(localPos()) : {}),
   });
   for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
@@ -1524,6 +1553,7 @@ function placeTitle(p, dt) {
 }
 /// How loud the sea, the falls and the works are from here (0 far … 1 right there).
 function nearby(p) {
+  if (onMoon) return { sea: 0, falls: 0, works: 0, woods: 0 }; // (space is quiet)
   const A = W.ambient, out = { sea: 0, falls: 0, works: 0, woods: W.terrain.zoneAt(p).key === "woods" ? 1 : 0 };
   if (A.sea) out.sea = 1 - Math.min(1, Math.max(0, (arc(p, A.sea.d) - A.sea.r * R) / 16));
   if (A.falls?.length) out.falls = 1 - Math.min(1, Math.max(0, (Math.min(...A.falls.map((f) => arc(p, f))) - 2) / 16));
@@ -1572,6 +1602,181 @@ function showPad(on) {
 }
 /// Near the Launchpad's door, once per visit: how to walk in.
 let padHinted = false;
+// ---------------------------------------------------------------- the moon
+// A trip from the neon district's rocket on a ticket paid in $STAMP (moon-pick.js; the moon itself is moon.js, built
+// the first time someone goes). While you're there it's what you walk on (G), the planet is put away, space is
+// overhead, and the room shows you only to the others on the moon.
+let moonHinted = false, flying = false, moonDust = null, moonSparkle = null, leftFrom = null;
+function moonWorld() {
+  if (!moon) {
+    moon = createMoon(W);
+    moonDust = createDust(moon.group, W.noNormals);
+    moonSparkle = createDust(moon.group, W.noNormals, 24, 0xffd75e);
+  }
+  return moon;
+}
+const moonLeft = () => Math.max(0, (huntState?.moonUntil ?? 0) - Date.now());
+const minutes = (ms) => `${Math.max(1, Math.ceil(ms / 60_000))}m`;
+const signedIn = () => !!(huntState?.wallet && chainRef?.account && huntState.wallet.toLowerCase() === chainRef.account.toLowerCase());
+// A ticket paid for that the room hasn't seen yet (the line dropped, say): kept, so it isn't paid twice.
+const TICKET_KEY = "courier:moonTicket";
+function pendingTicket() {
+  try { return localStorage.getItem(TICKET_KEY); } catch { return null; }
+}
+function setPendingTicket(h) {
+  try { h ? localStorage.setItem(TICKET_KEY, h) : localStorage.removeItem(TICKET_KEY); } catch {}
+}
+/// The Moon Express card at the rocket: what a ticket gets you, and a button for the next step (log in, sign in,
+/// buy, or fly on the ticket you have).
+function showMoonCard() {
+  const chain = chainRef;
+  if (!chain?.moonTicket || !chain.drops) return toast("The moon isn't open yet.", "error");
+  const left = signedIn() ? moonLeft() : 0;
+  $("moonText").textContent = `Low gravity, craters, and Courier World hanging in a black sky. ${MOON_STAMPS} golden moon stamps a day, and they count with your golden stamps. A ticket is ${MOON_PRICE_TEXT} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`;
+  $("moonGo").textContent = !chain.account ? "Log in" : !signedIn() ? "Sign in to fly" : left > 0 ? `Fly · ticket ${minutes(left)} left` : pendingTicket() ? "Check my ticket" : `Buy ticket · ${MOON_PRICE_TEXT} $STAMP`;
+  $("moonNote").textContent = !chain.account ? "You'll need a wallet with some $STAMP." : !signedIn() ? "One signature proves the wallet is yours. It costs nothing and moves nothing."
+    : left > 0 ? "" : pendingTicket() ? "You've paid for a ticket the room hasn't checked yet." : "Your wallet will ask you to send the ticket to the treasury.";
+  $("moonGo").disabled = false;
+  $("moonCard").hidden = false;
+}
+const hideMoonCard = () => ($("moonCard").hidden = true);
+$("moonClose").addEventListener("click", hideMoonCard);
+const waitFor = (ok, ms, why) => new Promise((resolve, reject) => {
+  const t0 = performance.now();
+  const tick = () => (ok() ? resolve() : performance.now() - t0 > ms ? reject(new Error(why)) : setTimeout(tick, 150));
+  tick();
+});
+$("moonGo").addEventListener("click", async () => {
+  const chain = chainRef, btn = $("moonGo");
+  if (!chain || btn.disabled) return;
+  btn.disabled = true;
+  try {
+    if (!chain.account) {
+      await chain.login();
+      return;
+    }
+    if (!signedIn()) {
+      btn.textContent = "Sign in your wallet…";
+      await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
+      await waitFor(signedIn, 10_000, "The room didn't answer. Try again.");
+    }
+    if (moonLeft() <= 0) {
+      let hash = pendingTicket();
+      if (!hash) {
+        btn.textContent = "Confirm in your wallet…";
+        hash = await chain.moonTicket();
+        setPendingTicket(hash);
+      }
+      btn.textContent = "Checking your ticket…";
+      huntState.moonUntil = await net.moonTicket(hash);
+      setPendingTicket(null);
+    }
+    hideMoonCard();
+    flyToMoon();
+  } catch (e) {
+    console.warn(e);
+    toast(explain(e), "error");
+    if (/already been used|didn't send|too old|transaction failed|isn't a transaction/.test(e.message ?? "")) setPendingTicket(null); // (turned down for good)
+  } finally {
+    if (!$("moonCard").hidden) showMoonCard();
+  }
+});
+
+/// Fade to white with a line, `swap` the world underneath, and fade back.
+async function flight(line, swap) {
+  flying = true;
+  const fade = $("moonFade");
+  $("moonFadeText").textContent = line;
+  fade.hidden = false;
+  void fade.offsetWidth;
+  fade.classList.add("on");
+  await new Promise((r) => setTimeout(r, 900));
+  try {
+    swap();
+  } finally {
+    await new Promise((r) => setTimeout(r, 450));
+    fade.classList.remove("on");
+    await new Promise((r) => setTimeout(r, 650));
+    fade.hidden = true;
+    flying = false;
+  }
+}
+/// Stand at `d` on the ground you're on, facing `tangent`, at rest.
+function standAt(d, tangent) {
+  const q1 = new THREE.Quaternion().setFromUnitVectors(d.clone().normalize(), UP);
+  const tan = tangent.clone().applyQuaternion(q1);
+  tan.y = 0;
+  tan.normalize();
+  playerQ.copy(new THREE.Quaternion().setFromAxisAngle(UP, Math.atan2(tan.x, -tan.z)).multiply(q1));
+  world.quaternion.copy(playerQ);
+  bodyY = footY = camLift = G.terrain.surfaceAt(d, 5);
+  [jumpV, facing] = [0, 0];
+  vel.set(0, 0);
+}
+function flyToMoon() {
+  if (onMoon || flying) return;
+  if (photo) photoMode(false);
+  flight("🚀 Lift-off!", () => {
+    const m = moonWorld();
+    leftFrom = { q: playerQ.clone(), y: bodyY };
+    [onMoon, G, world] = [true, m.ground, m.group];
+    W.world.visible = false;
+    m.group.visible = true;
+    W.setSpace(true, m.group);
+    standAt(m.arrival.d, m.arrival.tangent);
+    if (huntState?.wallet) m.setFound(huntState.day, huntState.moon ?? []);
+    net.setWorld("moon");
+    hud();
+    setTimeout(() => toast(`🌙 Welcome to the moon! Gravity is low, so jump. ${MOON_STAMPS} golden moon stamps are out today; the rocket flies you home.`), 1200);
+  });
+}
+function flyHome(why = null) {
+  if (!onMoon || flying) return;
+  if (photo) photoMode(false);
+  flight("🌍 Back to Courier World", () => {
+    [onMoon, G, world] = [false, planetGround, W.world];
+    moon.group.visible = false;
+    W.world.visible = true;
+    W.setSpace(false);
+    playerQ.copy(leftFrom?.q ?? spawnQ);
+    world.quaternion.copy(playerQ);
+    bodyY = footY = camLift = leftFrom?.y ?? 0.04;
+    jumpV = 0;
+    vel.set(0, 0);
+    net.setWorld("planet");
+    hud();
+    if (why) setTimeout(() => toast(why), 1200);
+  });
+}
+/// At the rocket in the neon district: say so, once.
+function rocketHint(p) {
+  const r = W.rocket;
+  if (!r) return;
+  const d = arc(p, r.d);
+  if (!moonHinted && d < r.reach + 0.6) {
+    moonHinted = true;
+    toast(`🌙 The Moon Express: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to fly to the moon`);
+  } else if (moonHinted && d > r.reach + 6) moonHinted = false;
+}
+/// Each frame on the moon: the line under the compass (stamps, ticket, the way to the rocket), the stamps, and
+/// home when the ticket runs out.
+function moonTick(p, dt, t) {
+  const left = moonLeft();
+  if (huntState?.wallet && left <= 0 && !flying) return flyHome("Your moon ticket ran out, so the rocket brought you home.");
+  const home = moon.rocket, dd = gArc(p, home.d), w = home.d.clone().applyQuaternion(world.quaternion);
+  $("arrow").style.transform = `rotate(${Math.atan2(w.x, -w.z)}rad)`;
+  $("target").textContent = `🌙 Moon stamps ${moon.found}/${moon.out}${huntState?.wallet ? ` · ticket ${minutes(left)}` : ""} · ${dd < home.reach ? "E to fly home" : `rocket ${Math.round(dd)}m`}`;
+  const got = moon.update(dt, t, { me: p, chest: bodyY + 0.85, active: !dialog && !flying });
+  if (got !== null) {
+    sounds.collect();
+    moonSparkle.puff(p.clone().multiplyScalar(MOON_R + bodyY + 0.9), p, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
+    toast(moon.found === moon.out ? "Every moon stamp today!" : `🌙 Moon stamp! ${moon.found} of ${moon.out}`);
+    if (huntState?.wallet) net.moonGrab(got);
+  }
+  moonDust.update(dt, 1);
+  moonSparkle.update(dt, 1);
+}
+
 function padHint(p) {
   const door = launchpad && W.square?.pad;
   if (!door) return;

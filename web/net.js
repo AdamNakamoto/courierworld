@@ -199,6 +199,8 @@ function createEmotes(world, noNormals) {
     noNormals.push(s);
     pool.push({ s, who: null, age: 0, life: 0, h: 2.4, w: 1, ht: 1, own: null });
   }
+  /// The bubbles go where you are (the planet, or the moon's group).
+  const onto = (group) => pool.forEach((b) => b.s.parent !== group && group.add(b.s));
   /// The sprite for `who`: theirs if they have one up, else a free one, else the oldest. A chat bubble's
   /// own texture is freed when its sprite is reused.
   function slot(who) {
@@ -208,6 +210,7 @@ function createEmotes(world, noNormals) {
     return b;
   }
   return {
+    onto,
     show(who, i, h = 2.4) {
       const em = EMOTES[i];
       if (!em) return;
@@ -274,6 +277,7 @@ function orient(obj, up, forward) {
 export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
+  world = (w) => (w === "planet" ? { group: W.world, r: R } : null),
 }) {
   const players = new Map(); // id -> { hello, root, rider, tag, pos, fwd, target, h, air, spd, swim, wave }
   const anchor = new THREE.Object3D(); // where you are on the planet, for your own emotes
@@ -281,6 +285,15 @@ export function createNet(W, {
   const emotes = createEmotes(W.world, W.noNormals);
   let ws = null, me = null, started = false, retry = 1, since = 0, pingIn = 0, last = null, current = null;
   let away = null, asleep = false; // leaving the room while the tab is hidden; waiting to be shown to come back
+  // Which world you're on ("planet" or "moon"): others are drawn only on yours. `world(w)` gives a world's group
+  // and radius (null if it isn't built yet).
+  let mine = "planet", moonWait = null;
+  const mgrabs = []; // moon stamps picked up this frame
+  /// Put a player (or your emote anchor) in their world's group.
+  function home(obj, w) {
+    const g = world(w);
+    if (g && obj.parent !== g.group) g.group.add(obj);
+  }
   const vel = new THREE.Vector3(), prevP = new THREE.Vector3(); // how fast you're going (smoothed), from frame to frame
   let turn = 0; // and how fast you're turning (radians a second, anticlockwise seen from above)
   let code = null, voucherWait = null; // the room's sign-in code for this connection; a pending voucher request
@@ -303,6 +316,7 @@ export function createNet(W, {
       retry = 1;
       last = null;
       if (me) send(["hi", me]);
+      if (mine !== "planet") send(["world", mine]); // (the room asks for the ticket again once you've signed in)
     };
     ws.onmessage = (e) => {
       try {
@@ -330,7 +344,8 @@ export function createNet(W, {
     const name = nameShown(hello.name) ? hello.name : addr ? short(addr) : "Guest"; // (the room only sends names it checked)
     return nameTag(name, addr ? tier(addr) : null);
   }
-  function add(id, hello, s) {
+  function add(id, hello, s, w = "planet") {
+    const was = players.get(id)?.world;
     remove(id);
     const root = new THREE.Group();
     // A skin the room has checked is theirs (its design number); otherwise their courier's look.
@@ -341,16 +356,17 @@ export function createNet(W, {
     const tag = label(hello);
     root.add(rider.group, tag);
     root.visible = false;
-    W.world.add(root);
     W.noNormals.push(tag);
-    const p = { hello, root, rider, tag, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0 };
+    const p = { hello, root, rider, tag, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0,
+      world: w === "moon" || (w === undefined && was === "moon") ? "moon" : "planet" };
+    home(root, p.world);
     players.set(id, p);
     if (s) apply(p, s);
   }
   function remove(id) {
     const p = players.get(id);
     if (!p) return;
-    W.world.remove(p.root);
+    p.root.parent?.remove(p.root);
     W.noNormals.splice(W.noNormals.indexOf(p.tag), 1);
     p.tag.material.map.dispose();
     p.tag.material.dispose();
@@ -411,13 +427,44 @@ export function createNet(W, {
   function handle(m) {
     switch (m[0]) {
       case "welcome":
-        for (const [id, hello, s] of m[2]) add(id, hello, s);
+        for (const [id, hello, s, w] of m[2]) add(id, hello, s, w ?? "planet");
         code = m[3] ?? null;
         myId = m[1];
         onChatHistory((m[4] ?? []).map(chatLine));
-        onHunt(null); // a new connection: sign in again to hunt
+        onHunt(null); // a new connection: sign in again to hunt (or pick up where you were, below)
+        resumeHunt();
         sendName();
         break;
+      case "hunttoken":
+        // Lets this browser pick the hunt up again on a new connection, without signing again.
+        try {
+          if (m[1] && me?.addr) sessionStorage.setItem(`courier:hunt:${me.addr.toLowerCase()}`, m[1]);
+        } catch {}
+        return;
+      case "moonok":
+        moonWait?.resolve(Number(m[1]));
+        moonWait = null;
+        return;
+      case "here":
+        // Everyone already on the world you've just come to, where they are.
+        for (const [id, s] of m[1] ?? []) {
+          const p = players.get(id);
+          if (p) {
+            p.world = mine;
+            home(p.root, mine);
+            apply(p, s);
+          }
+        }
+        return;
+      case "world": {
+        const p = players.get(m[1]);
+        if (!p) return;
+        p.world = m[2] === "moon" ? "moon" : "planet";
+        [p.target, p.placed] = [null, false];
+        p.root.visible = false;
+        home(p.root, p.world);
+        return;
+      }
       case "named":
         if (m[1]?.token && nameWait) nameWait.resolve(m[1]);
         else if (!m[1] || nameShown(m[1].name)) onNamed(m[1] ? { name: m[1].name, wallet: m[1].wallet } : null);
@@ -445,14 +492,17 @@ export function createNet(W, {
         if (m[1] === -1 && voucherWait) {
           voucherWait.reject(new Error(m[2]));
           voucherWait = null;
+        } else if (m[1] === -2) {
+          moonWait?.reject(new Error(m[2]));
+          moonWait = null;
         } else onNope(m[1], m[2]);
         return;
       case "join":
-        add(m[1], m[2], null);
+        add(m[1], m[2], null, "planet");
         break;
       case "look": {
         const p = players.get(m[1]);
-        add(m[1], m[2], p?.target ? [...p.target.p.toArray(), ...p.target.f.toArray(), p.target.h, p.target.air, p.target.spd, p.target.swim] : null);
+        add(m[1], m[2], p?.target ? [...p.target.p.toArray(), ...p.target.f.toArray(), p.target.h, p.target.air, p.target.spd, p.target.swim] : null, p?.world);
         break;
       }
       case "chat":
@@ -478,6 +528,15 @@ export function createNet(W, {
       }
     }
     count();
+  }
+
+  /// On a new connection, pick the hunt up again with the token the room gave this browser when you signed in.
+  function resumeHunt() {
+    let token = null;
+    try {
+      token = me?.addr ? sessionStorage.getItem(`courier:hunt:${me.addr.toLowerCase()}`) : null;
+    } catch {}
+    if (token) send(["resume", me.addr, token]);
   }
 
   /// Show your claimed name, if this wallet has one: the room checks the token it gave the wallet.
@@ -538,8 +597,9 @@ export function createNet(W, {
     /// planet's centre, the way you face, height, jump, speed and swim), or null when not playing.
     /// `me` is your position for deciding who to draw; `all` draws everyone (the title screen).
     update(dt, t, state, mePos, all = false) {
+      const r = world(mine)?.r ?? R;
       if (state) {
-        anchor.position.copy(state.p).multiplyScalar(R + state.h);
+        anchor.position.copy(state.p).multiplyScalar(r + state.h);
         // Your velocity across the planet, smoothed over a few frames (and forgotten after a jump across it).
         if (current && dt > 0 && arc(state.p, prevP) < 3) {
           const before = vel.clone();
@@ -564,26 +624,33 @@ export function createNet(W, {
         }
         // Send where you are when your movement changes, or now and then while it keeps on (see HEARTBEAT).
         since += dt;
-        if (state && (since >= MIN_GAP || grabs.length)) {
+        if (state && (since >= MIN_GAP || grabs.length || mgrabs.length)) {
           const moving = state.spd > 0.05;
           // Where the others' games put you now: your last update, carried on along the curve it gave.
           const seen = last && carried(last, since);
           const changed = !last || moving !== last.spd > 0.05 || (state.air > 0) !== (last.air > 0) || state.f.dot(seen.f) < 0.94 ||
             Math.abs(state.spd - last.spd) > 0.25 || Math.abs(state.h - last.h) > 0.25 || Math.abs(state.swim - last.swim) > 0.3 ||
             arc(state.p, seen.p) > DRIFT;
-          if (changed || (moving && since >= HEARTBEAT) || grabs.length) sendState(state);
+          if (changed || (moving && since >= HEARTBEAT) || grabs.length || mgrabs.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
+          while (mgrabs.length) send(["mgrab", mgrabs.shift()]);
         }
       }
       // Everyone else eases toward where they should be by now: their last update, carried on along the curve
       // it gave, so they glide between the updates they send.
       const nowS = performance.now() / 1000;
       for (const p of players.values()) {
-        if (!p.target) continue;
+        // Only those on your world (the moon's radius on the moon).
+        const pw = p.world === mine ? world(p.world) : null;
+        if (!p.target || !pw) {
+          p.root.visible = false;
+          continue;
+        }
+        const pr = pw.r, dist = (a, b) => pr * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
         const k = 1 - Math.exp(-dt * 8);
         const goal = carried(p.target, nowS - p.target.t);
         let moved = 0;
-        if (!p.placed || arc(p.pos, goal.p) > 6) {
+        if (!p.placed || dist(p.pos, goal.p) > 6) {
           p.pos.copy(goal.p);
           p.fwd.copy(goal.f);
           p.h = p.target.h;
@@ -591,18 +658,18 @@ export function createNet(W, {
         } else {
           const before = p.pos.clone();
           p.pos.lerp(goal.p, k).normalize();
-          moved = arc(before, p.pos);
+          moved = dist(before, p.pos);
           p.fwd.lerp(goal.f, 1 - Math.exp(-dt * 8));
           p.h += (p.target.h - p.h) * (1 - Math.exp(-dt * 9));
         }
         p.air += (p.target.air - p.air) * (1 - Math.exp(-dt * 12)); // (jumps arc instead of stepping)
         p.spd += (p.target.spd - p.spd) * k;
         p.swim += (p.target.swim - p.swim) * k;
-        p.root.visible = all || arc(p.pos, mePos) < SEEN;
+        p.root.visible = all || dist(p.pos, mePos) < SEEN;
         if (!p.root.visible) continue;
-        p.rider.group.position.copy(p.pos).multiplyScalar(R + p.h);
+        p.rider.group.position.copy(p.pos).multiplyScalar(pr + p.h);
         orient(p.rider.group, p.pos, p.fwd);
-        p.tag.position.copy(p.pos).multiplyScalar(R + p.h + (p.rider.ride ? 2.35 : 2.05));
+        p.tag.position.copy(p.pos).multiplyScalar(pr + p.h + (p.rider.ride ? 2.35 : 2.05));
         p.rider.update(dt, p.spd, t, Math.min(1, p.air * 4), moved);
         p.rider.ch.setSwim(p.swim);
         p.wave = Math.max(0, p.wave - dt);
@@ -631,6 +698,36 @@ export function createNet(W, {
     huntState: () => send(["hunt"]),
     /// You just picked up the stamp or coin at `spot`: ask the room to count it.
     grab: (spot) => grabs.push(spot),
+    /// A moon stamp picked up (its index in MOON_SPOTS).
+    moonGrab: (spot) => mgrabs.push(spot),
+    /// Show the room a moon ticket (the hash of the transaction that paid for it): resolves with when it runs out.
+    moonTicket(hash) {
+      if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
+      return new Promise((resolve, reject) => {
+        moonWait = { resolve, reject };
+        send(["moon", hash]);
+        setTimeout(() => {
+          if (moonWait?.resolve === resolve) {
+            moonWait = null;
+            reject(new Error("The server didn't answer. Try again."));
+          }
+        }, 30_000);
+      });
+    },
+    /// Off to "moon" or back to "planet": everyone there sees you, and you them.
+    setWorld(w) {
+      mine = w;
+      home(anchor, w);
+      const g = world(w);
+      if (g) emotes.onto(g.group);
+      for (const p of players.values()) {
+        home(p.root, p.world);
+        p.placed = false;
+      }
+      last = null; // (where you are goes out again, on the new world)
+      send(["world", w]);
+    },
+    get world() { return mine; },
     /// Signed vouchers for each drop's finds (today's and yesterday's), to claim with TokenDrops.claimMany.
     vouchers() {
       if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
