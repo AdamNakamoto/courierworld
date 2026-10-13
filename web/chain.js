@@ -582,6 +582,8 @@ export async function connectChain() {
       const [owner, paused] = await Promise.all([read(C.drops, "owner"), read(C.drops, "paused")]);
       return { owner, paused, isOwner: !!account && same(owner, account) };
     },
+    /// The coins drop `id` paid for `day`'s finds.
+    paidOn: (id, day) => read(C.drops, "paidCoins", [BigInt(id), day]),
     /// What a find count would pay now: [coins, amount].
     claimable: (id, day, coins) => (account ? read(C.drops, "claimable", [BigInt(id), account, day, coins]) : [0, 0n]),
     /// A drop's day: the coins paid that day across everyone and its cap, and yours and a wallet's most.

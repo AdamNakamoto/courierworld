@@ -405,6 +405,19 @@ function collected(s) {
 // The treasury's token drops running today: their coins go out round the planet, with the token's picture.
 let droppingToday = [], goldenPays = false, dropsDay = -1;
 const coinPictures = new Map(); // picture URL -> Image (null while loading)
+// The coins a drop has paid so far (for its size as it started: its tokens left plus what it's paid out). Days
+// before yesterday can't be claimed any more, so those are read once.
+const paidDays = new Map(); // "id:day" -> coins
+async function paidSoFar(chain, d, today) {
+  let n = Number(d.paid ?? 0); // (today's, already read)
+  for (let day = d.startDay; day < today && day <= d.endDay; day++) {
+    const k = `${d.id}:${day}`;
+    const v = paidDays.get(k) ?? Number(await chain.drops.paidOn(d.id, day));
+    if (day < today - 1) paidDays.set(k, v);
+    n += v;
+  }
+  return n;
+}
 async function refreshDrops() {
   const chain = chainRef;
   if (!chain?.drops) return;
@@ -429,11 +442,14 @@ async function refreshDrops() {
         im.src = url;
       }
       d.picture = url ? coinPictures.get(url) : null;
+      d.size = d.left + d.perCoin * BigInt(await paidSoFar(chain, d, day).catch(() => 0));
     }
     droppingToday = tokens;
     dropsDay = day;
     stamps.setDrops(day, tokens);
-    W.square?.showDrops?.(tokens.filter((d) => !d.empty).map((d) => ({ symbol: d.symbol, picture: d.picture })));
+    W.square?.showDrops?.(tokens.filter((d) => !d.empty).map((d) => ({
+      id: d.id, symbol: d.symbol, picture: d.picture, size: d.size, spots: d.spots, perCoin: d.perCoin, dailyCoins: d.dailyCoins, maxPerWallet: d.maxPerWallet,
+    })));
     paintTicker();
   } catch (e) {
     console.warn("drops: couldn't read today's", e);

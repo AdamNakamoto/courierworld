@@ -74,6 +74,14 @@ function leds(g, w, h) {
 
 /// "$PEPE", or "$PEPE + $LCAT": the tokens a running drop is paying out.
 const dropSymbols = (drops) => drops.slice(0, 2).map((d) => `$${d.symbol}`).join(" + ");
+/// The drop the posters feature: the newest one running.
+const featured = (drops) => drops[drops.length - 1];
+const tokens = (wei, compact = true) =>
+  new Intl.NumberFormat("en-US", compact ? { notation: "compact", maximumFractionDigits: 1 } : { maximumFractionDigits: 0 }).format(Number(wei) / 1e18);
+/// "30M $PEPE": a drop's size and token (or just its token, before its size is known).
+const dropTitle = (d) => (d.size ? `${tokens(d.size)} $${d.symbol}` : `$${d.symbol}`);
+/// Wallets a drop pays in full each day.
+const paidDaily = (d) => Math.floor(Number(d.dailyCoins) / Math.max(1, Number(d.maxPerWallet)));
 /// A gold coin at (cx, cy) with a token's picture on its face (or its symbol, until the picture loads).
 function coin(g, cx, cy, r, d) {
   const disc = (rr, color) => {
@@ -108,27 +116,31 @@ function liveBadge(g, cx, cy, size) {
   g.fill();
   say(g, "LIVE NOW", cx + size * 0.32, cy + 1, bw, size, bungee, "#ffffff");
 }
-/// A token drop's poster: its coins are out round the planet today.
+/// A token drop's poster: the newest drop running, its size, its coins out every day and what they pay.
 function coinDrop(g, w, h, wide, drops) {
   gradient(g, w, h, "#0d3b66", "#0b1f3a");
   for (let i = 0; i < 14; i++) star(g, ((i * 61 + 17) % 100) / 100 * w, ((i * 29 + 11) % 100) / 100 * h, Math.min(w, h) * (0.012 + (i % 3) * 0.008), "#ffd23f");
-  const names = dropSymbols(drops);
+  const d = featured(drops), sym = `$${d.symbol}`;
+  const each = d.perCoin ? `${tokens(d.perCoin, false)} ${sym} A COIN` : "", daily = d.dailyCoins ? `${paidDaily(d)} COURIERS PAID DAILY` : "";
   if (wide) {
-    coin(g, w * 0.19, h * 0.5, h * 0.33, drops[0]);
+    coin(g, w * 0.19, h * 0.5, h * 0.33, d);
     const tx = w * 0.65, tw = w * 0.62;
-    say(g, "COLLECT", tx, h * 0.15, tw * 0.6, h * 0.12, bungee, "#ffffff");
-    say(g, `${names} COINS`, tx, h * 0.35, tw * 0.96, h * 0.2, bungee, "#ffd23f");
-    liveBadge(g, tx, h * 0.58, h * 0.1);
-    say(g, "FIND THEM ROUND THE PLANET", tx, h * 0.78, tw * 0.92, h * 0.08, hand, "#ffffff");
-    say(g, "POST OFFICE OWNERS REDEEM", tx, h * 0.9, tw * 0.86, h * 0.06, bungee, "#7ef0ff");
+    say(g, d.size ? dropTitle(d) : `COLLECT ${sym}`, tx, h * 0.17, tw * 0.98, h * 0.24, bungee, "#ffd23f");
+    say(g, "TREASURE HUNT", tx, h * 0.36, tw * 0.8, h * 0.11, bungee, "#ffffff");
+    liveBadge(g, tx, h * 0.53, h * 0.085);
+    say(g, d.spots ? `${d.spots} COINS HIDDEN EVERY DAY` : "FIND THEM ROUND THE PLANET", tx, h * 0.69, tw * 0.95, h * 0.085, bungee, "#ffffff");
+    say(g, [each, daily].filter(Boolean).join(" · "), tx, h * 0.8, tw * 0.95, h * 0.07, hand, "#ffe27a");
+    say(g, "POST OFFICE OWNERS REDEEM", tx, h * 0.91, tw * 0.86, h * 0.055, bungee, "#7ef0ff");
   } else {
-    coin(g, w / 2, h * 0.23, w * 0.36, drops[0]);
-    say(g, "COLLECT", w / 2, h * 0.47, w * 0.6, h * 0.06, bungee, "#ffffff");
-    say(g, names, w / 2, h * 0.56, w * 0.92, h * 0.1, bungee, "#ffd23f");
-    say(g, "COINS", w / 2, h * 0.65, w * 0.7, h * 0.07, bungee, "#ffd23f");
-    liveBadge(g, w / 2, h * 0.75, h * 0.045);
-    say(g, "FIND THEM ROUND THE PLANET", w / 2, h * 0.85, w * 0.92, h * 0.04, hand, "#ffffff");
-    say(g, "POST OFFICE OWNERS REDEEM", w / 2, h * 0.92, w * 0.9, h * 0.032, bungee, "#7ef0ff");
+    coin(g, w / 2, h * 0.19, w * 0.32, d);
+    say(g, d.size ? tokens(d.size) : "COLLECT", w / 2, h * 0.41, w * 0.9, h * 0.11, bungee, "#ffd23f");
+    say(g, sym, w / 2, h * 0.5, w * 0.8, h * 0.065, bungee, "#ffd23f");
+    say(g, "TREASURE HUNT", w / 2, h * 0.575, w * 0.9, h * 0.045, bungee, "#ffffff");
+    liveBadge(g, w / 2, h * 0.655, h * 0.038);
+    say(g, d.spots ? `${d.spots} COINS EVERY DAY` : "FIND THEM ROUND THE PLANET", w / 2, h * 0.745, w * 0.9, h * 0.04, bungee, "#ffffff");
+    if (each) say(g, each, w / 2, h * 0.805, w * 0.92, h * 0.036, hand, "#ffe27a");
+    if (daily) say(g, daily, w / 2, h * 0.855, w * 0.92, h * 0.036, hand, "#ffe27a");
+    say(g, "POST OFFICE OWNERS REDEEM", w / 2, h * 0.93, w * 0.9, h * 0.03, bungee, "#7ef0ff");
   }
 }
 
@@ -335,10 +347,10 @@ const POSTERS = [
     if (drops.length) {
       g.fillStyle = "#ffd23f";
       g.fillRect(0, h, w, h0 - h);
-      const coins = `COLLECT ${dropSymbols(drops)} COINS`;
-      if (wide) say(g, `${coins} · LIVE NOW`, w / 2, h + (h0 - h) / 2 + 1, w * 0.92, (h0 - h) * 0.62, bungee, "#2a1060");
+      const hunt = featured(drops).size ? `${dropTitle(featured(drops))} HUNT` : `COLLECT ${dropSymbols(drops)} COINS`;
+      if (wide) say(g, `${hunt} · LIVE NOW`, w / 2, h + (h0 - h) / 2 + 1, w * 0.92, (h0 - h) * 0.62, bungee, "#2a1060");
       else {
-        say(g, coins, w / 2, h + (h0 - h) * 0.32, w * 0.9, (h0 - h) * 0.34, bungee, "#2a1060");
+        say(g, hunt, w / 2, h + (h0 - h) * 0.32, w * 0.9, (h0 - h) * 0.34, bungee, "#2a1060");
         say(g, "LIVE NOW", w / 2, h + (h0 - h) * 0.72, w * 0.9, (h0 - h) * 0.34, bungee, "#d62246");
       }
     }
@@ -871,14 +883,17 @@ export function createSquare(k) {
       key: "square", name: "Times Square", d: centre, r: SQUARE_R, adMeshes,
       /// The Launchpad's door (stand within `reach` and press E) and its sign (tap it).
       pad: padDoor ? { d: padDoor, reach: 2.6, meshes: padMeshes } : null,
-      /// The token drops running today ({ symbol, picture }: the coin's picture, once loaded): their coins are out,
-      /// so the hunt poster, a banner on the Launchpad's poster and the ticker say so.
+      /// The token drops running today, oldest first ({ id, symbol, picture (once loaded), size (its tokens as it
+      /// started), spots, perCoin, dailyCoins, maxPerWallet }): the hunt poster features the newest, with a banner on
+      /// the Launchpad's poster and the ticker.
       showDrops(drops) {
-        const key = drops.map((d) => `${d.symbol}:${d.picture ? 1 : 0}`).join(",");
+        const key = drops.map((d) => `${d.id}:${d.symbol}:${d.picture ? 1 : 0}:${d.size ?? ""}:${d.spots}:${d.perCoin}:${d.dailyCoins}`).join(",");
         if (key === dropsKey) return;
         dropsKey = key;
         img.drops = drops;
-        tickerDrops = drops.length ? ` ★ COLLECT ${dropSymbols(drops)} COINS: LIVE NOW` : "";
+        const f = featured(drops);
+        tickerDrops = !f ? "" : f.size ? ` ★ ${dropTitle(f)} TREASURE HUNT: LIVE NOW ★ ${f.spots} COINS HIDDEN EVERY DAY ★ COLLECT ${dropSymbols(drops)} COINS, REDEEM AT YOUR POST OFFICE`
+          : ` ★ COLLECT ${dropSymbols(drops)} COINS: LIVE NOW`;
         for (const name of ["hunt", "launchpad"]) {
           const i = POSTERS.findIndex((p) => p.name === name);
           L[i].paint();
