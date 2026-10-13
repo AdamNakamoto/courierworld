@@ -15,7 +15,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import SPOTS from "../../web/hunt-spots.json";
 import { HUNT_STAMPS, huntDay, authMessage } from "../../web/hunt-pick.js";
 import { layDrops } from "../../web/drop-pick.js";
-import { MOON_R, MOON_PRICE, MOON_PRICE_TEXT, MOON_TREASURY, MOON_SECS, MOON_STAMPS, MOON_SPOTS, MOON_REACH, MOON_REACH_UP, moonSpots } from "../../web/moon-pick.js";
+import { TRIPS, TREASURY, WORLDS } from "../../web/trips.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
 import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
@@ -37,7 +37,7 @@ const ENUMS = {
   bag: ["satchel", "backpack", "tote", "sack", "golden", "none"],
 };
 const COLOURS = ["skin", "hair", "shirt", "accent", "bottoms", "socks", "shoes"];
-const RIDES = ["foot", "skate", "bike", "moped", "plane"];
+const RIDES = ["foot", "skate", "bike", "moped", "plane", "rover"]; // (the rover only on Mars)
 const SKIN_SUPPLY = 999;
 const SKINS_ABI = parseAbi(["function ownerOf(uint256) view returns (address)", "function designOf(uint256) view returns (uint256)"]);
 const DROPS_ABI = parseAbi([
@@ -67,10 +67,10 @@ const spotDir = SPOTS.map((p) => {
 });
 const arcBetween = (a, b, r = R) => r * Math.acos(Math.min(1, Math.max(-1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
 const TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"; // ERC-20 Transfer(from, to, value)
-const MOON_TICKET_AGE = 3 * 3600; // seconds: how old a ticket's transaction can be
+const TICKET_AGE = 3 * 3600; // seconds: how old a trip ticket's transaction can be
 const HUNT_TOKEN_MS = 12 * 3600_000; // how long a browser can pick the hunt up again without signing
-/// Which world a player is on: "moon", or the planet.
-const worldOf = (a) => (a.world === "moon" ? "moon" : "planet");
+/// Which world a player is on: "moon", "mars" (trips: everyone there is near), or the planet.
+const worldOf = (a) => (TRIPS[a.world] ? a.world : "planet");
 
 const colour = (v) => (Number.isInteger(v) && v >= 0 && v <= 0xffffff) || (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v));
 const send = (ws, m) => {
@@ -100,14 +100,14 @@ function cleanHello(h) {
 /// direction is changing, per second, and how fast it's turning, in radians a second, for the others to
 /// predict them by between updates)], checked and with the direction made unit length. Older games'
 /// updates get a velocity and turn of zero.
-function cleanState(m) {
+function cleanState(m, r = R) {
   if (m.length !== 11 && m.length !== 15) return null;
   const s = m.slice(1).map(Number);
   if (!s.every(Number.isFinite)) return null;
   const [x, y, z, fx, fy, fz, h, air, spd, swim, vx = 0, vy = 0, vz = 0, turn = 0] = s;
   const len = Math.hypot(x, y, z);
   if (len < 0.9 || len > 1.1 || Math.hypot(fx, fy, fz) > 1.1 || Math.abs(h) > 12 || air < 0 || air > 6 || spd < 0 || spd > 3 || swim < 0 || swim > 1) return null;
-  const moving = Math.hypot(vx, vy, vz) * R <= TOP_SPEED && Math.abs(turn) <= 12;
+  const moving = Math.hypot(vx, vy, vz) * r <= TOP_SPEED && Math.abs(turn) <= 12; // (r: the radius of their world)
   return [x / len, y / len, z / len, fx, fy, fz, h, air, spd, swim, ...(moving ? [vx, vy, vz, turn] : [0, 0, 0, 0])];
 }
 
@@ -134,7 +134,7 @@ export class Planet extends DurableObject {
     for (const ws of this.others(from)) {
       const o = this.info(ws), s = o.s;
       if (near && world !== worldOf(o)) continue;
-      if (!near || !s || world === "moon" || s[0] * near[0] + s[1] * near[1] + s[2] * near[2] > NEAR) send(ws, out);
+      if (!near || !s || world !== "planet" || s[0] * near[0] + s[1] * near[1] + s[2] * near[2] > NEAR) send(ws, out);
     }
   }
 
@@ -171,26 +171,26 @@ export class Planet extends DurableObject {
     if (!a.hello) return;
 
     if (m[0] === "s") {
-      const s = cleanState(m);
+      const s = cleanState(m, TRIPS[worldOf(a)]?.R);
       if (!s) return;
       // Faster than anyone can travel (a teleport, a script): count a strike; three, and this session's
-      // finds stop counting. (On the moon, distances are on the moon.)
+      // finds stop counting. (On the moon or Mars, distances are on the moon or Mars.)
       const world = worldOf(a);
       if (a.s && a.sAt) {
         const secs = (now - a.sAt) / 1000;
-        if (secs > 0.12 && arcBetween(a.s, s, world === "moon" ? MOON_R : R) / secs > TOP_SPEED) a.strikes = (a.strikes ?? 0) + 1;
+        if (secs > 0.12 && arcBetween(a.s, s, TRIPS[world]?.R ?? R) / secs > TOP_SPEED) a.strikes = (a.strikes ?? 0) + 1;
       }
       a.firstAt ??= now;
       a.sAt = now;
       a.s = s;
       a.n = (a.n + 1) % FAR_EVERY;
       ws.serializeAttachment(a);
-      // Only to those on the same world (everyone on the moon is near).
+      // Only to those on the same world (everyone on the moon or Mars is near).
       const out = JSON.stringify(["s", a.id, ...s]);
       for (const o of this.others(ws)) {
         const oi = this.info(o), os = oi.s;
         if (worldOf(oi) !== world) continue;
-        if (world === "moon" || a.n === 0 || !os || os[0] * s[0] + os[1] * s[1] + os[2] * s[2] > NEAR) send(o, out);
+        if (world !== "planet" || a.n === 0 || !os || os[0] * s[0] + os[1] * s[1] + os[2] * s[2] > NEAR) send(o, out);
       }
       return;
     }
@@ -201,8 +201,9 @@ export class Planet extends DurableObject {
     }
     if (m[0] === "chat") return this.chat(ws, a, m[1], now);
     if (m[0] === "namecheck" || m[0] === "setname" || m[0] === "name" || m[0] === "unname") return this.naming(ws, a, m);
-    if (m[0] === "auth" || m[0] === "resume" || m[0] === "hunt" || m[0] === "grab" || m[0] === "vouchers" || m[0] === "mgrab") return this.hunt(ws, a, m, now);
-    if (m[0] === "moon") return this.moonTicket(ws, a, m[1], now);
+    if (m[0] === "auth" || m[0] === "resume" || m[0] === "hunt" || m[0] === "grab" || m[0] === "vouchers" || m[0] === "wgrab" || m[0] === "mgrab") return this.hunt(ws, a, m, now);
+    if (m[0] === "ticket") return this.ticket(ws, a, m[1], m[2], now);
+    if (m[0] === "moon") return this.ticket(ws, a, "moon", m[1], now, true); // (from a game loaded before Mars)
     if (m[0] === "world") return this.goTo(ws, a, m[1], now);
   }
 
@@ -352,7 +353,7 @@ export class Planet extends DurableObject {
     ws.serializeAttachment(a);
     if (first) {
       const recent = (await this.chatLog()).filter((l) => Date.now() - l[3] < CHAT_RECENT_MS);
-      // (Everyone starts on the planet; those on the moon come with where they are only for the moon.)
+      // (Everyone starts on the planet; those on the moon or Mars come with where they are only for their world.)
       send(ws, ["welcome", a.id, this.others(ws).map((o) => {
         const oi = this.info(o);
         return [oi.id, oi.hello, worldOf(oi) === worldOf(a) ? oi.s : null, worldOf(oi)];
@@ -420,12 +421,14 @@ export class Planet extends DurableObject {
     const on = !!(this.env.DROPS_KEY && this.env.DROPS_ADDRESS);
     const day = huntDay(now);
     const state = async () => {
-      if (!a.wallet) return ["hunt", { on, day, wallet: null, found: [], coins: {}, moon: [], moonUntil: 0 }];
+      // (For each trip: its stamps found today, and when your ticket runs out, as `moon`, `moonUntil` and so on.)
+      const away = {};
+      for (const k of Object.keys(TRIPS)) [away[k], away[`${k}Until`]] = [a.wallet ? [...(await this.finds(day, a.wallet, k)).set] : [], (a.wallet && a[`${k}Until`]) || 0];
+      if (!a.wallet) return ["hunt", { on, day, wallet: null, found: [], coins: {}, ...away }];
       const lay = layDrops(day, SPOTS.length, await this.dropsOn(day));
       const coins = {};
       for (const c of lay.coins) coins[c.drop] = [...(await this.finds(day, a.wallet, c.drop)).set];
-      const moon = [...(await this.finds(day, a.wallet, "moon")).set];
-      return ["hunt", { on, day, wallet: a.wallet, found: [...(await this.finds(day, a.wallet)).set], coins, moon, moonUntil: a.moonUntil ?? 0 }];
+      return ["hunt", { on, day, wallet: a.wallet, found: [...(await this.finds(day, a.wallet)).set], coins, ...away }];
     };
 
     if (m[0] === "auth") {
@@ -439,7 +442,7 @@ export class Planet extends DurableObject {
       } catch {}
       if (!ok) return send(ws, ["nope", -1, "That signature didn't check out. Try signing in again."]);
       a.wallet = getAddress(wallet);
-      a.moonUntil = (await this.ctx.storage.get(`moon:${a.wallet}`)) ?? 0; // (a ticket bought before, still good)
+      await this.tickets(a); // (tickets bought before, still good)
       ws.serializeAttachment(a);
       // A token for this browser to pick the hunt up again on a new connection (a reload, a dropped line) without
       // signing again. It only counts finds for this wallet; claiming still takes the wallet itself.
@@ -455,7 +458,7 @@ export class Planet extends DurableObject {
       const t = await this.ctx.storage.get(`htok:${getAddress(wallet)}`);
       if (!t || t.token !== token || now - t.at > HUNT_TOKEN_MS) return;
       a.wallet = getAddress(wallet);
-      a.moonUntil = (await this.ctx.storage.get(`moon:${a.wallet}`)) ?? 0;
+      await this.tickets(a);
       ws.serializeAttachment(a);
       return send(ws, await state());
     }
@@ -478,21 +481,24 @@ export class Planet extends DurableObject {
       await this.ctx.storage.put(key, [...set]);
       return send(ws, ["found", day, i, set.size, owner]);
     }
-    if (m[0] === "mgrab") {
-      // ["mgrab", spot]: a moon stamp (an index into MOON_SPOTS) picked up, on the moon with a ticket.
-      const i = m[1];
-      const nope = (why) => send(ws, ["nope", i, why, "moon"]);
-      if (!Number.isInteger(i) || !moonSpots(day).includes(i)) return nope("Nothing is out there today.");
-      if (worldOf(a) !== "moon" || !(a.moonUntil > now)) return nope("Moon stamps count for couriers with a moon ticket.");
-      const { key, set } = await this.finds(day, a.wallet, "moon");
-      if (set.has(i)) return send(ws, ["found", day, i, set.size, "moon"]);
+    if (m[0] === "wgrab" || m[0] === "mgrab") {
+      // ["wgrab", world, spot]: a stamp on the moon or Mars (an index into that trip's spots) picked up there, with a
+      // ticket. (["mgrab", spot]: a moon stamp, from a game loaded before Mars.)
+      const [k, i] = m[0] === "mgrab" ? ["moon", m[1]] : [m[1], m[2]];
+      const trip = TRIPS[k];
+      if (!trip) return;
+      const nope = (why) => send(ws, ["nope", i, why, k]);
+      if (!Number.isInteger(i) || !trip.pick(day).includes(i)) return nope("Nothing is out there today.");
+      if (worldOf(a) !== k || !(a[`${k}Until`] > now)) return nope(`Those stamps count for couriers with a ticket to ${trip.name}.`);
+      const { key, set } = await this.finds(day, a.wallet, k);
+      if (set.has(i)) return send(ws, ["found", day, i, set.size, k]);
       if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement, so finds aren't counting this session. Reload to try again.");
       if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000) return nope("Keep exploring a moment, then try again.");
-      const p = MOON_SPOTS[i], far = arcBetween(a.s, p.d, MOON_R), up = Math.abs(a.s[6] + 0.85 - p.h);
-      if (far > MOON_REACH || up > MOON_REACH_UP) return nope("You weren't close enough to that one.");
+      const p = trip.spots[i], far = arcBetween(a.s, p.d, trip.R), up = Math.abs(a.s[6] + 0.85 - p.h);
+      if (far > trip.reach || up > trip.reachUp) return nope("You weren't close enough to that one.");
       set.add(i);
       await this.ctx.storage.put(key, [...set]);
-      return send(ws, ["found", day, i, set.size, "moon"]);
+      return send(ws, ["found", day, i, set.size, k]);
     }
     if (m[0] === "vouchers") {
       // ["vouchers"]: a signed note of each drop's finds, today's and yesterday's, for TokenDrops.claimMany.
@@ -505,10 +511,11 @@ export class Planet extends DurableObject {
         const wanted = lay.coins.map((c) => [c.drop, c.drop]);
         if (lay.golden.drop !== null) wanted.unshift([lay.golden.drop, "golden"]);
         for (const [drop, key] of wanted) {
-          // (Golden stamps and moon stamps are paid by the same $STAMP drop.)
-          const n = (await this.finds(d, a.wallet, key)).set.size + (key === "golden" ? (await this.finds(d, a.wallet, "moon")).set.size : 0);
+          // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop.)
+          let n = (await this.finds(d, a.wallet, key)).set.size;
+          if (key === "golden") for (const k of Object.keys(TRIPS)) n += (await this.finds(d, a.wallet, k)).set.size;
           if (!n) continue;
-          const coins = Math.min(n, key === "golden" ? HUNT_STAMPS + MOON_STAMPS : 65535);
+          const coins = Math.min(n, key === "golden" ? HUNT_STAMPS + Object.values(TRIPS).reduce((t, x) => t + x.stamps, 0) : 65535);
           const signature = await signer.signTypedData({
             domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
             types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
@@ -523,24 +530,32 @@ export class Planet extends DurableObject {
     }
   }
 
-  // ---------------------------------------------------------------- the moon
+  // ---------------------------------------------------------------- trips: the moon and Mars
 
-  /// ["moon", txHash]: a ticket to the moon. It's good if that transaction (in the last few hours, and not used
-  /// before) sent MOON_PRICE $STAMP from this player's signed-in wallet to the treasury; then the moon is theirs
-  /// for MOON_SECS (kept, so a reload doesn't lose it).
-  async moonTicket(ws, a, hash, now) {
+  /// A signed-in player's tickets, as kept (`moon:<wallet>` and so on: when each runs out).
+  async tickets(a) {
+    for (const k of Object.keys(TRIPS)) a[`${k}Until`] = (await this.ctx.storage.get(`${k}:${a.wallet}`)) ?? 0;
+  }
+
+  /// ["ticket", world, txHash]: a ticket to the moon or Mars (trips.js). It's good if that transaction (in the last
+  /// few hours, and not used before for any trip) sent the trip's price in $STAMP from this player's signed-in wallet
+  /// to the treasury; then the trip is theirs for its hour (kept, so a reload doesn't lose it). `legacy`: the old
+  /// ["moon", txHash], answered the old way.
+  async ticket(ws, a, k, hash, now, legacy = false) {
     const no = (why) => send(ws, ["nope", -2, why]);
+    const trip = TRIPS[k];
+    if (!trip) return no("The rocket doesn't fly there.");
     if (!a.wallet) return no("Sign in to the hunt first, so the room knows your wallet.");
     if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) return no("That isn't a transaction.");
-    const key = `moonTx:${hash.toLowerCase()}`;
-    this.moonChecking ??= new Set();
-    if (this.moonChecking.has(key) || (await this.ctx.storage.get(key))) return no("That ticket has already been used.");
-    this.moonChecking.add(key);
+    const key = `moonTx:${hash.toLowerCase()}`; // (every trip's tickets, so one payment can't buy two)
+    this.ticketChecking ??= new Set();
+    if (this.ticketChecking.has(key) || (await this.ctx.storage.get(key))) return no("That ticket has already been used.");
+    this.ticketChecking.add(key);
     try {
       if (this.env.MOON_DEV !== "1") {
-        // (Only `wrangler dev` sets MOON_DEV, to try the moon without paying.)
+        // (Only `wrangler dev` sets MOON_DEV, to try the trips without paying.)
         await this.dropsOn(huntDay(now)); // (reads $STAMP's address from the drops contract)
-        if (!this.chain || !this.dropStamp) return no("The moon isn't open right now. Try again soon.");
+        if (!this.chain || !this.dropStamp) return no("The Space Express isn't open right now. Try again soon.");
         let receipt = null;
         for (let i = 0; i < 6 && !receipt; i++) {
           try {
@@ -553,31 +568,31 @@ export class Planet extends DurableObject {
         if (receipt.status !== "success") return no("That transaction failed.");
         const addr = (topic) => `0x${topic.slice(-40)}`.toLowerCase();
         const paid = receipt.logs.some((l) => l.address.toLowerCase() === this.dropStamp && l.topics[0] === TRANSFER && l.topics.length === 3 &&
-          addr(l.topics[1]) === a.wallet.toLowerCase() && addr(l.topics[2]) === MOON_TREASURY.toLowerCase() && BigInt(l.data) >= MOON_PRICE);
-        if (!paid) return no(`That transaction didn't send ${MOON_PRICE_TEXT} $STAMP from your wallet to the treasury.`);
+          addr(l.topics[1]) === a.wallet.toLowerCase() && addr(l.topics[2]) === TREASURY.toLowerCase() && BigInt(l.data) >= trip.price);
+        if (!paid) return no(`That transaction didn't send ${trip.priceText} $STAMP from your wallet to the treasury.`);
         const block = await this.chain.getBlock({ blockNumber: receipt.blockNumber });
-        if (now / 1000 - Number(block.timestamp) > MOON_TICKET_AGE) return no("That ticket is too old.");
+        if (now / 1000 - Number(block.timestamp) > TICKET_AGE) return no("That ticket is too old.");
       }
-      const until = now + MOON_SECS * 1000;
+      const until = now + trip.secs * 1000;
       await this.ctx.storage.put(key, a.wallet);
-      await this.ctx.storage.put(`moon:${a.wallet}`, until);
-      a.moonUntil = until;
+      await this.ctx.storage.put(`${k}:${a.wallet}`, until);
+      a[`${k}Until`] = until;
       ws.serializeAttachment(a);
-      send(ws, ["moonok", until]);
+      send(ws, legacy ? ["moonok", until] : ["ticketok", k, until]);
     } catch {
       no("Couldn't check that ticket. Try again in a moment.");
     } finally {
-      this.moonChecking.delete(key);
+      this.ticketChecking.delete(key);
     }
   }
 
-  /// ["world", "moon" | "planet"]: off to the moon (with a ticket) or home. Everyone hears, so they can draw them
-  /// on the right world; where they were is forgotten (it was on the other one).
+  /// ["world", "moon" | "mars" | "planet"]: off on a trip (with a ticket) or home. Everyone hears, so they can draw
+  /// them on the right world; where they were is forgotten (it was on another one).
   goTo(ws, a, w, now) {
-    if (w !== "moon" && w !== "planet") return;
-    if (w === "moon" && !(a.moonUntil > now)) return send(ws, ["nope", -2, "You need a moon ticket for that."]);
+    if (!WORLDS.includes(w)) return;
+    if (TRIPS[w] && !(a[`${w}Until`] > now)) return send(ws, ["nope", -2, `You need a ticket to ${TRIPS[w].name} for that.`]);
     if (worldOf(a) === w) return;
-    a.world = w === "moon" ? "moon" : undefined;
+    a.world = TRIPS[w] ? w : undefined;
     a.s = null;
     a.sAt = 0;
     ws.serializeAttachment(a);

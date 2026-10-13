@@ -18,7 +18,8 @@ import { createLife } from "./life.js";
 import { createStamps, STAMPS } from "./stamps.js";
 import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { createMoon } from "./moon.js";
-import { MOON_R, MOON_PRICE_TEXT, MOON_STAMPS } from "./moon-pick.js";
+import { createMars } from "./mars.js";
+import { TRIPS } from "./trips.js";
 import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
@@ -29,11 +30,17 @@ const $ = (id) => document.getElementById(id);
 const HUNT_SPOTS = await fetch("./hunt-spots.json").then((r) => r.json());
 const W = createWorld($("c"), { keepClear: HUNT_SPOTS });
 const { scene, camera } = W;
-let world = W.world; // the world group that turns under the courier: the planet's, or the moon's on a trip
-// What you walk on: the planet, or on a trip the moon (moon.js). Its radius, centre (the moon's sits lower, so its
-// top is where the planet's is), what you can stand on, what's in the way, and gravity.
+let world = W.world; // the world group that turns under the courier: the planet's, or on a trip the moon's or Mars's
+// What you walk on: the planet, or on a trip the moon (moon.js) or Mars (mars.js). Its radius, centre (theirs sit
+// lower, so their top is where the planet's is), what you can stand on, what's in the way, and gravity.
 const planetGround = { key: "planet", R, center: new THREE.Vector3(), group: W.world, gravity: 1, terrain: W.terrain, obstacles: W.obstacles };
-let G = planetGround, onMoon = false, moon = null;
+// The trips from the neon district's rocket (trips.js): each world built the first time someone goes, with its dust
+// and sparkles and the letters in your bag for the locals there. `away` is the one you're on (null at home).
+const trips = {
+  moon: { key: "moon", build: createMoon, w: null, bag: [] },
+  mars: { key: "mars", build: createMars, w: null, bag: [] },
+};
+let G = planetGround, away = null;
 /// Metres along the ground you're on between two directions.
 const gArc = (a, b) => G.R * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
 
@@ -84,7 +91,7 @@ function rider(params, rideKey = "foot", rideColour = null) {
   }
   group.add(ch.root);
   return {
-    group, ch, ride, params, rideKey,
+    group, ch, ride, params, rideKey, rideColour,
     kind: ride ? rideKey : null,
     speed: ride ? ride.mount.speed : 1,
     /// Returns true on the frame a foot comes down.
@@ -216,7 +223,7 @@ function splashAt(size, n) {
 function kick(opts) {
   world.updateMatrixWorld();
   const at = world.worldToLocal(player.group.position.clone());
-  (onMoon ? moonDust : dust).puff(at, at.clone().normalize(), opts);
+  (away ? away.puffs : dust).puff(at, at.clone().normalize(), opts);
 }
 
 // Residents by their doors and out walking, birds, cats, butterflies and fireflies.
@@ -257,8 +264,8 @@ const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 const net = createNet(W, {
   url: MP_URL, makeRider: rider, dispose,
-  // Where each world's couriers are drawn (the moon's only once it's built).
-  world: (w) => (w === "moon" ? (moon ? { group: moon.group, r: MOON_R } : null) : { group: W.world, r: R }),
+  // Where each world's couriers are drawn (the moon's and Mars's only once they're built).
+  world: (w) => (trips[w] ? (trips[w].w ? { group: trips[w].w.group, r: TRIPS[w].R } : null) : { group: W.world, r: R }),
   tier(addr) {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
@@ -269,16 +276,16 @@ const net = createNet(W, {
     paintTicker();
     if (state?.wallet) {
       stamps.setFound(state.day, state.found, state.coins);
-      moon?.setFound(state.day, state.moon ?? []);
-      // Back on a new connection while on the moon: the room has your ticket again, so it shows you there.
-      if (onMoon && state.moonUntil > Date.now()) net.setWorld("moon");
+      for (const trip of Object.values(trips)) trip.w?.setFound(state.day, state[trip.key] ?? []);
+      // Back on a new connection while away: the room has your ticket again, so it shows you there.
+      if (away && ticketLeft(away.key) > 0) net.setWorld(away.key);
     }
     office?.huntChanged();
     hud();
   },
   onFound(day, spot, count, owner) {
     if (huntState && huntState.day === day) {
-      const list = owner === "golden" ? huntState.found : owner === "moon" ? (huntState.moon ??= []) : (huntState.coins[owner] ??= []);
+      const list = owner === "golden" ? huntState.found : trips[owner] ? (huntState[owner] ??= []) : (huntState.coins[owner] ??= []);
       if (!list.includes(spot)) list.push(spot);
     }
     paintTicker();
@@ -349,7 +356,8 @@ $("orbClose").addEventListener("click", hideAd);
 for (const a of [$("orbSite"), $("orbChart")]) a.addEventListener("click", () => setTimeout(hideAd, 0));
 /// Tell the room who you are: your courier, and your wallet if you're logged in.
 function introduce() {
-  net.hello(player.params, player.rideKey, chainRef?.account ?? null, skinWorn?.id ?? null);
+  // (In the rover, they see your look driving it rather than your skin.)
+  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null);
 }
 /// The facts the room passes on about you each frame, in planet space.
 function netState() {
@@ -623,7 +631,7 @@ function deliver(i) {
   say(lines);
 }
 function hud() {
-  $("bagN").textContent = bag.length;
+  $("bagN").textContent = (away ? away.bag : bag).length;
   $("doneN").textContent = delivered;
   $("stampN").textContent = `${stamps.found}/${STAMPS}`;
 }
@@ -777,7 +785,7 @@ canvas.addEventListener("pointerup", (e) => {
   drag = null;
   // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad;
   // on the Launchpad's sign, the Launchpad.
-  if (tap && !onMoon && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
+  if (tap && !away && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
     const r = canvas.getBoundingClientRect();
     orbRay.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), W.camera);
     const signs = launchpad ? W.square?.pad?.meshes ?? [] : [];
@@ -881,7 +889,7 @@ function pushOut(p, y = Math.max(bodyY, footY)) {
         p.normalize();
       }
     }
-    for (const b of onMoon ? [] : life.bodies) {
+    for (const b of away ? [] : life.bodies) {
       const gap = arc(p, b.d) - (b.r + BODY_R);
       if (gap >= 0 || b.d.dot(p) < 0.99 || Math.abs((b.y ?? 0) - y) > 1.2) continue;
       v.subVectors(p, b.d);
@@ -896,19 +904,22 @@ function pushOut(p, y = Math.max(bodyY, footY)) {
 let waveT = 0;
 function interact() {
   const me = localPos();
-  if (onMoon) {
-    if (gArc(me, moon.rocket.d) < moon.rocket.reach) return flyHome();
-    const frog = moon.nearestFrog(me, 2.4);
-    if (frog) {
-      frog.talk(true);
-      say([{ name: frog.name, text: frog.line() }], () => frog.talk(false));
+  if (away) {
+    const w = away.w;
+    if (gArc(me, w.rocket.d) < w.rocket.reach) return flyHome();
+    if (player.rideKey === "rover") return hopOut();
+    if (w.rover?.near(me)) return hopIn();
+    const who = w.nearestLocal(me, 2.4);
+    if (who) {
+      who.talk(true);
+      say([{ name: who.name, text: who.line() }], () => who.talk(false));
       return;
     }
     waveT = 1.6;
     net.say(-1);
     return;
   }
-  if (W.rocket && arc(me, W.rocket.d) < W.rocket.reach) return showMoonCard();
+  if (W.rocket && arc(me, W.rocket.d) < W.rocket.reach) return showTripCard();
   const who = life.nearest(me, 2.4, bodyY);
   if (!who && W.orb && arc(me, W.orb.d) < W.orb.reach) {
     showAd();
@@ -1461,8 +1472,8 @@ function frame() {
       skidIn = 0.05;
     }
 
-    // Deliveries and the post office (not from the moon).
-    if (!dialog && !onMoon) {
+    // Deliveries and the post office (on the planet: the moon's and Mars's are in tripTick).
+    if (!dialog && !away) {
       for (const i of bag) {
         if (arc(p, W.addresses[i].dir) < 1.4) {
           deliver(i);
@@ -1474,8 +1485,8 @@ function frame() {
         say([{ name: "Postmaster", text: POSTMASTER[random(POSTMASTER.length)] }]);
       }
     }
-    if (onMoon) {
-      moonTick(p, dt, t);
+    if (away) {
+      tripTick(p, dt, t);
       beam.visible = false;
     } else {
       compass(p, t);
@@ -1503,9 +1514,9 @@ function frame() {
   sparkle.update(dt);
   district.tick(t);
   splash.update(dt, 1 - 0.5 * W.night);
-  const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog && !onMoon });
+  const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog && !away });
   if (got) collected(got);
-  if (!onMoon) life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
+  if (!away) life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
   orbAds?.update(dt);
   // Times Square's big screens show the Orb's ad too.
   if (W.square && orbAds && orbAds.current() !== squareAd) {
@@ -1519,11 +1530,11 @@ function frame() {
     if (!photo) timeOfDay += dt / DAY_SECONDS; // (photo mode holds the clock where you set it)
     stepWeather(dt);
   }
-  // (On the moon there's no weather, and the sun is always out.)
-  W.setRain(onMoon ? 0 : weather.rain);
-  W.setTimeOfDay(photo ? photo.time : onMoon ? 0.45 : timeOfDay);
+  // (On the moon and Mars there's no rain, and the sun is always out.)
+  W.setRain(away ? 0 : weather.rain);
+  W.setTimeOfDay(photo ? photo.time : away ? 0.45 : timeOfDay);
   sounds.update(dt, {
-    speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: onMoon ? 0 : weather.rain, step: stepped && mode === "play" && !wading,
+    speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: away ? 0 : weather.rain, step: stepped && mode === "play" && !wading,
     ...(mode === "play" ? nearby(localPos()) : {}),
   });
   for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
@@ -1561,7 +1572,7 @@ function placeTitle(p, dt) {
 }
 /// How loud the sea, the falls and the works are from here (0 far … 1 right there).
 function nearby(p) {
-  if (onMoon) return { sea: 0, falls: 0, works: 0, woods: 0 }; // (space is quiet)
+  if (away) return { sea: 0.6 * (away.w.dust ?? 0), falls: 0, works: 0, woods: 0 }; // (space is quiet; a dust storm roars)
   const A = W.ambient, out = { sea: 0, falls: 0, works: 0, woods: W.terrain.zoneAt(p).key === "woods" ? 1 : 0 };
   if (A.sea) out.sea = 1 - Math.min(1, Math.max(0, (arc(p, A.sea.d) - A.sea.r * R) / 16));
   if (A.falls?.length) out.falls = 1 - Math.min(1, Math.max(0, (Math.min(...A.falls.map((f) => arc(p, f))) - 2) / 16));
@@ -1608,7 +1619,7 @@ const beam = (() => {
   return m;
 })();
 function guideTo(goal, t) {
-  const show = mode === "play" && !photo && !dialog && !onMoon;
+  const show = mode === "play" && !photo && !dialog && !away;
   beam.visible = show && goal.dd > 3;
   if (beam.visible) {
     beam.position.copy(goal.top).multiplyScalar(R + 8);
@@ -1640,52 +1651,68 @@ function showPad(on) {
 }
 /// Near the Launchpad's door, once per visit: how to walk in.
 let padHinted = false;
-// ---------------------------------------------------------------- the moon
-// A trip from the neon district's rocket on a ticket paid in $STAMP (moon-pick.js; the moon itself is moon.js, built
-// the first time someone goes). While you're there it's what you walk on (G), the planet is put away, space is
-// overhead, and the room shows you only to the others on the moon.
-let moonHinted = false, flying = false, moonDust = null, moonSparkle = null, leftFrom = null;
-function moonWorld() {
-  if (!moon) {
-    moon = createMoon(W);
-    moonDust = createDust(moon.group, W.noNormals);
-    moonSparkle = createDust(moon.group, W.noNormals, 24, 0xffd75e);
+// ---------------------------------------------------------------- trips: the moon and Mars
+// Trips from the neon district's rocket on a ticket paid in $STAMP (trips.js; the worlds themselves are moon.js and
+// mars.js, each built the first time someone goes). While you're there it's what you walk on (G), the planet is put
+// away, space (or Mars's sky) is overhead, and the room shows you only to the others there. Each world has its own
+// post box by the pad, with letters for the locals.
+let rocketHinted = false, flying = false, leftFrom = null, stormSaid = false;
+let tripPick = "moon"; // the trip the card at the rocket shows
+const TRIP_TEXT = {
+  moon: () => `Low gravity, craters, and Courier World hanging in a black sky. The moon frogs have letters waiting at the Moon Post box, and ${TRIPS.moon.stamps} golden moon stamps a day count with your golden stamps. A ticket is ${TRIPS.moon.priceText} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`,
+  mars: () => `A red world with a winding canyon, a sleeping volcano, an ice cap and dust storms. The Martians have letters waiting at the Mars Post box, and a rover you can drive. ${TRIPS.mars.stamps} golden Mars stamps a day count with your golden stamps. A ticket is ${TRIPS.mars.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
+};
+const WELCOME = {
+  moon: () => `🌙 Welcome to the moon! Gravity is low, so jump. Moon mail is waiting in the Moon Post box, ${TRIPS.moon.stamps} golden moon stamps are out today, and the rocket flies you home.`,
+  mars: () => `🔴 Welcome to Mars! Letters for the Martians are in the Mars Post box, Pip's rover is at the colony garage (E to drive), and ${TRIPS.mars.stamps} golden Mars stamps are out today. Mind the dust storms.`,
+};
+const EMOJI = { moon: "🌙", mars: "🔴" };
+const NOUN = { moon: "Moon", mars: "Mars" };
+function tripWorld(trip) {
+  if (!trip.w) {
+    trip.w = trip.build(W);
+    trip.puffs = createDust(trip.w.group, W.noNormals);
+    trip.sparkle = createDust(trip.w.group, W.noNormals, 24, 0xffd75e);
   }
-  return moon;
+  return trip.w;
 }
-const moonLeft = () => Math.max(0, (huntState?.moonUntil ?? 0) - Date.now());
+const ticketLeft = (k) => Math.max(0, (huntState?.[`${k}Until`] ?? 0) - Date.now());
 const minutes = (ms) => `${Math.max(1, Math.ceil(ms / 60_000))}m`;
 const signedIn = () => !!(huntState?.wallet && chainRef?.account && huntState.wallet.toLowerCase() === chainRef.account.toLowerCase());
 // A ticket paid for that the room hasn't seen yet (the line dropped, say): kept, so it isn't paid twice.
-const TICKET_KEY = "courier:moonTicket";
-function pendingTicket() {
-  try { return localStorage.getItem(TICKET_KEY); } catch { return null; }
+const ticketKey = (k) => `courier:${k}Ticket`;
+function pendingTicket(k) {
+  try { return localStorage.getItem(ticketKey(k)); } catch { return null; }
 }
-function setPendingTicket(h) {
-  try { h ? localStorage.setItem(TICKET_KEY, h) : localStorage.removeItem(TICKET_KEY); } catch {}
+function setPendingTicket(k, h) {
+  try { h ? localStorage.setItem(ticketKey(k), h) : localStorage.removeItem(ticketKey(k)); } catch {}
 }
-/// The Moon Express card at the rocket: what a ticket gets you, and a button for the next step (log in, sign in,
-/// buy, or fly on the ticket you have).
-function showMoonCard() {
-  const chain = chainRef;
-  if (!chain?.moonTicket || !chain.drops) return toast("The moon isn't open yet.", "error");
-  const left = signedIn() ? moonLeft() : 0;
-  $("moonText").textContent = `Low gravity, craters, and Courier World hanging in a black sky. ${MOON_STAMPS} golden moon stamps a day, and they count with your golden stamps. A ticket is ${MOON_PRICE_TEXT} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`;
-  $("moonGo").textContent = !chain.account ? "Log in" : !signedIn() ? "Sign in to fly" : left > 0 ? `Fly · ticket ${minutes(left)} left` : pendingTicket() ? "Check my ticket" : `Buy ticket · ${MOON_PRICE_TEXT} $STAMP`;
-  $("moonNote").textContent = !chain.account ? "You'll need a wallet with some $STAMP." : !signedIn() ? "One signature proves the wallet is yours. It costs nothing and moves nothing."
-    : left > 0 ? "" : pendingTicket() ? "You've paid for a ticket the room hasn't checked yet." : "Your wallet will ask you to send the ticket to the treasury.";
-  $("moonGo").disabled = false;
-  $("moonCard").hidden = false;
+/// The Space Express card at the rocket, for trip `k`: what a ticket gets you, and a button for the next step (log in,
+/// sign in, buy, or fly on the ticket you have).
+function showTripCard(k = tripPick) {
+  const chain = chainRef, trip = TRIPS[k];
+  if (!chain?.ticket || !chain.drops) return toast("The Space Express isn't open yet.", "error");
+  tripPick = k;
+  const left = signedIn() ? ticketLeft(k) : 0;
+  for (const b of document.querySelectorAll("#tripPick button")) b.setAttribute("aria-selected", String(b.dataset.trip === k));
+  $("tripTitle").textContent = `Fly to ${trip.name}`;
+  $("tripText").textContent = TRIP_TEXT[k]();
+  $("tripGo").textContent = !chain.account ? "Log in" : !signedIn() ? "Sign in to fly" : left > 0 ? `Fly · ticket ${minutes(left)} left` : pendingTicket(k) ? "Check my ticket" : `Buy ticket · ${trip.priceText} $STAMP`;
+  $("tripNote").textContent = !chain.account ? "You'll need a wallet with some $STAMP." : !signedIn() ? "One signature proves the wallet is yours. It costs nothing and moves nothing."
+    : left > 0 ? "" : pendingTicket(k) ? "You've paid for a ticket the room hasn't checked yet." : "Your wallet will ask you to send the ticket to the treasury.";
+  $("tripGo").disabled = false;
+  $("tripCard").hidden = false;
 }
-const hideMoonCard = () => ($("moonCard").hidden = true);
-$("moonClose").addEventListener("click", hideMoonCard);
+const hideTripCard = () => ($("tripCard").hidden = true);
+$("tripClose").addEventListener("click", hideTripCard);
+for (const b of document.querySelectorAll("#tripPick button")) b.addEventListener("click", () => !$("tripGo").disabled && showTripCard(b.dataset.trip));
 const waitFor = (ok, ms, why) => new Promise((resolve, reject) => {
   const t0 = performance.now();
   const tick = () => (ok() ? resolve() : performance.now() - t0 > ms ? reject(new Error(why)) : setTimeout(tick, 150));
   tick();
 });
-$("moonGo").addEventListener("click", async () => {
-  const chain = chainRef, btn = $("moonGo");
+$("tripGo").addEventListener("click", async () => {
+  const chain = chainRef, btn = $("tripGo"), k = tripPick;
   if (!chain || btn.disabled) return;
   btn.disabled = true;
   try {
@@ -1698,33 +1725,33 @@ $("moonGo").addEventListener("click", async () => {
       await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
       await waitFor(signedIn, 10_000, "The room didn't answer. Try again.");
     }
-    if (moonLeft() <= 0) {
-      let hash = pendingTicket();
+    if (ticketLeft(k) <= 0) {
+      let hash = pendingTicket(k);
       if (!hash) {
         btn.textContent = "Confirm in your wallet…";
-        hash = await chain.moonTicket();
-        setPendingTicket(hash);
+        hash = await chain.ticket(k);
+        setPendingTicket(k, hash);
       }
       btn.textContent = "Checking your ticket…";
-      huntState.moonUntil = await net.moonTicket(hash);
-      setPendingTicket(null);
+      huntState[`${k}Until`] = await net.ticket(k, hash);
+      setPendingTicket(k, null);
     }
-    hideMoonCard();
-    flyToMoon();
+    hideTripCard();
+    flyTo(k);
   } catch (e) {
     console.warn(e);
     toast(explain(e), "error");
-    if (/already been used|didn't send|too old|transaction failed|isn't a transaction/.test(e.message ?? "")) setPendingTicket(null); // (turned down for good)
+    if (/already been used|didn't send|too old|transaction failed|isn't a transaction/.test(e.message ?? "")) setPendingTicket(k, null); // (turned down for good)
   } finally {
-    if (!$("moonCard").hidden) showMoonCard();
+    if (!$("tripCard").hidden) showTripCard(k);
   }
 });
 
 /// Fade to white with a line, `swap` the world underneath, and fade back.
 async function flight(line, swap) {
   flying = true;
-  const fade = $("moonFade");
-  $("moonFadeText").textContent = line;
+  const fade = $("flightFade");
+  $("flightFadeText").textContent = line;
   fade.hidden = false;
   void fade.offsetWidth;
   fade.classList.add("on");
@@ -1751,31 +1778,35 @@ function standAt(d, tangent) {
   [jumpV, facing] = [0, 0];
   vel.set(0, 0);
 }
-function flyToMoon() {
-  if (onMoon || flying) return;
+function flyTo(k) {
+  if (away || flying) return;
   if (photo) photoMode(false);
-  flight("🚀 Lift-off!", () => {
-    const m = moonWorld();
+  flight(k === "mars" ? "🚀 Lift-off! Next stop, Mars" : "🚀 Lift-off!", () => {
+    const trip = trips[k], w = tripWorld(trip);
     leftFrom = { q: playerQ.clone(), y: bodyY };
-    [onMoon, G, world] = [true, m.ground, m.group];
+    [away, G, world] = [trip, w.ground, w.group];
     W.world.visible = false;
-    m.group.visible = true;
-    W.setSpace(true, m.group);
-    standAt(m.arrival.d, m.arrival.tangent);
-    if (huntState?.wallet) m.setFound(huntState.day, huntState.moon ?? []);
-    net.setWorld("moon");
+    w.group.visible = true;
+    W.setSky(k === "mars" ? "mars" : "space", w.group);
+    standAt(w.arrival.d, w.arrival.tangent);
+    if (huntState?.wallet) w.setFound(huntState.day, huntState[k] ?? []);
+    net.setWorld(k);
     hud();
-    setTimeout(() => toast(`🌙 Welcome to the moon! Gravity is low, so jump. ${MOON_STAMPS} golden moon stamps are out today, the moon frogs at Moon Base say hi (E), and the rocket flies you home.`), 1200);
+    setTimeout(() => toast(WELCOME[k]()), 1200);
   });
 }
 function flyHome(why = null) {
-  if (!onMoon || flying) return;
+  if (!away || flying) return;
   if (photo) photoMode(false);
+  const trip = away;
   flight("🌍 Back to Courier World", () => {
-    [onMoon, G, world] = [false, planetGround, W.world];
-    moon.group.visible = false;
+    if (player.rideKey === "rover") hopOut(false);
+    trip.w.rover?.home();
+    trip.w.leave?.();
+    [away, G, world] = [null, planetGround, W.world];
+    trip.w.group.visible = false;
     W.world.visible = true;
-    W.setSpace(false);
+    W.setSky("sky");
     playerQ.copy(leftFrom?.q ?? spawnQ);
     world.quaternion.copy(playerQ);
     bodyY = footY = camLift = leftFrom?.y ?? 0.04;
@@ -1791,28 +1822,98 @@ function rocketHint(p) {
   const r = W.rocket;
   if (!r) return;
   const d = arc(p, r.d);
-  if (!moonHinted && d < r.reach + 0.6) {
-    moonHinted = true;
-    toast(`🌙 The Moon Express: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to fly to the moon`);
-  } else if (moonHinted && d > r.reach + 6) moonHinted = false;
+  if (!rocketHinted && d < r.reach + 0.6) {
+    rocketHinted = true;
+    toast(`🚀 The Space Express: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to fly to the moon or Mars`);
+  } else if (rocketHinted && d > r.reach + 6) rocketHinted = false;
 }
-/// Each frame on the moon: the line under the compass (stamps, ticket, the way to the rocket), the stamps, and
-/// home when the ticket runs out.
-function moonTick(p, dt, t) {
-  const left = moonLeft();
-  if (huntState?.wallet && left <= 0 && !flying) return flyHome("Your moon ticket ran out, so the rocket brought you home.");
-  const home = moon.rocket, dd = gArc(p, home.d), w = home.d.clone().applyQuaternion(world.quaternion);
-  $("target").textContent = `🌙 Moon stamps ${moon.found}/${moon.out}${huntState?.wallet ? ` · ticket ${minutes(left)}` : ""}`;
-  pointArrow(Math.atan2(w.x, -w.z), dd < home.reach ? "· E to fly home" : `· rocket ${Math.round(dd)}m`, dd < home.reach);
-  const got = moon.update(dt, t, { me: p, chest: bodyY + 0.85, active: !dialog && !flying });
+
+// The rover on Mars: hop in by it (E), and out again wherever you like.
+let walkingAs = null; // who you were before you got in: { params, rideKey, rideColour }
+/// The way you're facing, along the ground (a direction in the frame of the world you're on).
+const ahead = () => new THREE.Vector3(0, 0, 1).applyAxisAngle(UP, facingCamera ? 0 : Math.PI - facing).applyQuaternion(playerQ.clone().invert());
+function hopIn() {
+  walkingAs = { params: player.params, rideKey: player.rideKey, rideColour: player.rideColour };
+  away.w.rover.take();
+  setPlayer(rider(player.params, "rover"));
+  toast(`🚙 You're driving the rover. ${matchMedia("(pointer: coarse)").matches ? "Tap Hi" : "Press E"} to hop out.`);
+}
+/// Out of the rover: it stays parked where you are (`park`), or goes back to the garage.
+function hopOut(park = true) {
+  if (park) away?.w.rover?.park(localPos(), ahead());
+  const o = walkingAs ?? { params: player.params, rideKey: "foot" };
+  walkingAs = null;
+  setPlayer(rider(o.params, o.rideKey, o.rideColour));
+}
+
+/// Letters away from home: the post box by the pad fills an empty bag with three letters for the locals.
+function fillAwayBag() {
+  const w = away.w, n = w.residents.length, picks = new Set();
+  while (picks.size < Math.min(3, n)) picks.add(random(n));
+  away.bag = [...picks];
+  hud();
+  const names = away.bag.map((i) => w.residents[i].name);
+  const who = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+  say([{ name: w.post.name, text: `${names.length} letters: for ${who}. Follow the arrow at the top.` }]);
+}
+function deliverAway(i) {
+  const w = away.w, a = w.residents[i];
+  away.bag = away.bag.filter((b) => b !== i);
+  delivered++;
+  sounds.chime();
+  try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
+  hud();
+  const lines = [{ name: a.name, text: w.thanks[random(w.thanks.length)] }];
+  if (!away.bag.length) lines.push({ name: "You", text: `That's the bag empty. Back to the ${w.post.name} for more.` });
+  say(lines);
+}
+/// The arrow's angle toward `d` (a direction in the frame of the world you're on).
+const angleTo = (d) => {
+  const v = d.clone().applyQuaternion(world.quaternion);
+  return Math.atan2(v.x, -v.z);
+};
+/// Each frame on a trip: letters, the line under the compass (the next letter, or the stamps and the way to the post
+/// box and the rocket), the stamps, the rover, dust storms on Mars, and home when the ticket runs out.
+function tripTick(p, dt, t) {
+  const trip = away, w = trip.w, k = trip.key, left = ticketLeft(k);
+  if (huntState?.wallet && left <= 0 && !flying) return flyHome(`Your ${NOUN[k].toLowerCase()} ticket ran out, so the rocket brought you home.`);
+  if (!dialog && !flying) {
+    const i = trip.bag.find((j) => gArc(p, w.residents[j].d) < 1.6);
+    if (i !== undefined) deliverAway(i);
+    else if (!trip.bag.length && gArc(p, w.post.d) < w.post.reach) fillAwayBag();
+  }
+  const ticket = huntState?.wallet ? ` · ticket ${minutes(left)}` : "";
+  let goal = null;
+  for (const j of trip.bag) {
+    const r = w.residents[j], dd = gArc(p, r.d);
+    if (!goal || dd < goal.dd) goal = { ...r, dd };
+  }
+  if (goal) {
+    $("target").textContent = `${EMOJI[k]} Deliver to ${goal.name}${left < 10 * 60_000 ? ticket : ""}`;
+    pointArrow(angleTo(goal.d), `· ${Math.round(goal.dd)}m`);
+  } else {
+    const home = w.rocket, dd = gArc(p, home.d);
+    $("target").textContent = `${EMOJI[k]} ${NOUN[k]} stamps ${w.found}/${w.out}${ticket}`;
+    pointArrow(angleTo(home.d), dd < home.reach ? "· E to fly home" : `· post box & rocket ${Math.round(dd)}m`, dd < home.reach);
+  }
+  const got = w.update(dt, t, { me: p, chest: bodyY + 0.85, active: !dialog && !flying });
   if (got !== null) {
     sounds.collect();
-    moonSparkle.puff(p.clone().multiplyScalar(MOON_R + bodyY + 0.9), p, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
-    toast(moon.found === moon.out ? "Every moon stamp today!" : `🌙 Moon stamp! ${moon.found} of ${moon.out}`);
-    if (huntState?.wallet) net.moonGrab(got);
+    trip.sparkle.puff(p.clone().multiplyScalar(TRIPS[k].R + bodyY + 0.9), p, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
+    toast(w.found === w.out ? `Every ${NOUN[k].toLowerCase()} stamp today!` : `${EMOJI[k]} ${NOUN[k]} stamp! ${w.found} of ${w.out}`);
+    if (huntState?.wallet) net.worldGrab(k, got);
   }
-  moonDust.update(dt, 1);
-  moonSparkle.update(dt, 1);
+  trip.puffs.update(dt, 1);
+  trip.sparkle.update(dt, 1);
+  if (w.rover) {
+    // (Got out some other way, say by switching couriers: the rover stays where you were.)
+    if (w.rover.taken && player.rideKey !== "rover") w.rover.park(p, ahead());
+    W.setDust(w.dust);
+    if (w.dust > 0.15 && !stormSaid) {
+      stormSaid = true;
+      toast("🌪️ A dust storm is blowing in! It passes in a minute or so.");
+    } else if (w.dust < 0.02) stormSaid = false;
+  }
 }
 
 function padHint(p) {

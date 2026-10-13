@@ -2,7 +2,7 @@
 // them, collect $STAMP. Re-rendered every second from the chain snapshot.
 import { formatEther, isAddress, parseEther } from "https://esm.sh/viem@2";
 import { huntDay, newSpotsIn, HUNT_STAMPS } from "./hunt-pick.js";
-import { MOON_STAMPS } from "./moon-pick.js";
+import { TRIPS } from "./trips.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { renderStamp } from "./portrait.js";
@@ -101,8 +101,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
     const [running, own] = await Promise.all([chain.drops.running(day), chain.drops.owner()]);
     const mine = st?.wallet && snap?.account && st.wallet.toLowerCase() === snap.account.toLowerCase() ? st : null;
     for (const d of running) {
-      // (Golden stamps on the planet and on the moon are paid by the same $STAMP drop.)
-      const n = d.isStamp ? (mine?.found.length ?? 0) + (mine?.moon?.length ?? 0) : mine?.coins?.[d.id]?.length ?? 0;
+      // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop.)
+      const n = d.isStamp ? (mine?.found.length ?? 0) + (mine?.moon?.length ?? 0) + (mine?.mars?.length ?? 0) : mine?.coins?.[d.id]?.length ?? 0;
       d.foundToday = n;
       d.pay = n ? (await chain.drops.claimable(d.id, day, Math.min(n, 65535)))[1] : 0n;
     }
@@ -300,7 +300,8 @@ export function createOffice(chain, { onPlayAs, onWearSkin = () => {}, wearing =
       html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
       if (coins.some((d) => d.left >= d.perCoin)) html += `<p class="on">🪙 The hunt is on! New coins in ${newSpotsIn()}</p>`;
       html += `<div class="kv"><span>★ Golden stamps${golden ? ` · ${fmt(golden.perCoin, 0)} $STAMP each` : " · just for fun today"}</span><b>${st ? `${st.found.length}/${HUNT_STAMPS}` : "–"}</b></div>`;
-      html += `<div class="kv"><span>🌙 Moon stamps <span class="muted">· fly from the neon district's rocket</span></span><b>${st ? `${st.moon?.length ?? 0}/${MOON_STAMPS}` : "–"}</b></div>`;
+      html += `<div class="kv"><span>🌙 Moon stamps <span class="muted">· fly from the neon district's rocket</span></span><b>${st ? `${st.moon?.length ?? 0}/${TRIPS.moon.stamps}` : "–"}</b></div>`;
+      html += `<div class="kv"><span>🔴 Mars stamps <span class="muted">· the same rocket, further</span></span><b>${st ? `${st.mars?.length ?? 0}/${TRIPS.mars.stamps}` : "–"}</b></div>`;
       // Each coin drop: what you've found of today's coins, what they pay, how many of the day's are left to claim
       // (each day pays a set number across everyone, first come first served), and how far through the drop it is.
       for (const d of coins) {

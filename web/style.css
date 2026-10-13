@@ -414,12 +414,15 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .orb-links a[hidden] { display: none; }
 .orb-domain { margin: 8px 0 0; font: 600 13px ui-monospace, Menlo, monospace; color: var(--muted); }
 .orb-note { margin: 8px 0 0; font-size: 14px; line-height: 1.2; color: var(--muted); }
-.moon-card .orb-tag { color: #6b4fd8; }
-.moon-card button.pbtn { font: inherit; cursor: pointer; }
+.trip-card .orb-tag { color: #6b4fd8; }
+.trip-card button.pbtn { font: inherit; cursor: pointer; }
+.trip-pick { display: flex; gap: 8px; margin: 0 0 10px; }
+.trip-pick .pbtn { flex: 1; }
+.trip-pick .pbtn[aria-selected="true"] { background: var(--ink); color: #fbf8ef; }
 /* The flight: a white-out with a line, while the world changes underneath. */
-.moon-fade { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: #f6f3ea; opacity: 0; transition: opacity .6s ease; pointer-events: none; }
-.moon-fade.on { opacity: 1; pointer-events: auto; }
-.moon-fade span { font: 400 clamp(26px, 6vw, 54px)/1.1 Bungee, Impact, sans-serif; color: var(--ink); text-align: center; padding: 16px; }
+.flight-fade { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: #f6f3ea; opacity: 0; transition: opacity .6s ease; pointer-events: none; }
+.flight-fade.on { opacity: 1; pointer-events: auto; }
+.flight-fade span { font: 400 clamp(26px, 6vw, 54px)/1.1 Bungee, Impact, sans-serif; color: var(--ink); text-align: center; padding: 16px; }
 
 /* Your name on the planet, in the Post Office panel. */
 .who .pname { font: 700 15px ui-monospace, Menlo, monospace; color: #3f6fbf; }

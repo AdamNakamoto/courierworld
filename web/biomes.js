@@ -974,8 +974,8 @@ export function buildBiomes(k) {
         const doge = pad.clone().multiplyScalar(R).add(V(1.0, 0, 3.2).applyQuaternion(q)).normalize();
         k.npc({ d: elon, y: T.landAt(elon), face, name: "Elon Tusk", own: true, hi: ["To Mars!", "Hello, Earthling!", "Ship it!"],
           look: { hairStyle: "short", hair: 0x3a2a24, skin: 0xf2d3be, shirt: 0x1f2024, accent: 0x1f2024, bottoms: 0x2f3a4a, bottomsStyle: "pants", shoes: 0x2b2b2e, headwear: "none", bag: "none", height: 1.08 },
-          lines: ["We're going to deliver letters to Mars. The stamps will have to be very, very big.", "This rocket is fully reusable. Like envelopes, if you're careful.",
-            "The Moon Express leaves from right here. Stand by the rocket and press E. The view is free, the seat isn't.",
+          lines: ["We deliver letters to Mars now. The stamps had to be very, very big.", "This rocket is fully reusable. Like envelopes, if you're careful.",
+            "The Space Express leaves from right here: the moon, or Mars if you're brave. Stand by the rocket and press E. The view is free, the seat isn't.",
             "Doge keeps saying it's going to the moon. Now it actually does. Low gravity, very good for jumping.", "I'm thinking of renaming the alphabet to just X. Saves ink.", "Some nights I sleep at the post office. Have you tried delivering faster?"] });
         k.npc({ d: doge, y: T.landAt(doge), face, name: "Doge", kind: "doge", own: true, hi: ["Wow!", "Such wow!", "Much hi!"],
           lines: ["Wow. Such letters. Very delivery. Much stamps.", "Many courier. So planet. Wow.", "(Doge looks at the rocket, then at you, then back at the rocket. Much hope.)", "To the moon! Such ticket. Very jump. Wow.", "Golden stamps on the moon. Much shiny. So float."] });

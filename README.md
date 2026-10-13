@@ -119,24 +119,34 @@ npx wrangler deploy --var DROPS_ADDRESS:0x…
 `./dev.sh` deploys local drops and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs them too (token
 drops need the launchpad: `./dev.sh --fork`). `StampHunt.sol`, the $STAMP-only version, was never deployed.
 
-## The moon
+## The moon and Mars
 
-The neon district's rocket flies couriers to a small moon (`web/moon.js`; its rules, shared with the server, are in
-`web/moon-pick.js`): radius 12 m, low gravity (0.35 of the planet's), craters and rocks, the landing pad with the
-rocket home, a flag, and the planet in a black, starry sky (the painted sky's "space" mode). The moon's group sits
-so its top is where the planet's is, so the sun, the shadows and the camera work unchanged; `main.js` walks on
-whichever world you're on (its radius, centre, ground, obstacles and gravity) and turns that one under you.
+The neon district's rocket flies couriers to two small worlds, each built the first time someone goes: the moon
+(`web/moon.js`, rules in `web/moon-pick.js`: radius 12 m, gravity 0.35 of the planet's, craters, the moon frogs and
+their base, a saucer) and Mars (`web/mars.js`, rules in `web/mars-pick.js`: radius 16 m, gravity 0.55, dunes, a
+winding canyon, a sleeping volcano, an ice cap, the colony, seven Martians, a rover to drive, and a dust storm every
+seven minutes, the same for everyone). `web/trips.js` holds both trips' tickets and stamps in one table, shared by the
+game and the server; `web/space.js` holds what both worlds share (the pad and rocket, the post box, the locals, the
+day's stamps). Each world's group sits so its top is where the planet's is, so the sun, the shadows and the camera work
+unchanged; `main.js` walks on whichever world you're on (its radius, centre, ground, obstacles and gravity) and turns
+that one under you. The painted sky has a "space" mode for the moon and a "mars" mode (butterscotch, hazier in a storm).
 
-A ticket is 100 $STAMP sent from the player's wallet to the treasury (`chain.moonTicket()`), good for an hour. The
-room checks it (`["moon", txHash]`): a successful transaction from the player's signed-in hunt wallet that moved at
-least 100 $STAMP to the treasury, less than three hours old, never used before; the ticket is kept per wallet, so a
-reload doesn't lose it. Players tell the room which world they're on (`["world", "moon" | "planet"]`, moon only
-with a ticket), and positions and emotes go only to players on the same world; a newcomer gets everyone there
-(`["here", …]`). Twelve golden moon stamps a day (`["mgrab", spot]`, checked against the moon's spots with the
-moon's radius) count with the golden stamps: the vouchers for the $STAMP drop add them up, within its limits.
+Each world has a post box by its pad that fills an empty bag with three letters for the locals there; they count with
+the planet's deliveries. The rover is a ride (`rides.js`): hopping in swaps your courier onto it, and it's parked where
+you hop out (back in the garage when you fly home).
 
-Signing in to the hunt now also gives the browser a token (`["hunttoken"]`, kept for the session) so a new
-connection picks the hunt up again (`["resume"]`) without another signature. For local testing, `MOON_DEV=1` in
+A ticket is sent from the player's wallet to the treasury (`chain.ticket(world)`: 100 $STAMP for the moon, 200 for
+Mars), good for an hour. The room checks it (`["ticket", world, txHash]`): a successful transaction from the player's
+signed-in hunt wallet that moved at least the price to the treasury, less than three hours old, never used before for
+any trip; the ticket is kept per wallet, so a reload doesn't lose it. Players tell the room which world they're on
+(`["world", "moon" | "mars" | "planet"]`, a trip only with its ticket), and positions and emotes go only to players
+on the same world; a newcomer gets everyone there (`["here", …]`). Twelve golden stamps a day on each world
+(`["wgrab", world, spot]`, checked against that world's spots with its radius) count with the golden stamps: the
+vouchers for the $STAMP drop add them up, within its limits. The room still answers games loaded before Mars
+(`["moon", txHash]`, `["mgrab", spot]`).
+
+Signing in to the hunt also gives the browser a token (`["hunttoken"]`, kept for the session) so a new connection
+picks the hunt up again (`["resume"]`) without another signature. For local testing, `MOON_DEV=1` in
 `multiplayer/.dev.vars` makes the room accept any ticket; never set it in production.
 
 ## Courier Skins

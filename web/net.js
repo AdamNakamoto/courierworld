@@ -5,6 +5,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
 import { authMessage } from "./hunt-pick.js";
+import { WORLDS } from "./trips.js";
 import { nameMessage, nameShown } from "./name-rules.js";
 import { SKINS } from "./skins.js";
 
@@ -33,7 +34,7 @@ const ENUMS = {
   bag: ["satchel", "backpack", "tote", "sack", "golden", "none"],
 };
 const COLOURS = ["skin", "hair", "shirt", "accent", "bottoms", "socks", "shoes"];
-const RIDES = ["foot", "skate", "bike", "moped", "plane"];
+const RIDES = ["foot", "skate", "bike", "moped", "plane", "rover"];
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 /// A look someone else sent, kept to the keys and values the character builder knows.
@@ -285,10 +286,10 @@ export function createNet(W, {
   const emotes = createEmotes(W.world, W.noNormals);
   let ws = null, me = null, started = false, retry = 1, since = 0, pingIn = 0, last = null, current = null;
   let away = null, asleep = false; // leaving the room while the tab is hidden; waiting to be shown to come back
-  // Which world you're on ("planet" or "moon"): others are drawn only on yours. `world(w)` gives a world's group
-  // and radius (null if it isn't built yet).
-  let mine = "planet", moonWait = null;
-  const mgrabs = []; // moon stamps picked up this frame
+  // Which world you're on ("planet", "moon" or "mars"): others are drawn only on yours. `world(w)` gives a world's
+  // group and radius (null if it isn't built yet).
+  let mine = "planet", ticketWait = null;
+  const wgrabs = []; // stamps picked up on the moon or Mars this frame: [world, spot]
   /// Put a player (or your emote anchor) in their world's group.
   function home(obj, w) {
     const g = world(w);
@@ -358,7 +359,7 @@ export function createNet(W, {
     root.visible = false;
     W.noNormals.push(tag);
     const p = { hello, root, rider, tag, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0,
-      world: w === "moon" || (w === undefined && was === "moon") ? "moon" : "planet" };
+      world: WORLDS.includes(w) ? w : w === undefined && was ? was : "planet" };
     home(root, p.world);
     players.set(id, p);
     if (s) apply(p, s);
@@ -441,9 +442,9 @@ export function createNet(W, {
           if (m[1] && me?.addr) sessionStorage.setItem(`courier:hunt:${me.addr.toLowerCase()}`, m[1]);
         } catch {}
         return;
-      case "moonok":
-        moonWait?.resolve(Number(m[1]));
-        moonWait = null;
+      case "ticketok":
+        ticketWait?.resolve(Number(m[2]));
+        ticketWait = null;
         return;
       case "here":
         // Everyone already on the world you've just come to, where they are.
@@ -459,7 +460,7 @@ export function createNet(W, {
       case "world": {
         const p = players.get(m[1]);
         if (!p) return;
-        p.world = m[2] === "moon" ? "moon" : "planet";
+        p.world = WORLDS.includes(m[2]) ? m[2] : "planet";
         [p.target, p.placed] = [null, false];
         p.root.visible = false;
         home(p.root, p.world);
@@ -493,8 +494,8 @@ export function createNet(W, {
           voucherWait.reject(new Error(m[2]));
           voucherWait = null;
         } else if (m[1] === -2) {
-          moonWait?.reject(new Error(m[2]));
-          moonWait = null;
+          ticketWait?.reject(new Error(m[2]));
+          ticketWait = null;
         } else onNope(m[1], m[2]);
         return;
       case "join":
@@ -624,16 +625,16 @@ export function createNet(W, {
         }
         // Send where you are when your movement changes, or now and then while it keeps on (see HEARTBEAT).
         since += dt;
-        if (state && (since >= MIN_GAP || grabs.length || mgrabs.length)) {
+        if (state && (since >= MIN_GAP || grabs.length || wgrabs.length)) {
           const moving = state.spd > 0.05;
           // Where the others' games put you now: your last update, carried on along the curve it gave.
           const seen = last && carried(last, since);
           const changed = !last || moving !== last.spd > 0.05 || (state.air > 0) !== (last.air > 0) || state.f.dot(seen.f) < 0.94 ||
             Math.abs(state.spd - last.spd) > 0.25 || Math.abs(state.h - last.h) > 0.25 || Math.abs(state.swim - last.swim) > 0.3 ||
             arc(state.p, seen.p) > DRIFT;
-          if (changed || (moving && since >= HEARTBEAT) || grabs.length || mgrabs.length) sendState(state);
+          if (changed || (moving && since >= HEARTBEAT) || grabs.length || wgrabs.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
-          while (mgrabs.length) send(["mgrab", mgrabs.shift()]);
+          while (wgrabs.length) send(["wgrab", ...wgrabs.shift()]);
         }
       }
       // Everyone else eases toward where they should be by now: their last update, carried on along the curve
@@ -698,23 +699,24 @@ export function createNet(W, {
     huntState: () => send(["hunt"]),
     /// You just picked up the stamp or coin at `spot`: ask the room to count it.
     grab: (spot) => grabs.push(spot),
-    /// A moon stamp picked up (its index in MOON_SPOTS).
-    moonGrab: (spot) => mgrabs.push(spot),
-    /// Show the room a moon ticket (the hash of the transaction that paid for it): resolves with when it runs out.
-    moonTicket(hash) {
+    /// A stamp picked up on the moon or Mars (`w`: "moon" or "mars"; `spot`: its index in that world's spots).
+    worldGrab: (w, spot) => wgrabs.push([w, spot]),
+    /// Show the room a ticket to `w` ("moon" or "mars"): the hash of the transaction that paid for it. Resolves with
+    /// when it runs out.
+    ticket(w, hash) {
       if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
       return new Promise((resolve, reject) => {
-        moonWait = { resolve, reject };
-        send(["moon", hash]);
+        ticketWait = { resolve, reject };
+        send(["ticket", w, hash]);
         setTimeout(() => {
-          if (moonWait?.resolve === resolve) {
-            moonWait = null;
+          if (ticketWait?.resolve === resolve) {
+            ticketWait = null;
             reject(new Error("The server didn't answer. Try again."));
           }
         }, 30_000);
       });
     },
-    /// Off to "moon" or back to "planet": everyone there sees you, and you them.
+    /// Off to "moon" or "mars", or back to "planet": everyone there sees you, and you them.
     setWorld(w) {
       mine = w;
       home(anchor, w);

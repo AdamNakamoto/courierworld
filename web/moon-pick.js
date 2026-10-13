@@ -19,7 +19,7 @@ export const LANDING = [0, 1, 0];
 
 const CANDIDATES = 30; // spots a moon stamp can be out at; each day takes MOON_STAMPS of them
 
-function rng(seed) {
+export function rng(seed) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) | 0;
@@ -28,14 +28,14 @@ function rng(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const unit = (v) => {
+export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+export const unit = (v) => {
   const l = Math.hypot(v[0], v[1], v[2]);
   return [v[0] / l, v[1] / l, v[2] / l];
 };
 /// Metres along the moon's surface between two directions.
 export const moonArc = (a, b) => MOON_R * Math.acos(Math.min(1, Math.max(-1, dot(a, b))));
-const randomDir = (rnd) => {
+export const randomDir = (rnd) => {
   const z = rnd() * 2 - 1, t = rnd() * Math.PI * 2, s = Math.sqrt(1 - z * z);
   return [s * Math.cos(t), z, s * Math.sin(t)];
 };

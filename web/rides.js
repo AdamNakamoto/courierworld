@@ -184,6 +184,33 @@ export function createRide(key, accent = 0x2f8088) {
     add(group, new THREE.BoxGeometry(0.4, 0.34, 0.36), 0xd9534a, 0, 0.9, -0.62);
     add(group, new THREE.BoxGeometry(0.2, 0.12, 0.02), 0xfbf8ef, 0, 0.92, -0.81);
     mount = { y: 0.0, z: -0.16, pose: "sit", pedal: false, speed: 2.0 };
+  } else if (key === "rover") {
+    // A six-wheeled Mars rover: a white chassis with an orange stripe, a seat under a roll cage, a camera mast, a
+    // dish and a solar panel, its wheels on rocker arms.
+    const P = (x, y, z) => new THREE.Vector3(x, y, z);
+    add(group, new THREE.BoxGeometry(1.1, 0.22, 1.9), 0xeceae4, 0, 0.5, 0);
+    add(group, new THREE.BoxGeometry(1.14, 0.06, 1.94), 0xf2a03d, 0, 0.62, 0); // (the colony's orange, whoever drives)
+    add(group, new THREE.BoxGeometry(0.62, 0.1, 0.5), 0x3b4145, 0, 0.66, -0.25); // seat
+    add(group, new THREE.BoxGeometry(0.62, 0.36, 0.08), 0x3b4145, 0, 0.86, -0.52);
+    for (const x of [-0.45, 0.45]) {
+      rod(add, group, P(x, 0.62, -0.62), P(x, 1.55, -0.62), 0.03, 0xd9d8d2);
+      rod(add, group, P(x, 1.55, -0.62), P(x, 1.4, 0.25), 0.03, 0xd9d8d2);
+      rod(add, group, P(x, 1.4, 0.25), P(x, 0.62, 0.45), 0.03, 0xd9d8d2);
+    }
+    rod(add, group, P(-0.45, 1.55, -0.62), P(0.45, 1.55, -0.62), 0.03, 0xd9d8d2);
+    rod(add, group, P(-0.45, 1.4, 0.25), P(0.45, 1.4, 0.25), 0.03, 0xd9d8d2);
+    rod(add, group, P(0.38, 0.62, 0.75), P(0.38, 1.25, 0.75), 0.025, 0xd9d8d2); // the camera mast
+    add(group, new THREE.BoxGeometry(0.24, 0.12, 0.14), 0x3b4145, 0.38, 1.3, 0.77);
+    for (const x of [0.33, 0.43]) add(group, new THREE.SphereGeometry(0.03, 8, 6), 0x5ff3ff, x, 1.3, 0.85, lit(0x5ff3ff));
+    const dish = add(group, new THREE.SphereGeometry(0.2, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2.4), 0xd9d8d2, -0.36, 0.86, 0.7);
+    dish.rotation.x = -Math.PI * 0.3;
+    add(group, new THREE.BoxGeometry(0.9, 0.03, 0.42), 0x2a3b66, 0, 0.72, -0.82).rotation.x = 0.25; // solar panel
+    for (const x of [-0.25, 0.25]) add(group, new THREE.BoxGeometry(0.16, 0.08, 0.03), 0xfff2b0, x, 0.52, 0.96, lit(0xfff2b0, 0.8));
+    for (const x of [-0.62, 0.62]) {
+      add(group, new THREE.BoxGeometry(0.06, 0.06, 1.5), 0x8d9790, x, 0.4, 0);
+      for (const z of [-0.7, 0, 0.7]) wheels.push(fatWheel(add, group, 0.22, 0.18, x, 0.22, z, 0xe8b93a));
+    }
+    mount = { y: 0.0, z: -0.25, pose: "sit", pedal: false, speed: 2.0 };
   } else if (key === "plane") {
     // A giant folded paper plane that floats along with the courier riding it.
     float = new THREE.Group();

@@ -1,21 +1,22 @@
 // The moon (moon-pick.js has its rules: size, ground, ticket, the day's stamps). Built the first time someone flies
-// there: a small grey world with craters and rocks, the landing pad and the rocket home at its top, a flag, the
-// planet hanging in the black sky, and the day's golden moon stamps.
+// there: a small grey world with craters and rocks, the landing pad and the rocket home at its top, a flag, the Moon
+// Post box, the moon frogs and their base, the planet hanging in the black sky, and the day's golden moon stamps.
 //
 // Its group sits so the moon's top is where the planet's is (the sun, the shadows and the camera are all set up for
 // that spot), and main.js turns it under the courier the way it turns the planet: `ground` is what main.js walks
 // on (radius, centre, what you stand on, what's in the way, gravity).
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, toon, mulberry32, texFromCanvas } from "./world.js";
-import { huntDay } from "./hunt-pick.js";
 import { MOON_R, MOON_GRAVITY, LANDING, MOON_SPOTS, moonHeight, moonSpots } from "./moon-pick.js";
-import { stampMesh, stampGlow } from "./stamps.js";
+import { facing, padAndRocket, postBox, createLocals, dayStamps, homePlanet } from "./space.js";
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const arr = (v) => [v.x, v.y, v.z];
 const marc = (a, b) => MOON_R * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
-/// A direction `m` metres from `d` along the tangent `t`.
+/// A direction `m` metres from `d` along the tangent `t` (a short step: straight out, then down to the ground).
 const along = (d, t, m) => d.clone().multiplyScalar(MOON_R).addScaledVector(t, m).normalize();
+/// A direction `m` metres from `d` round the moon the way of the tangent `t` (any distance).
+const round = (d, t, m) => d.clone().multiplyScalar(Math.cos(m / MOON_R)).addScaledVector(t, Math.sin(m / MOON_R)).normalize();
 
 /// A flag's cloth: the game's name on the courier red, with an envelope.
 function flagTexture() {
@@ -66,13 +67,6 @@ function baseSignTexture() {
   g.font = "400 26px Bungee, Impact, sans-serif";
   g.fillText("FROGS ONLY · COURIERS WELCOME", 256, 148, 470);
   return texFromCanvas(c);
-}
-
-/// A quaternion standing an object up at `d` (local +y) and facing it toward `target` (local +z), on the moon.
-function facing(d, target) {
-  const up = d.clone().normalize(), f = target.clone().addScaledVector(up, -target.dot(up)).normalize();
-  const x = new THREE.Vector3().crossVectors(up, f).normalize();
-  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, up, f));
 }
 
 /// An alien moon frog: green, big-eyed, with a wide smile, a silver belt and two glowing antennae. Returns the
@@ -160,33 +154,23 @@ export function createMoon(W) {
   }
 
   // ---- the landing pad, with the rocket home on it
-  const pad = new THREE.Group();
-  pad.add(mesh(new THREE.CylinderGeometry(2.1, 2.2, 0.1, 32), 0x5a5f6e));
-  const ring = mesh(new THREE.TorusGeometry(1.9, 0.05, 4, 40), 0xf2c94c);
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.06;
-  pad.add(ring);
+  const { pad, rocket } = padAndRocket(mesh);
   place(pad, top, 0.02);
-  const rocket = new THREE.Group();
-  const part = (geo, color, x, y, z, rx = 0, ry = 0) => {
-    const m = mesh(geo, color);
-    m.position.set(x, y, z);
-    m.rotation.set(rx, ry, 0);
-    rocket.add(m);
-  };
-  part(new THREE.CylinderGeometry(0.34, 0.45, 0.4, 16), 0x2a2a35, 0, 0.3, 0);
-  part(new THREE.CylinderGeometry(0.45, 0.45, 3.4, 20), 0xf2f2f5, 0, 2.2, 0);
-  part(new THREE.CylinderGeometry(0.46, 0.46, 0.26, 20), 0xd9534a, 0, 3.0, 0);
-  part(new THREE.ConeGeometry(0.45, 1.1, 20), 0xd9534a, 0, 4.45, 0);
-  part(new THREE.CylinderGeometry(0.16, 0.16, 0.05, 16), 0x8db8c6, 0, 3.5, 0.45, Math.PI / 2);
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI * 2, fin = mesh(new THREE.BoxGeometry(0.05, 0.95, 0.65), 0xd9534a);
-    fin.position.set(Math.sin(a) * 0.55, 0.85, Math.cos(a) * 0.55);
-    fin.rotation.y = a;
-    rocket.add(fin);
-  }
   place(rocket, top, 0.07, 0.6);
   circle(top.clone(), 0.75, { y1: 4.8 });
+  // You step out beside the pad with the rocket off to one side (so the camera behind you isn't looking through
+  // it), facing the planet in the sky; the Moon Post box is just ahead.
+  const arrive = along(top, north, 2.8);
+
+  // ---- the Moon Post box, where the letters for the moon frogs are
+  const postD = along(along(top, east, -3.2), north, 1.2);
+  {
+    const box = postBox(mesh, "MOON POST");
+    box.position.copy(postD).multiplyScalar(MOON_R + moonHeight(arr(postD)));
+    box.quaternion.copy(facing(postD, arrive.clone().sub(postD)));
+    group.add(box);
+    circle(postD.clone(), 0.35, { y1: 1.5 });
+  }
 
   // ---- a flag by the pad
   {
@@ -205,7 +189,7 @@ export function createMoon(W) {
   // ---- the moon base: a domed station on legs, where the moon frogs live; and the frogs themselves. Kept off the
   // stamp spots (the server knows where those are) and the pad, on ground flat enough to stand on.
   const keepOut = [{ d: top, r: 4.6 }]; // (rocks stay clear of these)
-  const frogs = [];
+  const locals = createLocals(MOON_R), residents = []; // (residents: the frogs who get letters)
   const spotDirs = MOON_SPOTS.map((s) => V(...s.d));
   let baseD = null;
   {
@@ -224,14 +208,32 @@ export function createMoon(W) {
       if (score > best) [best, baseD] = [score, d];
     }
   }
-  const frogAt = (d, name, lines, color, glowColor, look) => {
+  const frogAt = (d, name, lines, color, glowColor, look, mail = true) => {
     const f = frogMesh(color, glowColor, mesh);
     f.g.position.copy(d).multiplyScalar(MOON_R + moonHeight(arr(d)));
     f.g.quaternion.copy(facing(d, look));
     group.add(f.g);
     circle(d.clone(), 0.42, { y1: moonHeight(arr(d)) + 1.5 });
     keepOut.push({ d, r: 1.1 });
-    frogs.push({ ...f, d, name, lines, ph: rnd() * 6, inv: f.g.quaternion.clone().invert(), home: 0, talk: false });
+    locals.add(f, d, name, lines, rnd() * 6);
+    if (mail) residents.push({ name, d });
+  };
+  /// The flattest spot about `m` metres round from the pad (toward `az`, give or take `spread` radians), at least
+  /// `clear` metres from every stamp spot and clear of what's already here.
+  const spotNear = (m, az, spread, clear) => {
+    let best = null, score = -Infinity;
+    for (let i = 0; i < 400; i++) {
+      const a = az + ((i * 0.618) % 1 - 0.5) * 2 * spread, mm = m + ((i % 5) - 2) * 0.5;
+      const d = round(top, east.clone().multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)), mm);
+      const near = Math.min(...spotDirs.map((p) => marc(p, d)));
+      if (near < clear || keepOut.some((k) => marc(k.d, d) < k.r + 2)) continue;
+      const t1 = new THREE.Vector3().crossVectors(d, east).normalize(), t2 = new THREE.Vector3().crossVectors(d, t1);
+      let rough = 0;
+      for (let k = 0; k < 8; k++) rough = Math.max(rough, Math.abs(moonHeight(arr(along(d, t1.clone().multiplyScalar(Math.cos(k * 0.785)).addScaledVector(t2, Math.sin(k * 0.785)), 2))) - moonHeight(arr(d))));
+      const sc = Math.min(near, 5) - rough * 14;
+      if (sc > score) [score, best] = [sc, d];
+    }
+    return best;
   };
   if (baseD) {
     const h = moonHeight(arr(baseD)), toPad = top.clone().addScaledVector(baseD, -top.dot(baseD)).normalize();
@@ -316,7 +318,62 @@ export function createMoon(W) {
     "Your ticket checks out. Enjoy the low gravity, and mind the craters.",
     "The moon stamps are golden, like on your planet, but floatier. Some only a big jump reaches.",
     "Moon Base is that way. Tell Captain Gloop that Zorp sent you. He'll pretend he knows me.",
-  ], 0x5cbf4a, 0x7dff6a, along(top, north, 2.8));
+    "Got moon mail? The Moon Post box by the pad has letters for the frogs. Some of them live a long hop away.",
+  ], 0x5cbf4a, 0x7dff6a, along(top, north, 2.8), false);
+
+  // ---- further out: Professor Tadwick at his telescope, and Old Croak in his stone hut on the far side
+  const baseAz = baseD ? Math.atan2(baseD.dot(north), baseD.dot(east)) : 0;
+  const scopeD = spotNear(17, baseAz + Math.PI, 1.2, 2.6);
+  if (scopeD) {
+    const t1 = new THREE.Vector3().crossVectors(scopeD, north).normalize();
+    const at = along(scopeD, t1, 1.0), scope = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2, leg = mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.2, 5), 0x3b4145);
+      leg.position.set(Math.sin(a) * 0.22, 0.56, Math.cos(a) * 0.22);
+      leg.rotation.set(Math.cos(a) * 0.38, 0, -Math.sin(a) * 0.38);
+      scope.add(leg);
+    }
+    const tube = mesh(new THREE.CylinderGeometry(0.1, 0.13, 1.2, 14), 0xd9dde0);
+    tube.position.set(0, 1.28, 0.1);
+    tube.rotation.x = -0.55;
+    scope.add(tube);
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 8), new THREE.MeshBasicMaterial({ color: 0x8ffcff }));
+    lens.position.set(0, 1.79, -0.21); // (the far end of the tube)
+    scope.add(lens);
+    scope.position.copy(at).multiplyScalar(MOON_R + moonHeight(arr(at)));
+    scope.quaternion.copy(W.frameAt(at, 0.4));
+    group.add(scope);
+    circle(at, 0.32, { y1: moonHeight(arr(at)) + 1.8 });
+    keepOut.push({ d: at, r: 0.9 });
+    frogAt(scopeD, "Professor Tadwick", [
+      "I'm mapping every star in the sky. I've done eleven. There are rather a lot.",
+      "Through this telescope your planet looks tiny. You can almost see the post office. Almost.",
+      "A letter? For me? Is it from the Royal Society of Frogs? It's never from the Royal Society of Frogs.",
+    ], 0x6fbf5a, 0x8fb8ff, top);
+  }
+  const hutD = spotNear(30, baseAz + Math.PI / 2, Math.PI, 4.4) ?? spotNear(28, baseAz + Math.PI / 2, Math.PI, 3.6); // (room for the hut too)
+  if (hutD) {
+    const away = top.clone().addScaledVector(hutD, -top.dot(hutD)).normalize().negate(), at = along(hutD, away, 2.0);
+    const hut = new THREE.Group();
+    hut.add(mesh(new THREE.SphereGeometry(1.15, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), 0x9b968b));
+    const door = mesh(new THREE.CircleGeometry(0.36, 16), 0x2a2f3a);
+    door.position.set(0, 0.36, 1.13);
+    hut.add(door);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd75e }));
+    lamp.position.set(0.5, 0.82, 0.95);
+    hut.add(lamp);
+    blinkers.push({ m: lamp, every: 2.4, on: 2.0 });
+    hut.position.copy(at).multiplyScalar(MOON_R + moonHeight(arr(at)) - 0.06);
+    hut.quaternion.copy(facing(at, hutD.clone().sub(at)));
+    group.add(hut);
+    circle(at, 1.15, { wall: { h: 1.2 } });
+    keepOut.push({ d: at, r: 1.8 });
+    frogAt(hutD, "Old Croak", [
+      "Nobody comes round the far side. That's why I live here. And yet, here you are.",
+      "Back in my day we delivered letters by tongue. Very sticky. Very fast.",
+      "From up here the planet's always below the hill. I prefer the quiet. Don't tell anyone where I live.",
+    ], 0x4e9a4a, 0xffb35c, top);
+  }
 
   // ---- rocks, kept off the pad, the stamp spots and each other
   {
@@ -339,23 +396,9 @@ export function createMoon(W) {
   }
 
   // ---- the planet, hanging in the sky over the landing site
-  {
-    const geo = new THREE.SphereGeometry(20, 40, 28);
-    const pos = geo.attributes.position, col = [], v = new THREE.Vector3(), c = new THREE.Color();
-    const sea = new THREE.Color(0x4fa3c7), land = new THREE.Color(0x7cc36a), sand = new THREE.Color(0xe8d8a0), cloud = new THREE.Color(0xf4f8f6);
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).normalize();
-      const n = Math.sin(v.x * 4.1 + 1.3) * Math.sin(v.y * 3.7 - 0.4) * Math.sin(v.z * 4.6 + 2.1) + 0.35 * Math.sin(v.x * 9 + v.z * 7);
-      const cl = Math.sin(v.x * 7 - v.y * 5 + 0.7) * Math.sin(v.z * 6 + v.y * 4);
-      c.copy(n > 0.12 ? land : n > 0.05 ? sand : sea);
-      if (cl > 0.55) c.lerp(cloud, 0.85);
-      col.push(c.r, c.g, c.b);
-    }
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-    const planet = new THREE.Mesh(geo, toon(0xffffff, { vertexColors: true }));
-    planet.position.copy(V(-0.86, 0.42, -0.3).normalize()).multiplyScalar(82);
-    group.add(planet);
-  }
+  const planet = homePlanet(20);
+  planet.position.copy(V(-0.86, 0.42, -0.3).normalize()).multiplyScalar(82);
+  group.add(planet);
 
   // ---- a flying saucer, circling the moon over the pad and the base, its lights blinking and its beam pulsing
   const ufo = new THREE.Group();
@@ -390,30 +433,8 @@ export function createMoon(W) {
   const ufoU = top.clone(), ufoV = (baseD ?? along(top, east, 7)).clone().addScaledVector(top, -(baseD ?? along(top, east, 7)).dot(top)).normalize();
 
   // ---- the day's golden moon stamps
-  let day = -1, found = new Set(), stamps = [];
-  const glow = stampGlow();
-  function layOut() {
-    for (const s of stamps) {
-      group.remove(s.mesh);
-      W.noNormals.splice(W.noNormals.indexOf(s.halo), 1);
-    }
-    day = huntDay();
-    stamps = moonSpots(day).map((i) => {
-      const sp = MOON_SPOTS[i], d = V(...sp.d), m = stampMesh(), halo = new THREE.Sprite(glow);
-      halo.scale.set(1.3, 1.3, 1);
-      m.add(halo);
-      m.scale.setScalar(1.6);
-      W.noNormals.push(halo);
-      place(m, d, sp.h, rnd() * 6);
-      m.visible = !found.has(i);
-      return { id: i, d, h: sp.h, mesh: m, halo, base: m.position.clone(), ph: rnd() * 6 };
-    });
-  }
-  layOut();
+  const stamps = dayStamps(W, group, place, { R: MOON_R, spots: MOON_SPOTS, pick: moonSpots }, rnd);
 
-  // You step out beside the pad with the rocket off to one side (so the camera behind you isn't looking through
-  // it), facing the planet in the sky.
-  const arrive = along(top, north, 2.8);
   return {
     group,
     /// What main.js walks on here.
@@ -424,68 +445,33 @@ export function createMoon(W) {
     /// Where you step out (beside the pad, facing away from it) and the rocket home (stand within `reach`).
     arrival: { d: arrive, tangent: east.clone().negate() },
     rocket: { d: top.clone(), reach: 2.9 },
+    /// The Moon Post box (stand within `reach` with an empty bag for letters), and who the letters are for.
+    post: { d: postD, reach: 1.8, name: "Moon Post box" },
+    residents,
+    thanks: [
+      "A letter! Nobody ever writes to the moon.",
+      "Ribbit! It even has a real stamp on it.",
+      "All the way from Courier World? I'll stick it on the window.",
+      "Mail on the moon. Best day this century.",
+      "You hopped all this way for me? Ribbit ribbit.",
+    ],
     /// Moon stamps found today (the server's record, for signed-in couriers).
-    setFound(d, ids) {
-      if (d !== day) return;
-      found = new Set(ids);
-      for (const s of stamps) s.mesh.visible = !found.has(s.id);
-    },
-    get found() { return stamps.filter((s) => found.has(s.id)).length; },
+    setFound: (d, ids) => stamps.setFound(d, ids),
+    get found() { return stamps.found; },
+    get out() { return stamps.out; },
     /// The moon frog within `reach` metres of `me`, nearest first, to talk to: { name, line(), talk(on) }, or null.
-    nearestFrog(me, reach = 2.4) {
-      let best = null;
-      for (const f of frogs) {
-        const dd = marc(f.d, me);
-        if (dd < reach && (!best || dd < best.dd)) best = { f, dd };
-      }
-      if (!best) return null;
-      const f = best.f;
-      return { name: f.name, line: () => f.lines[Math.floor(Math.random() * f.lines.length)], talk: (on) => (f.talk = on) };
-    },
-    get out() { return stamps.length; },
-    /// Spin and bob the stamps, and pick up any the courier reaches (`me`: where they are, moon-local; `chest`:
-    /// how high). Returns the spot picked up, or null.
+    nearestLocal: (me, reach) => locals.nearest(me, reach),
+    /// The frogs and the saucer, and the stamps: they spin and bob, and any the courier reaches (`me`: where they
+    /// are, moon-local; `chest`: how high) is picked up. Returns the spot picked up, or null.
     update(dt, t, { me, chest, active }) {
-      if (huntDay() !== day) {
-        found = new Set();
-        layOut();
-      }
-      // The frogs: breathe, blink, glow, and turn to watch the courier when they're near (hopping while they talk).
-      const mp = me.clone().multiplyScalar(MOON_R + 1), v = new THREE.Vector3();
-      for (const f of frogs) {
-        const near = marc(f.d, me) < 7;
-        let yaw = f.home + 0.35 * Math.sin(t * 0.3 + f.ph);
-        if (near) {
-          v.copy(mp).sub(f.g.position).applyQuaternion(f.inv);
-          yaw = Math.atan2(v.x, v.z);
-        }
-        let dy = yaw - f.body.rotation.y;
-        dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-        f.body.rotation.y += dy * (1 - Math.exp(-dt * 4));
-        f.body.position.y = f.talk ? Math.abs(Math.sin(t * 6 + f.ph)) * 0.18 : 0;
-        f.body.scale.y = 1 + 0.035 * Math.sin(t * 2.6 + f.ph);
-        const shut = (t + f.ph) % 4.3 < 0.14;
-        for (const e of f.eyes) e.scale.y = shut ? 0.12 : 1;
-        for (const tp of f.tips) tp.scale.setScalar(1 + 0.3 * Math.sin(t * 4 + f.ph));
-      }
+      locals.update(dt, t, me);
       for (const b of blinkers) b.m.visible = (t + (b.ph ?? 0)) % b.every < b.on;
       // The saucer: round the moon over the pad and the base, bobbing and spinning, its beam pulsing.
       const a = t * ((Math.PI * 2) / 55), dir = ufoU.clone().multiplyScalar(Math.cos(a)).addScaledVector(ufoV, Math.sin(a)).normalize();
       ufo.position.copy(dir).multiplyScalar(MOON_R + 6.4 + Math.sin(t * 0.9) * 0.45);
       ufo.quaternion.copy(W.frameAt(dir, t * 0.7));
       ufo.userData.beam.material.opacity = 0.08 + 0.09 * (0.5 + 0.5 * Math.sin(t * 2.6));
-      let got = null;
-      for (const s of stamps) {
-        if (!s.mesh.visible) continue;
-        s.mesh.rotateY(dt * 1.8);
-        s.mesh.position.copy(s.base).addScaledVector(s.d, Math.sin(t * 2.2 + s.ph) * 0.1);
-        if (active && got === null && marc(s.d, me) < 0.85 && Math.abs(chest - s.h) < 0.85) {
-          s.mesh.visible = false;
-          found.add(s.id);
-          got = s.id;
-        }
-      }
-      return got;
+      return stamps.update(dt, t, me, chest, active);
     },
   };
 }

@@ -111,15 +111,19 @@
     <p id="orbNote" class="orb-note">Ads are paid placements, not endorsements by Courier World. Always do your own research, and never share your seed phrase or connect your wallet to a site you don't trust.</p>
   </div>
 
-  <div id="moonCard" class="orb-card moon-card card" hidden role="dialog" aria-labelledby="moonTitle">
-    <button id="moonClose" class="pbtn orb-close" type="button" aria-label="Close">✕</button>
-    <p class="orb-tag">🚀 Moon Express · neon district</p>
-    <h3 id="moonTitle">Fly to the moon</h3>
-    <p id="moonText" class="orb-text"></p>
-    <div class="orb-links"><button id="moonGo" class="pbtn primary" type="button"></button></div>
-    <p id="moonNote" class="orb-note"></p>
+  <div id="tripCard" class="orb-card trip-card card" hidden role="dialog" aria-labelledby="tripTitle">
+    <button id="tripClose" class="pbtn orb-close" type="button" aria-label="Close">✕</button>
+    <p class="orb-tag">🚀 Space Express · neon district</p>
+    <div id="tripPick" class="trip-pick" role="tablist" aria-label="Where to">
+      <button class="pbtn" type="button" role="tab" data-trip="moon">🌙 Moon · 100</button>
+      <button class="pbtn" type="button" role="tab" data-trip="mars">🔴 Mars · 200</button>
+    </div>
+    <h3 id="tripTitle">Fly to the moon</h3>
+    <p id="tripText" class="orb-text"></p>
+    <div class="orb-links"><button id="tripGo" class="pbtn primary" type="button"></button></div>
+    <p id="tripNote" class="orb-note"></p>
   </div>
-  <div id="moonFade" class="moon-fade" hidden><span id="moonFadeText"></span></div>
+  <div id="flightFade" class="flight-fade" hidden><span id="flightFadeText"></span></div>
 
   <aside id="office" class="office card" hidden>
     <div class="ohead"><h2>Post office</h2><button id="officeClose" class="pbtn" aria-label="Close">✕</button></div>

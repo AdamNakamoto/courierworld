@@ -416,7 +416,7 @@ const POST_FRAG = /* glsl */ `
   uniform mat4 invProj;
   uniform mat3 camRot, worldInv;
   uniform vec3 horizon, zenith, cloudShade, cloudLight, ink;
-  uniform float stars, overcast, space;
+  uniform float stars, overcast, space, mars, dust;
   varying vec2 vUv;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -461,7 +461,11 @@ const POST_FRAG = /* glsl */ `
     vec3 sp = mix(vec3(0.03, 0.035, 0.07), vec3(0.06, 0.05, 0.12), smoothstep(-0.2, 0.8, dW.y));
     sp = mix(sp, vec3(1.0, 0.97, 0.9), step(0.9955, hash3(floor(dL * 260.0))));
     sp = mix(sp, vec3(0.75, 0.82, 1.0), step(0.9988, hash3(floor(dL * 90.0 + 7.0))));
-    return mix(c, sp, space);
+    // Mars: a butterscotch sky, pinker overhead, a few faint stars, and thick orange dust in a storm.
+    vec3 ms = mix(vec3(0.86, 0.57, 0.39), vec3(0.6, 0.34, 0.29), smoothstep(-0.15, 0.85, dW.y));
+    ms = mix(ms, vec3(1.0, 0.95, 0.88), step(0.9986, hash3(floor(dL * 240.0))) * 0.25 * (1.0 - dust));
+    ms = mix(ms, vec3(0.84, 0.58, 0.40), dust * 0.85);
+    return mix(mix(c, sp, space), ms, mars);
   }
 
   void main() {
@@ -489,7 +493,11 @@ const POST_FRAG = /* glsl */ `
     vec3 base;
     // Over the sky the colour pass is black except for additive rain streaks, which show through.
     if (raw >= 0.99999) base = sky(vUv) + texture2D(tColor, vUv).rgb;
-    else base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45 * (1.0 - space));
+    else {
+      base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45 * (1.0 - space - mars));
+      // On Mars, a dusty haze far off, and close in when a storm blows.
+      base = mix(base, vec3(0.86, 0.6, 0.42), mars * (smoothstep(10.0, 45.0, dist) * 0.3 + smoothstep(2.0, 20.0, dist) * 0.75 * dust));
+    }
     gl_FragColor = vec4(mix(base, ink, edge * 0.9), 1.0);
     #include <colorspace_fragment>
   }`;
@@ -1327,6 +1335,8 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       cloudLight: { value: new THREE.Color(0xd5efe6) },
       ink: { value: new THREE.Color(0x283033) },
       space: { value: 0 },
+      mars: { value: 0 },
+      dust: { value: 0 },
       stars: { value: 0 },
       overcast: { value: 0 },
     },
@@ -1408,6 +1418,14 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       WATER.light.value *= 1 - 0.2 * rain;
     }
     u.overcast.value = rain;
+    // Mars: warm light from a butterscotch sky, dimmer in a dust storm.
+    if (u.mars.value > 0) {
+      hemi.color.lerp(ca.set(0xf6cfaa), 0.65);
+      hemi.groundColor.lerp(ca.set(0xa0583a), 0.7);
+      sun.color.lerp(ca.set(0xffdcb8), 0.5);
+      hemi.intensity *= 1 - 0.12 * u.dust.value;
+      sun.intensity *= 1 - 0.5 * u.dust.value;
+    }
   }
 
   // ---------------------------------------------------------------- rain
@@ -1523,11 +1541,16 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
       resize();
     },
-    /// Space overhead instead of the sky (on the moon), its stars turning with `frame` (the moon's group).
-    setSpace(on, frame = null) {
-      post.uniforms.space.value = on ? 1 : 0;
-      skyFrame = on && frame ? frame : world;
+    /// What's overhead: "sky" (the planet's), "space" (on the moon) or "mars", its stars turning with `frame` (the
+    /// moon's or Mars's group).
+    setSky(kind, frame = null) {
+      post.uniforms.space.value = kind === "space" ? 1 : 0;
+      post.uniforms.mars.value = kind === "mars" ? 1 : 0;
+      post.uniforms.dust.value = 0;
+      skyFrame = kind !== "sky" && frame ? frame : world;
     },
+    /// How thick a dust storm is on Mars, 0..1 (applied with the next setTimeOfDay).
+    setDust(k) { post.uniforms.dust.value = k; },
     /// The rocket pad in the neon district ({ d, reach }), where the moon flights leave from, or null.
     rocket: rocketPad,
     /// Cut a see-through path from the camera to this point (world space), or pass null to stop.
