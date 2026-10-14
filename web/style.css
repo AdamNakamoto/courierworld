@@ -60,6 +60,8 @@ canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block;
 .office .hunt .on { margin: 0 0 6px; font: 400 15px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; color: #b8860b; }
 .office .hunt .drop-card { margin: 6px 0 8px; padding: 7px 10px; border: 2px solid var(--ink); border-radius: 3px; background: #fff8dc; }
 .office .hunt .drop-card .note { margin: 2px 0; }
+.office .hunt .bonus-card { background: #f3fbf6; }
+.office .hunt .bonus-card .bonus-why { color: var(--ink); }
 .hunt-bar { position: relative; height: 22px; margin: 6px 0 4px; border: 2px solid var(--ink); border-radius: 3px; background: #ece4cc; overflow: hidden; }
 .hunt-bar i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--yellow); }
 .hunt-bar span { position: relative; display: block; text-align: center; font: 400 12px/18px Bungee, Impact, sans-serif; letter-spacing: .03em; }
@@ -244,6 +246,12 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .online { position: absolute; top: 62px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(.8deg); }
 .online b { font-size: 20px; }
 @media (max-width: 640px) { .online { top: 110px; } } /* below the compass, which drops to the second row on phones */
+/* The companion bonus: today's minutes with your companion, under the online count (dimmed while they aren't counting). */
+.bonus-chip { position: absolute; top: 108px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(-.6deg); cursor: pointer; }
+.bonus-chip b { font-size: 20px; }
+.bonus-chip.off { opacity: .6; }
+@media (max-width: 640px) { .bonus-chip { top: 156px; left: auto; right: 64px; } } /* (the skins mint button has the spot under it on phones) */
+@media (max-width: 345px) { .bonus-chip { padding: 2px 7px; font-size: 14px; } .bonus-chip b { font-size: 16px; } .bonus-chip .unit { display: none; } } /* (clear of the mint button) */
 .sounds-btn.off svg path:last-child { opacity: 0; }
 .office-btn kbd { font: inherit; font-size: 11px; border: 2px solid var(--ink); border-radius: 3px; padding: 1px 4px; margin-left: 6px; background: var(--paper); }
 .office {
@@ -488,6 +496,7 @@ body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card 
 .comp-info { display: flex; flex-direction: column; min-width: 0; font-size: 16px; line-height: 1.15; }
 .comp-info b { font: 400 13px/1.25 Bungee, Impact, sans-serif; letter-spacing: .02em; }
 .comp-blurb { font-size: 15px; color: var(--ink); }
+.comp-bonus { font-size: 15px; color: #8a6d1a; }
 .office .comp-info .muted { font-size: 15px; }
 .comp-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
 .comp-tag { font: 400 10px/1 Bungee, sans-serif; background: #ece4cc; color: var(--ink); padding: 3px 5px; border: 1.5px solid var(--ink); }

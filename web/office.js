@@ -6,6 +6,7 @@ import { TRIPS } from "./trips.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
+import { BONUS_DROPS, BONUS_MINUTES, BONUS_POOL_FORM, bonusCap, isBonusDrop } from "./bonus-rules.js";
 import { renderStamp } from "./portrait.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
@@ -40,16 +41,33 @@ const firstSentence = (text) => {
   return m ? text.slice(0, m.index + 1) : text;
 };
 
-/// `hunt`: the treasure hunt's side in the game ({ state(), running(), signIn(), vouchers() }), once TokenDrops is
-/// deployed.
+/// The companion bonus: why your minutes aren't counting now (the room's `why`), in plain words.
+const BONUS_WHY = {
+  signin: "Sign in to the hunt and your minutes start counting.",
+  companion: "Have one of your companions follow you: minutes count only while it does.",
+  wallet: "The wallet you're logged in with isn't the one signed in to the hunt: sign in again with this one.",
+  office: "You need an open post office to earn the bonus and to claim it.",
+  full: `That's today's ${BONUS_MINUTES} minutes in. More count from 00:00 UTC.`,
+  left: "The companion following you left your wallet today, so its minutes don't count today.",
+  strikes: "Your moves looked off this session, so minutes stopped counting: reload the game.",
+  warmup: "Keep moving a moment and your minutes start counting.",
+  season: "No bonus season is running today.",
+  checking: "Checking the chain: a moment.",
+};
+export const bonusWhy = (why) => (typeof BONUS_WHY[why] === "string" ? BONUS_WHY[why] : "Your minutes aren't counting right now.");
+/// Names as a list: "Cat", "Cat and Dog", "Cat, Dog and Frog".
+const listOf = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "");
+
+/// `hunt`: the treasure hunt's side in the game ({ state(), running(), signIn(), vouchers(), bonus() }), once TokenDrops
+/// is deployed. `bonus()` is the room's last word on the companion bonus (see net.js), or null.
 /// `onWearSkin(skin)` dresses you in a revealed skin ({ id, design }), or back in your courier (null);
 /// `wearing()` is the id of the skin you have on, if any. `username`: your name on the planet (username.js).
 /// `onLaunchpad()` opens the Launchpad (when it's deployed).
-/// `onCompanion(id)` has your companion of kind `id` follow you (null sends it home); `companionShown()` is the kind
-/// following you, if any. (Only once the Courier Companions contract is deployed.)
+/// `onCompanion(id, on)` has your companion of kind `id` follow you (`on`) or go home; `companionsShown()` is the kinds
+/// following you (as many as you like, one of each kind you own). (Only once the Courier Companions contract is deployed.)
 export function createOffice(chain, {
   onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null, onLaunchpad = null,
-  onCompanion = () => {}, companionShown = () => null,
+  onCompanion = () => {}, companionsShown = () => [],
 }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
@@ -61,9 +79,18 @@ export function createOffice(chain, {
   let huntInfo = null, huntAt = 0; // the TokenDrops contract (today's drops, what you'd be paid, the owner), every few seconds
   // The treasury's "start a drop" form, while it's typed.
   const dropForm = { token: "", perCoin: "", spots: "10", maxPerWallet: "5", dailyCoins: "100", days: "7", amount: "", topUp: "" };
+  // The treasury's "companion bonus pool" form, and the drop number of the pool last started (to add to BONUS_DROPS;
+  // remembered in this browser until the game lists it).
+  const bonusForm = { pool: "", days: "30", amount: "" };
+  let bonusMade = null;
+  try {
+    const n = Number(localStorage.getItem("courier:bonusMade") ?? NaN);
+    if (Number.isInteger(n) && !isBonusDrop(n)) bonusMade = n;
+    else localStorage.removeItem("courier:bonusMade");
+  } catch {}
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   let naming = false, nameDraft = ""; // picking a name, and what's typed so far
-  let followNext = null; // a companion just bought: it follows you once the chain shows it's yours, if none is yet
+  let followNext = null; // a companion just bought: it joins those following you once the chain shows it's yours
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
   let queue = Promise.resolve(); // stamp renders, one at a time
@@ -90,7 +117,7 @@ export function createOffice(chain, {
       onSnapshot?.(snap);
       // (Called only once the snapshot shows it's yours, so the game, which has the snapshot first, agrees.)
       if (followNext != null && snap.companions?.owned[followNext]) {
-        if (companionShown() == null) onCompanion(followNext);
+        onCompanion(followNext, true);
         followNext = null;
       }
       // The admin view, for the wallet the contracts pay; refreshed every few seconds while the panel is open.
@@ -120,12 +147,29 @@ export function createOffice(chain, {
     const [running, own] = await Promise.all([chain.drops.running(day), chain.drops.owner()]);
     const mine = st?.wallet && snap?.account && st.wallet.toLowerCase() === snap.account.toLowerCase() ? st : null;
     for (const d of running) {
-      // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop.)
-      const n = d.isStamp ? (mine?.found.length ?? 0) + (mine?.moon?.length ?? 0) + (mine?.mars?.length ?? 0) : mine?.coins?.[d.id]?.length ?? 0;
+      // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop. The companion bonus's pays
+      // for play, not finds: below.)
+      const n = d.isBonus ? 0 : d.isStamp ? (mine?.found.length ?? 0) + (mine?.moon?.length ?? 0) + (mine?.mars?.length ?? 0) : mine?.coins?.[d.id]?.length ?? 0;
       d.foundToday = n;
       d.pay = n ? (await chain.drops.claimable(d.id, day, Math.min(n, 65535)))[1] : 0n;
     }
     const out = { day, running, ...own };
+    // Whether a companion bonus season is running: today's play is paid tomorrow, by a listed drop with $STAMP left.
+    out.bonusLive = false;
+    for (const id of BONUS_DROPS) {
+      const d = await chain.drops.drop(id).catch(() => null);
+      if (d && d.isStamp && d.startDay <= day + 1 && day + 1 <= d.endDay && d.left >= d.perCoin) out.bonusLive = true;
+    }
+    // The companion bonus: the last two settled days' shares (each paid by its season's drop, under the day after it
+    // was played), if they're yours.
+    const paid = BONUS_DROPS.length && mine ? hunt.bonus?.()?.paid : null;
+    out.bonus = [];
+    for (const p of Array.isArray(paid) ? paid : []) {
+      if (!isBonusDrop(p?.drop) || !Number.isInteger(p.payDay) || !Number.isInteger(p.coins) || p.coins <= 0) continue;
+      const pay = (await chain.drops.claimable(p.drop, p.payDay, Math.min(p.coins, 65535)))[1];
+      const claimed = !pay && Number(await chain.drops.claimedOn(p.drop, p.payDay)) >= p.coins;
+      out.bonus.push({ drop: p.drop, payDay: p.payDay, coins: p.coins, pay, claimed });
+    }
     if (own.isOwner) {
       out.all = await chain.drops.all(day);
       const launched = chain.pad ? await chain.pad.tokens((await chain.pad.info()).count) : [];
@@ -138,11 +182,18 @@ export function createOffice(chain, {
   async function nothingToClaim(vouchers) {
     for (const v of vouchers) {
       const d = await chain.drops.dayOf(v.drop, v.day), when = v.day === huntDay() ? "today" : "yesterday";
+      // (A companion bonus voucher is for the day before its day, and a wallet's whole share: if it's not out of
+      // $STAMP, it's been claimed.)
+      if (isBonusDrop(v.drop)) {
+        if (d.left < d.perCoin) return "The companion bonus has paid out all its $STAMP for now.";
+        continue;
+      }
       if (d.left < d.perCoin) return `The $${d.symbol} drop has paid out all its tokens.`;
       if (d.mine >= d.maxPerWallet) return `You've claimed ${when}'s ${d.maxPerWallet} $${d.symbol} coins, the most a wallet gets a day. More come out at 00:00 UTC.`;
       if (d.paid >= Number(d.dailyCoins)) return `All ${d.dailyCoins} of ${when}'s $${d.symbol} coins have been claimed: each day pays a set number across everyone, first come first served. New coins come out at 00:00 UTC: claim soon after you find them.`;
     }
-    return vouchers.length ? "Nothing new to claim: find more golden stamps or coins first." : "Nothing to claim yet: find golden stamps or coins first.";
+    const bonus = huntInfo?.bonusLive ? ", or play with your companion following you (that's paid the next day)" : "";
+    return vouchers.length ? `Nothing new to claim: find more golden stamps or coins first${bonus}.` : `Nothing to claim yet: find golden stamps or coins first${bonus}.`;
   }
 
   async function run(label, fn) {
@@ -175,12 +226,25 @@ export function createOffice(chain, {
       <label class="field">Days (from today)<input data-act="dropDays" value="${esc(f.days)}" inputmode="numeric"></label>
       <label class="field">Tokens to put in${dropSuggest() ? ` <span class="muted">(${fmt(dropSuggest(), 0)} covers every day's limit)</span>` : ""}<input data-act="dropAmount" value="${esc(f.amount)}" inputmode="decimal" placeholder="${dropSuggest() ? formatEther(dropSuggest()) : ""}"></label>
       <button class="pbtn wide" data-act="dropCreate" ${busy ? "disabled" : ""}>Start the drop</button>`;
+    // The companion bonus's pool (bonus-rules.js): a $STAMP drop at 1 $STAMP a coin, starting tomorrow, so there's
+    // time to set it in the game before it runs. (Shown once the bonus is switched on: BONUS_POOL_FORM.)
+    const b = bonusForm, suggest = bonusSuggest();
+    if (BONUS_POOL_FORM) html += `<h4>Companion bonus pool <span class="muted">extra $STAMP for play</span></h4>
+      <label class="field">$STAMP a day, everyone together (24 to 10,000)<input data-act="bonusPool" value="${esc(b.pool)}" inputmode="numeric" placeholder="e.g. 500"></label>
+      <label class="field">Days (from tomorrow)<input data-act="bonusDays" value="${esc(b.days)}" inputmode="numeric"></label>
+      <label class="field">$STAMP to put in${suggest ? ` <span class="muted">(${fmt(suggest, 0)} covers every day)</span>` : ""}<input data-act="bonusAmount" value="${esc(b.amount)}" inputmode="decimal" placeholder="${suggest ? formatEther(suggest) : ""}"></label>
+      <button class="pbtn wide" data-act="bonusCreate" ${busy ? "disabled" : ""}>Start the bonus pool</button>
+      <p class="note">It starts tomorrow (UTC): today's play is the first it pays for, so start it the day before a season. The game pays the bonus from it only once its drop number is added to BONUS_DROPS in web/bonus-rules.js and the room and the site are deployed. Do both before tomorrow, or the game will treat it as the golden stamps' drop. To follow one season with the next, start the next on the current one's last day.</p>
+      ${bonusMade != null ? `<p class="note"><b>Your new pool is drop #${bonusMade}: add ${bonusMade} to BONUS_DROPS in web/bonus-rules.js and deploy the room and the site before 00:00 UTC.</b></p>` : ""}`;
     if (h.all?.length) {
       html += `<h4>Drops</h4>`;
+      const goldenId = h.running.find((d) => d.isStamp && !d.isBonus)?.id; // (the one that pays the golden stamps today)
       for (const d of h.all) {
         const live = d.startDay <= h.day && h.day <= d.endDay, over = h.day > d.endDay + 1 || d.endDay < d.startDay;
-        html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)} · ${fmt(d.perCoin, 0)}/coin · ${live ? `running · paid today ${d.paidToday}/${d.dailyCoins}` : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
-          <div class="row2">${live || h.day < d.startDay ? `<button class="pbtn" data-act="dropEnd" data-id="${d.id}" ${busy ? "disabled" : ""}>End</button>` : ""}
+        const what = d.isBonus ? " · companion bonus" : d.id === bonusMade ? " · companion bonus (add it to BONUS_DROPS)"
+          : d.id === goldenId ? " · golden stamps" : d.isStamp && h.day < d.startDay ? " · $STAMP, not running yet" : "";
+        html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)}${what} · ${fmt(d.perCoin, 0)}/coin · ${live ? `running · paid today ${d.paidToday}/${d.dailyCoins}` : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
+          <div class="row2">${live || h.day < d.startDay ? `<button class="pbtn" data-act="dropEnd" data-id="${d.id}" ${busy ? "disabled" : ""} ${d.isBonus ? `title="Today's play is the last it pays for (paid tomorrow)"` : ""}>End</button>` : ""}
           ${!over ? `<button class="pbtn" data-act="dropTopUp" data-id="${d.id}" data-token="${d.token}" ${busy ? "disabled" : ""}>Top up</button>` : ""}
           ${(over || h.paused) && d.left > 0n ? `<button class="pbtn" data-act="dropWithdraw" data-id="${d.id}" ${busy ? "disabled" : ""}>Withdraw</button>` : ""}</div>`;
       }
@@ -188,6 +252,41 @@ export function createOffice(chain, {
     }
     html += `<button class="pbtn wide" data-act="dropPause" ${busy ? "disabled" : ""}>${h.paused ? "Resume claims" : "Pause all claims"}</button>
       <p class="note">${h.paused ? "Claims are paused: you can withdraw any drop." : "Watch each drop's paid-today count: if it fills up unusually fast (the server's key leaked, say), pause. Claims stop at once and you can take every drop's tokens back. A drop can lose at most its daily cap a day."}</p></div>`;
+    return html;
+  }
+  /// $STAMP that covers the companion bonus pool for all its days.
+  function bonusSuggest() {
+    try {
+      const pool = BigInt(bonusForm.pool.replace(/,/g, "") || "0"), days = BigInt(bonusForm.days || "0");
+      return pool > 0n && days > 0n ? parseEther("1") * pool * days : 0n;
+    } catch {
+      return 0n;
+    }
+  }
+  /// The treasure hunt's card for the companion bonus. `b`: the room's word on it; `h`: today's drops (treasure());
+  /// `st`: the room's view of you, if it's for the wallet logged in now.
+  function bonusCard(b, h, st) {
+    const max = Number(b.max) || BONUS_MINUTES, minutes = Math.min(max, Math.max(0, Number(b.minutes) || 0));
+    const meta = companionOf(b.kind), coins = Number(b.coins) || 0, pool = Number(b.pool) || 0;
+    // Out of season (or the pool has paid out), only what's still to claim.
+    const shares = st && Array.isArray(h.bonus) ? h.bonus.filter((x) => x.payDay === h.day || x.payDay === h.day - 1) : [];
+    const shareRows = shares.map((x) => `<div class="kv"><span>${x.payDay === h.day ? "Yesterday's bonus" : "The day before yesterday's bonus (claim today)"}</span><b>${x.pay ? `${fmt(x.pay, 0)} $STAMP to claim` : `${x.coins.toLocaleString()} $STAMP${x.claimed ? " · claimed" : ""}`}</b></div>`).join("");
+    if (!b.live || b.dry) {
+      return `<div class="drop-card bonus-card"><div class="kv"><span>${meta ? meta.icon : "🐾"} <b>Companion bonus</b></span></div>
+        <p class="note">${b.live ? "This season's pool has paid out for now." : "No bonus season is running today."}</p>${shareRows}</div>`;
+    }
+    let html = `<div class="drop-card bonus-card"><div class="kv"><span>${meta ? meta.icon : "🐾"} <b>Companion bonus</b></span><b>${minutes}/${max} min</b></div>
+      <div class="hunt-bar"><i style="width:${((100 * minutes) / max).toFixed(1)}%"></i><span>${minutes} of ${max} minutes played today</span></div>`;
+    if (coins > 0) html += `<p class="note">About ${coins.toLocaleString()} $STAMP so far, paid tomorrow.</p>`;
+    if (meta) html += `<p class="note">${esc(meta.name)} is following you: ${esc(meta.tier)} companions earn up to ${bonusCap(meta.id)} $STAMP a day.</p>`;
+    // (Kinds that left the wallet today are named: that says "left" for the one following you too.)
+    const lost = [...new Set(Array.isArray(b.lost) ? b.lost : [])].map((k) => companionOf(Number(k))).filter(Boolean);
+    if (b.why != null && !(b.why === "left" && lost.length)) html += `<p class="note bonus-why">${esc(bonusWhy(b.why))}</p>`;
+    if (lost.length) html += `<p class="note bonus-why">${esc(listOf(lost.map((c) => c.name)))} left your wallet today, so ${lost.length > 1 ? "their" : "its"} minutes don't count today.</p>`;
+    if (pool > 0) html += `<p class="note">If everyone together earns more than the day's ${pool.toLocaleString()} $STAMP, it's shared in proportion to what each earned.</p>`;
+    // The settled days' shares (each paid under the day after it was played), claimed with the treasure below.
+    html += shareRows;
+    html += `<p class="note">Minutes count while you move about with your own companion following you, signed in to the hunt. Claim each day's bonus the next day or the one after.</p></div>`;
     return html;
   }
   /// Tokens that cover a drop's daily limit for all its days.
@@ -314,8 +413,10 @@ export function createOffice(chain, {
     if (s.game && chain.drops && hunt && huntInfo) {
       // The room's view of you counts only if it's for the wallet logged in now.
       const h = huntInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
-      const golden = h.running.find((d) => d.isStamp), coins = h.running.filter((d) => !d.isStamp);
+      const golden = h.running.find((d) => d.isStamp && !d.isBonus), coins = h.running.filter((d) => !d.isStamp);
       const total = h.running.reduce((m, d) => (d.pay ? m.set(d.symbol, (m.get(d.symbol) ?? 0n) + d.pay) : m), new Map());
+      // (The companion bonus's drops pay nothing for finds, so their shares are only counted here.)
+      for (const x of h.bonus ?? []) if (x.pay) total.set("STAMP", (total.get("STAMP") ?? 0n) + x.pay);
       html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
       if (coins.some((d) => d.left >= d.perCoin)) html += `<p class="on">🪙 The hunt is on! New coins in ${newSpotsIn()}</p>`;
       html += `<div class="kv"><span>★ Golden stamps${golden ? ` · ${fmt(golden.perCoin, 0)} $STAMP each` : " · just for fun today"}</span><b>${st ? `${st.found.length}/${HUNT_STAMPS}` : "–"}</b></div>`;
@@ -334,6 +435,8 @@ export function createOffice(chain, {
         }
         html += `<p class="note">Day ${h.day - d.startDay + 1} of ${d.endDay - d.startDay + 1} · ${compact(d.left)} ${sym} left in the drop</p></div>`;
       }
+      const bonus = BONUS_DROPS.length ? hunt.bonus?.() : null;
+      if (bonus?.on && (bonus.live || h.bonus?.length)) html += bonusCard(bonus, h, st);
       if (!coins.length && !golden) html += `<p class="note">No paid drops today: golden stamps are just for fun until the treasury runs a drop.</p>`;
       if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get paid for the golden stamps and coins you find.</p>`;
       else if (!s.office?.open) html += `<p class="note">Open a post office to claim treasure.</p>`;
@@ -476,13 +579,18 @@ export function createOffice(chain, {
 
     // ---- Courier Companions: friends that follow your courier around, bought only with $STAMP (once deployed)
     if (s.companions) {
-      const c = s.companions, shown = companionShown(), onChain = new Map(c.kinds.map((k) => [k.id, k]));
+      const c = s.companions, shown = companionsShown(), onChain = new Map(c.kinds.map((k) => [k.id, k]));
       let needStamp = false; // some kind you could buy costs more $STAMP than you have
       html += `<section class="companions"><h3>Companions <span class="muted">they follow you everywhere</span></h3>
         <p class="note">Pets, space buddies and rarer friends that walk or fly beside your courier, on the planet, the moon and Mars. Everyone in the game sees yours. Each kind is limited, and paid only in $STAMP, all of it to the treasury.</p>`;
-      // Following one you no longer hold (sold, or another wallet logged in): still let you send it home.
-      const stray = shown != null && !c.owned[shown] ? companionOf(shown) : null;
-      if (stray) html += `<div class="kv"><span>${stray.icon} ${esc(stray.name)} is following you</span><button class="pbtn" data-act="companionHome">Send home</button></div>`;
+      const bonusOn = BONUS_DROPS.length > 0 && !!huntInfo?.bonusLive;
+      if (bonusOn) html += `<p class="note">While one follows you, it earns you a play bonus: extra $STAMP for the time you play (see the treasure hunt).</p>`;
+      // Following you though you no longer hold one (sold, or another wallet logged in): still let you send it home.
+      for (const id of shown) {
+        const stray = !c.owned[id] ? companionOf(id) : null;
+        if (stray) html += `<div class="kv"><span>${stray.icon} ${esc(stray.name)} is following you</span><button class="pbtn" data-act="companionHome" data-id="${stray.id}">Send home</button></div>`;
+      }
+      if (shown.length > 1) html += `<p class="note">${shown.length} companions are following you.</p>`;
       for (const tier of TIERS) {
         // Only kinds both on chain and in the catalogue: the game has no model for any other.
         const list = COMPANIONS.filter((x) => x.tier === tier && onChain.has(x.id));
@@ -493,24 +601,25 @@ export function createOffice(chain, {
           const capped = k.perWallet > 0 && (c.bought[k.id] ?? 0) >= k.perWallet; // (what you've bought, not what you hold)
           const poor = !!s.account && s.stamp != null && s.stamp < k.price;
           if (poor && left && k.open && !capped) needStamp = true;
-          const on = shown === k.id;
+          const on = shown.includes(k.id);
           html += `<div class="comp-card ${on ? "on" : ""} ${!left || !k.open ? "off" : ""}">
             <span class="comp-icon" aria-hidden="true">${meta.icon}</span>
             <div class="comp-info"><b>${esc(meta.name)}</b>
               <span class="comp-blurb" title="${esc(meta.blurb)}">${esc(firstSentence(meta.blurb))}</span>
               <span class="muted">${fmt(k.price, 0)} $STAMP · ${left ? `${left.toLocaleString()} left` : "Sold out"}${k.open ? "" : " · Closed"}${k.perWallet ? ` · ${k.perWallet} a wallet` : ""}</span>
+              ${bonusOn ? `<span class="comp-bonus">Play bonus: up to ${bonusCap(k.id)} $STAMP a day</span>` : ""}
               ${own || on ? `<span class="comp-tags">${own ? `<span class="comp-tag">You own ${own}</span>` : ""}${on ? `<span class="comp-tag following">Following</span>` : ""}</span>` : ""}</div>
             <div class="comp-act">
               <button class="pbtn primary" data-act="companionBuy" data-id="${k.id}" ${!s.account || busy || !left || !k.open || capped || poor ? "disabled" : ""}
                 ${capped ? `title="You've bought ${k.perWallet}, the most one wallet can"` : ""}>${capped ? "Wallet limit" : "Buy"}</button>
-              ${own ? (on ? `<button class="pbtn" data-act="companionHome">Send home</button>` : `<button class="pbtn" data-act="companionFollow" data-id="${k.id}">Follow me</button>`) : ""}
+              ${own ? (on ? `<button class="pbtn" data-act="companionHome" data-id="${k.id}">Send home</button>` : `<button class="pbtn" data-act="companionFollow" data-id="${k.id}">Follow me</button>`) : ""}
             </div></div>`;
         }
         html += `</div>`;
       }
       if (!s.account) html += `<p class="note">Log in to buy a companion.</p>`;
       else if (needStamp) html += `<p class="note">You have ${fmt(s.stamp, 0)} $STAMP: not quite enough for the ones you can't buy.${chain.trade ? " Get more in the trade box above." : ""}</p>`;
-      html += `<p class="note">One at a time, up to each kind's wallet limit (which counts what you've bought, so passing one on doesn't reset it). Companions are cosmetic: they never change what you earn.</p>
+      html += `<p class="note">One at a time, up to each kind's wallet limit (which counts what you've bought, so passing one on doesn't reset it). Every kind you own can follow you at once. ${bonusOn ? "They never change what your post office earns." : BONUS_DROPS.length ? "Companions never change what your post office earns. In bonus seasons, they also earn a play bonus." : "Companions never change what your post office earns."}</p>
         <p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${c.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
     }
 
@@ -652,10 +761,37 @@ export function createOffice(chain, {
           huntAt = 0;
         });
       }
-      case "dropEnd": return run(`Ending drop #${b.dataset.id} after today`, async () => {
-        await chain.drops.admin.endDrop(Number(b.dataset.id), huntDay());
-        huntAt = 0;
-      });
+      case "bonusCreate": {
+        const f = bonusForm, num = (v) => v.replace(/,/g, "");
+        let pool, days, amount;
+        try {
+          pool = BigInt(num(f.pool) || "0");
+          days = Number(f.days);
+          amount = parseEther(num(f.amount) || formatEther(bonusSuggest()));
+        } catch {
+          return toast("Enter the $STAMP a day, the days and the $STAMP to put in.", "error");
+        }
+        if (pool < 24n || pool > 10_000n || !(Number.isInteger(days) && days >= 1 && days <= 365) || amount <= 0n) {
+          return toast("Check the bonus pool: $STAMP a day for everyone (24 to 10,000), days (1 to 365), and the $STAMP to put in.", "error");
+        }
+        if (!confirm(`Put ${fmt(amount, 0)} $STAMP into a companion bonus pool of ${pool.toLocaleString()} $STAMP a day for ${days} day${days > 1 ? "s" : ""}, starting tomorrow?\n\nThe game pays the bonus from it only once its drop number is added to BONUS_DROPS in web/bonus-rules.js and the room and the site are deployed. Do both before tomorrow (00:00 UTC), or the game will treat it as the golden stamps' drop.`)) return;
+        return run("Starting the companion bonus pool", async () => {
+          bonusMade = await chain.drops.admin.createBonusPool({ dailyCoins: pool, startDay: huntDay() + 1, days, amount });
+          try {
+            localStorage.setItem("courier:bonusMade", String(bonusMade));
+          } catch {}
+          Object.assign(bonusForm, { pool: "", amount: "" });
+          huntAt = 0;
+        });
+      }
+      case "dropEnd": {
+        // (A companion bonus drop pays for each day the next day: ending it after tomorrow still pays for today's play.)
+        const id = Number(b.dataset.id), last = isBonusDrop(id) ? huntDay() + 1 : huntDay();
+        return run(`Ending drop #${id} after ${isBonusDrop(id) ? "paying for today's play" : "today"}`, async () => {
+          await chain.drops.admin.endDrop(id, last);
+          huntAt = 0;
+        });
+      }
       case "dropWithdraw": return run(`Taking drop #${b.dataset.id}'s tokens back`, async () => {
         await chain.drops.admin.withdraw(Number(b.dataset.id), huntDay());
         huntAt = 0;
@@ -710,15 +846,15 @@ export function createOffice(chain, {
         if (!meta) return;
         return run(`Buying ${meta.name}`, async () => {
           await chain.buyCompanion(snap, id, 1);
-          // Your first companion comes along straight away; after that you pick who follows.
+          // It comes along straight away, with any already following you.
           followNext = id;
         });
       }
       case "companionFollow":
-        onCompanion(id);
+        onCompanion(id, true);
         return draw(true);
       case "companionHome":
-        onCompanion(null);
+        onCompanion(id, false);
         return draw(true);
       case "revealSkins": return run("Revealing the skins", () => chain.devRevealSkins());
       case "skinSale": {
@@ -759,6 +895,8 @@ export function createOffice(chain, {
     if (e.target.dataset.act === "feeWallet") newFeeWallet = e.target.value.trim();
     const field = { dropPerCoin: "perCoin", dropSpots: "spots", dropMax: "maxPerWallet", dropDaily: "dailyCoins", dropDays: "days", dropAmount: "amount", dropTopUpAmount: "topUp" }[e.target.dataset.act];
     if (field) dropForm[field] = e.target.value.trim();
+    const bonusField = { bonusPool: "pool", bonusDays: "days", bonusAmount: "amount" }[e.target.dataset.act];
+    if (bonusField) bonusForm[bonusField] = e.target.value.trim();
     if (e.target.dataset.act === "skinSecret") skinSecret = e.target.value;
     if (e.target.dataset.act === "stampPriceIn") stampPriceIn = e.target.value;
   });

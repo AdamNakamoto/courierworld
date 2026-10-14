@@ -11,7 +11,7 @@ import { courier } from "./traits.js";
 import { connectChain, explain } from "./chain.js";
 import { createMusic } from "./music.js";
 import { createAmbience } from "./ambience.js";
-import { createOffice } from "./office.js";
+import { createOffice, bonusWhy } from "./office.js";
 import { createPad } from "./pad.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
@@ -25,7 +25,8 @@ import { createDistrict } from "./district.js";
 import { loadNames, onNames } from "./names.js";
 import { createUsername } from "./username.js";
 import { createFollower } from "./companions.js";
-import { COMPANION_IDS } from "./companion-kinds.js";
+import { COMPANION_IDS, companionOf } from "./companion-kinds.js";
+import { BONUS_DROPS, BONUS_MINUTES, bonusCap } from "./bonus-rules.js";
 
 const $ = (id) => document.getElementById(id);
 // Golden stamp spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
@@ -206,61 +207,85 @@ function autoAvatar(s) {
   playAs(courier(pick.id, s.seed), s.account);
 }
 
-// Your Courier Companion (companions.js): the one you picked in the Post Office panel follows you on whichever world
-// you're on, as long as your wallet owns one of that kind. The pick is kept per wallet; the room shows it to everyone
-// else only once it has read on chain that it's yours. With no companions contract (until it's deployed), nobody has one.
-let companion = null; // the follower walking with you, or null
-let companionKind = null; // the kind it is (kept apart, so a kind this game can't draw isn't looked for again and again)
-const companionKey = (account) => `courier:companion:${account.toLowerCase()}`;
-/// What your companion stands on: the ground you're on (on the planet, from the height you're at, so it follows you up
-/// onto decks and stairs; in a jump, from the ground under you, so it doesn't hop up onto things as you go up), or the
-/// water's surface rather than the river bed under it.
+// Your Courier Companions (companions.js): the ones you picked in the Post Office panel follow you on whichever world
+// you're on, as long as your wallet owns one of each kind, in pairs behind you (pets in front). The picks are kept per
+// wallet; the room shows them to everyone else only once it has read on chain that they're yours. With no companions
+// contract, nobody has any.
+const followers = new Map(); // kind -> the follower walking with you
+let followKinds = []; // the kinds picked to follow, in their order behind you (even one this game can't draw)
+const companionKey = (account) => `courier:companions:${account.toLowerCase()}`;
+const oldCompanionKey = (account) => `courier:companion:${account.toLowerCase()}`; // (games that had one at a time)
+/// The kinds this wallet picked to follow it.
+function pickedFor(account) {
+  try {
+    const list = JSON.parse(localStorage.getItem(companionKey(account)) ?? "null");
+    if (Array.isArray(list)) return list.map(Number).filter((k) => COMPANION_IDS.includes(k));
+    const one = Number(localStorage.getItem(oldCompanionKey(account)));
+    return COMPANION_IDS.includes(one) ? [one] : [];
+  } catch {
+    return [];
+  }
+}
+/// What your companions stand on: the ground you're on (on the planet, from the height you're at, so they follow you
+/// up onto decks and stairs; in a jump, from the ground under you, so they don't hop up onto things as you go up), or
+/// the water's surface rather than the river bed under it.
 function companionGround(d) {
   const from = jumpV !== 0 ? footY : Math.max(bodyY, footY);
   const floor = G.terrain.surfaceAt(d, from, STEP), water = G.terrain.waterAt(d);
   return water === null ? floor : Math.max(floor, water);
 }
-/// Bring your companion onto the world you're on, just behind you (when it arrives, and after a flight).
-function companionHere() {
-  if (!companion) return;
-  if (companion.group.parent !== world) world.add(companion.group);
-  companion.place(localPos(), ahead(), G.R, companionGround);
-}
-/// Swap the follower for one of kind `id` (null: none), without telling anyone.
-function showCompanion(id) {
-  if (companionKind === id) return;
-  companionKind = id;
-  if (companion) {
-    companion.group.parent?.remove(companion.group);
-    companion.dispose();
+/// Bring your companions onto the world you're on, just behind you (when they arrive, and after a flight); `only`: just
+/// that one (a new arrival, while the others carry on).
+function companionHere(only = null) {
+  for (const f of only ? [only] : followers.values()) {
+    if (f.group.parent !== world) world.add(f.group);
+    f.place(localPos(), ahead(), G.R, companionGround);
   }
-  companion = id === null ? null : createFollower(id);
-  companionHere();
 }
-/// Have your companion of kind `id` follow you (null sends it home): remembered for this wallet, and the room hears.
-function setCompanion(id) {
-  id = COMPANION_IDS.includes(Number(id)) ? Number(id) : null;
+/// Have exactly `kinds` follow you, without telling anyone. True if that changed anything.
+function showCompanions(kinds) {
+  kinds = [...new Set(kinds)].filter((k) => COMPANION_IDS.includes(k)).sort((a, b) => a - b);
+  if (kinds.join() === followKinds.join()) return false;
+  followKinds = kinds;
+  for (const [k, f] of followers) {
+    if (kinds.includes(k)) continue;
+    f.group.parent?.remove(f.group);
+    f.dispose();
+    followers.delete(k);
+  }
+  const arrived = [];
+  for (const k of kinds) {
+    if (followers.has(k)) continue;
+    const f = createFollower(k);
+    if (!f) continue;
+    followers.set(k, f);
+    arrived.push(f);
+  }
+  // (Each keeps to its own slot behind you; the ones already following walk to theirs.)
+  [...followers.values()].sort((a, b) => a.id - b.id).forEach((f, i) => f.setSlot(i));
+  for (const f of arrived) companionHere(f);
+  return true;
+}
+/// Have your companion of kind `id` follow you (`on`), or go home: remembered for this wallet, and the room hears.
+function setCompanion(id, on = true) {
+  id = Number(id);
+  if (!COMPANION_IDS.includes(id)) return;
+  const kinds = on ? [...followKinds, id] : followKinds.filter((k) => k !== id);
   const account = chainRef?.account;
   try {
-    if (account) id ? localStorage.setItem(companionKey(account), String(id)) : localStorage.removeItem(companionKey(account));
+    if (account) {
+      localStorage.setItem(companionKey(account), JSON.stringify([...new Set(kinds)]));
+      localStorage.removeItem(oldCompanionKey(account));
+    }
   } catch {}
-  showCompanion(id);
-  if (mode === "play") introduce();
+  if (showCompanions(kinds) && mode === "play") introduce();
 }
-/// After each look at the chain: the companion this wallet picked last, if it still owns one of that kind (sold or
-/// sent away, another wallet logged in, or no companions contract: none). The pick itself is kept, so it comes back
-/// if the wallet gets one again.
+/// After each look at the chain: the companions this wallet picked, those it still owns one of (sold or sent away,
+/// another wallet logged in, or no companions contract: none). The picks themselves are kept, so one comes back if the
+/// wallet gets that kind again.
 function checkCompanion(s) {
-  let want = null;
-  if (s?.account && s.companions) {
-    try {
-      want = Number(localStorage.getItem(companionKey(s.account))) || null;
-    } catch {}
-    if (!COMPANION_IDS.includes(want) || !(s.companions.owned?.[want] > 0)) want = null;
-  }
-  if (want === companionKind) return;
-  showCompanion(want);
-  if (mode === "play") introduce();
+  const want = s?.account && s.companions ? pickedFor(s.account).filter((k) => s.companions.owned?.[k] > 0) : [];
+  if (showCompanions(want) && mode === "play") introduce();
 }
 
 W.addresses.forEach((a, i) => {
@@ -321,6 +346,7 @@ const MP_HTTP = MP_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
 const PICTURE_HOSTS = [...new Set([`${MP_HTTP}/pad/image/`, "https://courier-world-mp.courier-world-mp.workers.dev/pad/image/"])];
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
+let nopeSyncAt = 0, nopeSync = null; // when a refused find may next be brought back, and the look that will (net's onNope)
 const net = createNet(W, {
   url: MP_URL, makeRider: rider, dispose,
   // Where each world's couriers are drawn (the moon's and Mars's only once they're built).
@@ -352,7 +378,18 @@ const net = createNet(W, {
   },
   onNope(spot, why) {
     toast(why, "error");
+    // (A find the room refused comes back a few seconds later, so it can be picked up again once you've moved: the
+    // room says which ones count. Not when finds have stopped for the session, and not more than every 15 s: one
+    // waiting look covers every refusal before it.)
+    if (spot >= 0 && !/looked off/.test(why) && !nopeSync) {
+      nopeSync = setTimeout(() => {
+        [nopeSync, nopeSyncAt] = [null, Date.now() + 15_000];
+        net.huntState();
+      }, Math.max(4000, nopeSyncAt - Date.now()));
+    }
   },
+  // The companion bonus: how today's minutes with your companion are going (null on a new connection).
+  onBonus: (status) => setBonus(status),
   onCount(n) {
     $("online").hidden = n === null;
     if (n !== null) $("onlineN").textContent = n.toLocaleString();
@@ -413,10 +450,10 @@ function showAd() {
 const hideAd = () => ($("orbCard").hidden = true);
 $("orbClose").addEventListener("click", hideAd);
 for (const a of [$("orbSite"), $("orbChart")]) a.addEventListener("click", () => setTimeout(hideAd, 0));
-/// Tell the room who you are: your courier, your wallet if you're logged in, and your companion if one follows you.
+/// Tell the room who you are: your courier, your wallet if you're logged in, and the companions following you.
 function introduce() {
   // (In the rover, they see your look driving it rather than your skin.)
-  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null, companion?.id ?? null);
+  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null, [...followers.keys()]);
 }
 /// The facts the room passes on about you each frame, in planet space.
 function netState() {
@@ -508,7 +545,7 @@ async function refreshDrops() {
   try {
     const running = await chain.drops.running(day);
     if (day !== huntDay()) return;
-    goldenPays = running.some((d) => d.isStamp && d.left >= d.perCoin);
+    goldenPays = running.some((d) => d.isStamp && !d.isBonus && d.left >= d.perCoin); // (the companion bonus's drop pays for play)
     const tokens = running.filter((d) => !d.isStamp);
     for (const d of tokens) {
       d.empty = d.left < d.perCoin; // paid out: its coins stay off the map (their spots stay reserved, so nothing moves)
@@ -594,6 +631,45 @@ function setTicker(line) {
 tickerTrack.addEventListener("animationiteration", () => tickerNext && setTicker(tickerNext));
 ticker.addEventListener("click", () => office && showOffice(true));
 setInterval(paintTicker, 30_000);
+
+// ---------------------------------------------------------------- the companion bonus
+// Extra $STAMP for time played with your own companion following you (bonus-rules.js): the room counts the minutes and
+// says how it's going; a chip under the online count shows today's, and the Post Office panel the rest. Nothing shows
+// until the treasury's first drop is set (BONUS_DROPS), and the chip only while a season is running.
+let bonus = null; // the room's last word ({ live, dry, day, minutes, max, kind, coins, why, lost, pool, paid: [shares] }), or null
+const bonusSaid = new Set(); // what's been toasted this session: "start", "day:full" and "day:left:kind"
+function setBonus(status) {
+  if (!BONUS_DROPS.length) return;
+  const paidWas = JSON.stringify(bonus?.paid ?? []);
+  bonus = status?.on ? status : null;
+  paintBonus();
+  // (The panel reads the rest every second; a newly settled day needs what it pays read again.)
+  if (JSON.stringify(bonus?.paid ?? []) !== paidWas) office?.huntChanged();
+  if (!bonus?.live || bonus.dry) return;
+  const meta = companionOf(bonus.kind), name = meta ? meta.name : "your companion", icon = meta?.icon ?? "🐾";
+  const say = (key, msg) => {
+    if (bonusSaid.has(key)) return;
+    bonusSaid.add(key);
+    toast(msg);
+  };
+  if (bonus.why === null) say("start", `${icon} Companion bonus: time you play with ${name} following you earns $STAMP, up to ${Number(bonus.max) || BONUS_MINUTES} minutes a day.`);
+  else if (bonus.why === "full") say(`${bonus.day}:full`, `${icon} That's today's companion bonus minutes in. Claim it tomorrow in the Post Office panel (P).`);
+  else if (bonus.why === "left") say(`${bonus.day}:left:${bonus.kind}`, `${name} left your wallet today, so its bonus minutes don't count today.`);
+}
+/// The chip: today's minutes, dimmed while they aren't counting (its tooltip says why).
+function paintBonus() {
+  const b = bonus, chip = $("bonusChip");
+  chip.hidden = !(b?.live && !b.dry && (b.kind != null || Number(b.minutes) > 0));
+  if (chip.hidden) return;
+  const meta = companionOf(b.kind), max = Number(b.max) || BONUS_MINUTES, minutes = Math.min(max, Math.max(0, Number(b.minutes) || 0));
+  $("bonusIcon").textContent = meta?.icon ?? "🐾";
+  $("bonusN").textContent = `${minutes}/${max}`;
+  chip.classList.toggle("off", b.why != null);
+  chip.title = b.why != null
+    ? `Companion bonus: ${minutes} of ${max} minutes today. ${bonusWhy(b.why)}`
+    : `Companion bonus: minutes played today with ${meta ? meta.name : "your companion"} following you. ${meta ? `Up to ${bonusCap(meta.id)} $STAMP a day, paid tomorrow.` : "Paid tomorrow."} More in the Post Office panel.`;
+}
+$("bonusChip").addEventListener("click", () => office && showOffice(true));
 
 // ---------------------------------------------------------------- envelope markers
 
@@ -1570,10 +1646,13 @@ function frame() {
   const stepped = player.update(dt, moveSpeed, t, Math.min(1, jumpY * 4), dist);
   // A puff with each running step.
   if (stepped && moveSpeed > 0.8 && mode === "play" && !wading) kick({ n: 1, size: 0.3, spread: 0.4, life: 0.45 });
-  // Your companion follows you once you're playing (and stays out of the picture when photo mode hides you).
-  if (companion) {
-    companion.group.visible = mode === "play" && !photo?.hide;
-    if (companion.group.visible) companion.update(dt, t, localPos(), ahead(), G.R, companionGround, moveSpeed);
+  // Your companions follow you once you're playing (and stay out of the picture when photo mode hides you).
+  if (followers.size) {
+    const shown = mode === "play" && !photo?.hide, all = followers.size > 1 ? [...followers.values()] : null;
+    for (const f of followers.values()) {
+      f.group.visible = shown;
+      if (shown) f.update(dt, t, localPos(), ahead(), G.R, companionGround, moveSpeed, all);
+    }
   }
   dust.update(dt, 1 - 0.55 * W.night);
   sparkle.update(dt);
@@ -2004,7 +2083,7 @@ const chainReady = connectChain()
       if (chain.account) $("begin").textContent = "Begin";
       chain.onAccountChange(() => {
         huntState = null; // a different wallet signs in afresh
-        showCompanion(null); // (the next look at the chain brings back the new wallet's, if it has one)
+        showCompanions([]); // (the next look at the chain brings back the new wallet's, if it has any)
         office?.refresh();
         if (mode === "play") introduce();
         if (board) district.update(board.list, chain.account);
@@ -2020,6 +2099,7 @@ const chainReady = connectChain()
           await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
         },
         vouchers: () => net.vouchers(),
+        bonus: () => bonus,
       } : null,
       onSnapshot(s) {
         autoAvatar(s);
@@ -2027,8 +2107,8 @@ const chainReady = connectChain()
         checkCompanion(s);
       },
       wearing: () => skinWorn?.id ?? null,
-      onCompanion: (id) => setCompanion(id),
-      companionShown: () => companion?.id ?? null,
+      onCompanion: (id, on) => setCompanion(id, on),
+      companionsShown: () => [...followKinds],
       username,
       onWearSkin(m) {
         if (!m) {

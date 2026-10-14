@@ -282,13 +282,14 @@ function along(p) {
 
 /// `url`: the room's WebSocket address. `makeRider(look, ride, rideColour)` builds a courier (the same as yours),
 /// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count)` and `onNope(spot, why)` hear
-/// from the golden stamp hunt,
+/// from the golden stamp hunt, `onBonus(status)` hears how the companion bonus is going (bonus-rules.js: the room's
+/// { on, day, minutes, max, kind, coins, why, lost, pool, paid }, or null on a new connection),
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
 /// (null while not connected). Names: `nameToken(address)` is the token the room gave that wallet when
 /// it picked its name (or null), and `onNamed(info)` hears the name the room shows you with ({ name,
 /// wallet }, or null).
 export function createNet(W, {
-  url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {},
+  url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {}, onBonus = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
   world = (w) => (w === "planet" ? { group: W.world, r: R, terrain: W.terrain } : null),
 }) {
@@ -368,13 +369,18 @@ export function createNet(W, {
       : makeRider(cleanLook(hello.look), RIDES.includes(hello.ride) ? hello.ride : "foot");
     const tag = label(hello);
     root.add(rider.group, tag);
-    // Their Courier Companion, if the room has read on chain that it's theirs. (root sits at the world's centre, so the
-    // follower's coordinates are the world's, as companions.js expects.)
-    const follower = COMPANION_IDS.includes(hello.companion) ? createFollower(hello.companion) : null;
-    if (follower) root.add(follower.group);
+    // Their Courier Companions, those the room has read on chain are theirs (a room from before several could follow
+    // sends just one), in their slots behind them. (root sits at the world's centre, so the followers' coordinates are
+    // the world's, as companions.js expects.)
+    const kinds = [...new Set(Array.isArray(hello.companions) ? hello.companions : [hello.companion])].filter((k) => COMPANION_IDS.includes(k)).sort((a, b) => a - b);
+    const followers = kinds.map(createFollower).filter(Boolean);
+    followers.forEach((f, i) => {
+      f.setSlot(i);
+      root.add(f.group);
+    });
     root.visible = false;
     W.noNormals.push(tag);
-    const p = { hello, root, rider, tag, follower, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0,
+    const p = { hello, root, rider, tag, followers, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1), target: null, placed: false, h: 0.04, air: 0, spd: 0, swim: 0, wave: 0,
       world: WORLDS.includes(w) ? w : w === undefined && was ? was : "planet" };
     // What their companion walks on: their world's ground where it is, measured from the ground under them (their
     // height less their jump) so it follows them up onto decks; or the water's surface. (Before their world is known,
@@ -398,7 +404,7 @@ export function createNet(W, {
     p.tag.material.map.dispose();
     p.tag.material.dispose();
     dispose(p.rider.group);
-    p.follower?.dispose();
+    for (const f of p.followers) f.dispose();
     players.delete(id);
   }
   /// A position update: where they are, and how fast they're going and turning (older games don't say), to
@@ -460,6 +466,7 @@ export function createNet(W, {
         myId = m[1];
         onChatHistory((m[4] ?? []).map(chatLine));
         onHunt(null); // a new connection: sign in again to hunt (or pick up where you were, below)
+        onBonus(null); // (and the room says again how the bonus is going once you're back in)
         resumeHunt();
         sendName();
         break;
@@ -508,6 +515,9 @@ export function createNet(W, {
         return;
       case "hunt":
         onHunt(m[1]);
+        return;
+      case "bonus":
+        onBonus(m[1] ?? null);
         return;
       case "found":
         onFound(m[1], m[2], m[3], m[4] ?? "golden"); // (day, spot, that drop's finds today, "golden" or the drop id)
@@ -580,9 +590,11 @@ export function createNet(W, {
     /// you're wearing (its token id) and the Courier Companion following you (its kind; the room shows
     /// either only if that wallet owns it). Joins the room the first time it's called; afterwards it tells
     /// everyone you've changed.
-    hello(look, ride, addr, skinId = null, companion = null) {
+    hello(look, ride, addr, skinId = null, companions = []) {
       const was = me?.addr;
-      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}), ...(addr && companion ? { companion } : {}) };
+      // (`companion`, the dearest of them, for a room from before several could follow.)
+      const list = addr ? [...new Set(companions)].sort((a, b) => a - b) : [];
+      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}), ...(list.length ? { companions: list, companion: list[list.length - 1] } : {}) };
       if (!started) {
         started = true;
         connect();
@@ -686,7 +698,7 @@ export function createNet(W, {
           p.fwd.copy(goal.f);
           p.h = p.target.h;
           p.placed = true;
-          if (p.follower && along(p)) p.follower.place(p.pos, p.ahead, pr, p.groundAt);
+          if (p.followers.length && along(p)) for (const f of p.followers) f.place(p.pos, p.ahead, pr, p.groundAt);
         } else {
           const before = p.pos.clone();
           p.pos.lerp(goal.p, k).normalize();
@@ -700,11 +712,14 @@ export function createNet(W, {
         const shown = p.root.visible;
         p.root.visible = all || dist(p.pos, mePos) < SEEN;
         if (!p.root.visible) continue;
-        // Their companion: snapped behind them as they come into view (it stood still while they were out of it),
-        // then following.
-        if (p.follower && along(p)) {
-          if (!shown) p.follower.place(p.pos, p.ahead, pr, p.groundAt);
-          p.follower.update(dt, t, p.pos, p.ahead, pr, p.groundAt, Math.min(1, p.spd));
+        // Their companions: snapped behind them as they come into view (they stood still while out of it), then
+        // following.
+        if (p.followers.length && along(p)) {
+          const all = p.followers.length > 1 ? p.followers : null;
+          for (const f of p.followers) {
+            if (!shown) f.place(p.pos, p.ahead, pr, p.groundAt);
+            f.update(dt, t, p.pos, p.ahead, pr, p.groundAt, Math.min(1, p.spd), all);
+          }
         }
         p.rider.group.position.copy(p.pos).multiplyScalar(pr + p.h);
         orient(p.rider.group, p.pos, p.fwd);

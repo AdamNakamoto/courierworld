@@ -16,6 +16,8 @@ import { PREMIUM } from "./companions-premium.js";
 // ---- following
 
 const BEHIND = 1.3, SIDE = 0.8; // where a companion keeps to: this far behind the courier and off to their right (m)
+const ROW = 1.25; // with several, each pair (right, then left) this much further back than the one before (m)
+const SPACE = 0.9; // and they keep about this far from each other
 const HOVER = 0.9; // how high floaters fly above the ground (m)
 const SETTLE = 0.25; // it stops once this close to its spot...
 const WAKE = 0.7; // ...and only sets off again once the spot is this far away, so it doesn't fidget as you turn
@@ -26,7 +28,14 @@ const WALK_V = 3.1, RUN_V = 5.8; // the courier's walk and run (main.js), to tur
 
 // Scratch vectors for the per-frame maths (followers update one at a time, so they can share them).
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _o = new THREE.Vector3(), _d = new THREE.Vector3();
-const _a = new THREE.Vector3(), _u = new THREE.Vector3(), _w = new THREE.Vector3(), _m = new THREE.Matrix4();
+const _a = new THREE.Vector3(), _u = new THREE.Vector3(), _w = new THREE.Vector3(), _s = new THREE.Vector3(), _m = new THREE.Matrix4();
+
+/// Where the `i`th of a courier's companions keeps to (0 is the first, and the only one when there's one): { behind,
+/// side } in metres, in pairs behind the courier, to their right then their left, each pair a little further back.
+export function slotOf(i) {
+  const row = Math.floor(i / 2);
+  return { behind: BEHIND + ROW * row, side: (i % 2 ? -1 : 1) * (SIDE + 0.15 * row) };
+}
 
 /// The tangent at unit `a` pointing toward unit `b` along the great circle, as long as the walk there is (metres on a
 /// sphere of radius R): how far, and which way, from a to b.
@@ -47,14 +56,14 @@ function anyTangent(out, c) {
   out.set(Math.abs(c.x) < 0.9 ? 1 : 0, Math.abs(c.x) < 0.9 ? 0 : 1, 0);
   return out.addScaledVector(c, -out.dot(c)).normalize();
 }
-/// The companion's spot for a courier at unit `dir` facing `fwd`: BEHIND metres back and SIDE to their right, walked
+/// The companion's spot for a courier at unit `dir` facing `fwd`: `behind` metres back and `side` to their right, walked
 /// along the sphere. False (and `out` untouched) when `fwd` gives no facing at all.
-function spotBehind(out, dir, fwd, R) {
+function spotBehind(out, dir, fwd, R, behind = BEHIND, side = SIDE) {
   _f.copy(fwd).addScaledVector(dir, -fwd.dot(dir));
   if (_f.lengthSq() < 1e-10) return false;
   _f.normalize();
   _r.crossVectors(_f, dir); // the courier's right hand (they face +z with +y up, so their right is local -x)
-  _o.copy(_f).multiplyScalar(-BEHIND).addScaledVector(_r, SIDE);
+  _o.copy(_f).multiplyScalar(-behind).addScaledVector(_r, side);
   const m = _o.length();
   walk(out, dir, _o.divideScalar(m), m, R);
   return true;
@@ -64,10 +73,12 @@ const paceOf = (v) => (v <= WALK_V ? (0.62 * v) / WALK_V : Math.min(1, 0.62 + (0
 const ease = (rate, dt) => 1 - Math.exp(-dt * rate);
 
 /// A companion of kind `id` that follows a courier: null for a kind this game doesn't know (or can't build).
-/// { id, group, place(dir, fwd, R, groundAt), update(dt, t, dir, fwd, R, groundAt, speed), dispose() }: add `group` to
-/// the world group the courier walks on; `dir` and `fwd` are the courier's unit direction from the world's centre and
-/// their facing, in that group's frame; R is the world's radius; groundAt(d) is the ground's height above R at unit d;
-/// speed is the courier's pace, 0 (idle) to 1 (running).
+/// { id, group, at, setSlot(i), place(dir, fwd, R, groundAt), update(dt, t, dir, fwd, R, groundAt, speed, others),
+/// dispose() }: add `group` to the world group the courier walks on; `dir` and `fwd` are the courier's unit direction
+/// from the world's centre and their facing, in that group's frame; R is the world's radius; groundAt(d) is the
+/// ground's height above R at unit d; speed is the courier's pace, 0 (idle) to 1 (running). With several following
+/// one courier, each has its own slot (slotOf), and `others` are the rest of them, which it keeps clear of; `at` is
+/// its unit direction from the world's centre.
 export function createFollower(id) {
   const kind = companionOf(id);
   const build = kind && (MODELS[id] ?? PREMIUM?.[id]);
@@ -99,6 +110,7 @@ export function createFollower(id) {
   const lastLeader = new THREE.Vector3(), leaderVel = new THREE.Vector3(); // the courier, a frame ago, and their velocity
   let y = 0; // the ground under it (m above R), eased so it doesn't jump at every kerb
   let resting = true, placed = false, lastR = 0, pitch = 0, roll = 0, pace = 0;
+  let slot = slotOf(0);
 
   /// Write c, heading and y into the group's position and orientation (up = c, forward = heading).
   function pose(R) {
@@ -111,7 +123,7 @@ export function createFollower(id) {
   }
 
   function place(dir, fwd, R, groundAt) {
-    if (!spotBehind(spot, dir, fwd, R)) spot.copy(dir); // (no facing: drop it on the courier and let it step aside)
+    if (!spotBehind(spot, dir, fwd, R, slot.behind, slot.side)) spot.copy(dir); // (no facing: drop it on the courier and let it step aside)
     c.copy(spot);
     heading.copy(fwd);
     vel.set(0, 0, 0);
@@ -125,7 +137,7 @@ export function createFollower(id) {
     pose(R);
   }
 
-  function update(dt, t, dir, fwd, R, groundAt, speed) {
+  function update(dt, t, dir, fwd, R, groundAt, speed, others = null) {
     if (!placed || R !== lastR) return place(dir, fwd, R, groundAt); // (a new world: start beside the courier)
     dt = Math.min(dt, 0.1); // (after a stall, catch up calmly rather than in one leap)
     if (!(dt > 0)) return;
@@ -140,8 +152,9 @@ export function createFollower(id) {
     const leaderSpeed = leaderVel.length();
     const leaderMoving = leaderSpeed > 0.3 || speed > 0.05;
 
-    spotBehind(spot, dir, fwd, R); // (no facing this frame: keep the spot it had)
-    if (toward(_d, c, spot, R).length() > LOST) return place(dir, fwd, R, groundAt);
+    spotBehind(spot, dir, fwd, R, slot.behind, slot.side); // (no facing this frame: keep the spot it had)
+    // (The further back its slot, the further its spot swings when the courier turns round.)
+    if (toward(_d, c, spot, R).length() > Math.max(LOST, 2 * Math.hypot(slot.behind, slot.side) + 2)) return place(dir, fwd, R, groundAt);
 
     // Fast enough to catch up with a running courier, or one on a ride.
     const maxV = Math.max(4.5, leaderSpeed * 1.3 + 2.5);
@@ -164,6 +177,12 @@ export function createFollower(id) {
         const push = (PERSONAL - near) / near;
         _a.crossVectors(c, _w);
         vel.addScaledVector(_w, -push * 30 * h).addScaledVector(_a, (vel.dot(_a) < 0 ? -push : push) * 20 * h);
+      }
+      // And clear of the courier's other companions (gently: their slots keep them apart once they settle).
+      if (others) for (const o of others) {
+        if (o === api) continue;
+        const near2 = toward(_s, c, o.at, R).length();
+        if (near2 < SPACE && near2 > 1e-4) vel.addScaledVector(_s, (-(SPACE - near2) / near2) * 12 * h);
       }
       let v = vel.length();
       if (v > maxV) {
@@ -246,7 +265,13 @@ export function createFollower(id) {
     group.removeFromParent();
   }
 
-  return { id, group, place, update, dispose };
+  /// Its place among the courier's companions (slotOf).
+  function setSlot(i) {
+    slot = slotOf(i);
+  }
+
+  const api = { id, group, at: c, setSlot, place, update, dispose };
+  return api;
 }
 
 // ---- building blocks

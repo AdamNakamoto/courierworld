@@ -7,6 +7,7 @@ import {
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
 import { TRIPS, TREASURY } from "./trips.js";
+import { BONUS_MAX_COINS, isBonusDrop } from "./bonus-rules.js";
 
 const ERROR_TEXT = {
   // Courier Skins for $STAMP (SkinsStampSale)
@@ -606,7 +607,8 @@ export async function connectChain() {
 
   // ---------------------------------------------------------------- the treasure hunt
   // Golden stamps and the treasury's token drops (TokenDrops): coins round the planet that the multiplayer server
-  // checks and signs vouchers for. Only wallets with a post office can claim.
+  // checks and signs vouchers for. Only wallets with a post office can claim. The companion bonus (bonus-rules.js) is
+  // paid by a $STAMP drop here too: `isBonus` marks it, and it's never the golden stamps' drop.
   const dropToken = new Map(); // token (lower case) -> { symbol, name, image }
   async function tokenInfo(token) {
     const k = token.toLowerCase();
@@ -623,7 +625,7 @@ export async function connectChain() {
   const dropOf = async (id) => {
     const d = await read(C.drops, "drop", [BigInt(id)]);
     return {
-      id: Number(id), token: d.token, isStamp: same(d.token, C.stamp.address), spots: Number(d.spots), maxPerWallet: Number(d.maxPerWallet),
+      id: Number(id), token: d.token, isStamp: same(d.token, C.stamp.address), isBonus: isBonusDrop(id), spots: Number(d.spots), maxPerWallet: Number(d.maxPerWallet),
       startDay: Number(d.startDay), endDay: Number(d.endDay), perCoin: d.perCoin, dailyCoins: d.dailyCoins, left: d.left,
       ...(await tokenInfo(d.token)),
     };
@@ -651,7 +653,11 @@ export async function connectChain() {
     paidOn: (id, day) => read(C.drops, "paidCoins", [BigInt(id), day]),
     /// What a find count would pay now: [coins, amount].
     claimable: (id, day, coins) => (account ? read(C.drops, "claimable", [BigInt(id), account, day, coins]) : [0, 0n]),
+    /// The coins you've claimed from drop `id` for `day`.
+    claimedOn: (id, day) => (account ? read(C.drops, "claimed", [BigInt(id), day, account]) : 0),
     /// A drop's day: the coins paid that day across everyone and its cap, and yours and a wallet's most.
+    /// One drop, as it stands (with its token's symbol and metadata).
+    drop: dropOf,
     async dayOf(id, day) {
       const [d, paid, mine] = await Promise.all([
         dropOf(id), read(C.drops, "paidCoins", [BigInt(id), day]), account ? read(C.drops, "claimed", [BigInt(id), day, account]) : 0,
@@ -670,7 +676,16 @@ export async function connectChain() {
       async createDrop({ token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount }) {
         const t = { address: token, abi: ERC20_ABI };
         if ((await read(t, "allowance", [account, C.drops.address])) < amount) await send(t, "approve", [C.drops.address, amount]);
-        await send(C.drops, "createDrop", [token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount]);
+        return send(C.drops, "createDrop", [token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount]);
+      },
+      /// The companion bonus's pool: a $STAMP drop paying 1 $STAMP a coin, up to BONUS_MAX_COINS a wallet a day and
+      /// `dailyCoins` a day for everyone. Resolves to its drop number (to add to BONUS_DROPS in bonus-rules.js).
+      async createBonusPool({ dailyCoins, startDay, days, amount }) {
+        const receipt = await drops.admin.createDrop({
+          token: C.stamp.address, perCoin: parseEther("1"), spots: BONUS_MAX_COINS, maxPerWallet: BONUS_MAX_COINS, dailyCoins, startDay, days, amount,
+        });
+        const [ev] = parseEventLogs({ abi: C.drops.abi, logs: receipt.logs, eventName: "DropCreated" });
+        return Number(ev.args.drop);
       },
       async topUp(id, token, amount) {
         const t = { address: token, abi: ERC20_ABI };

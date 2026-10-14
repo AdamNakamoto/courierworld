@@ -236,13 +236,57 @@ the royalty is now enforced (finding 6 offered it as an option; Courier World wa
 tests cover the gaps (`CourierCompanions.t.sol`; `CourierCompanions.invariant.t.sol` predicts
 every call's outcome and fails on any surprise).
 
+### The room's speed check
+
+The treasure hunt trusts where the room saw a player. The speed check is a travel budget in the room's own time: it
+grows at 22 m/s, up to 15 s (330 m) saved, and each position update spends the distance moved; no single update may
+jump further than 2 s at 22 m/s. So nobody averages more than 22 m/s however their updates are bunched (the old
+check skipped updates closer together than 0.12 s, which let a script teleport between spots), while updates the
+network held back for up to ~20 s still pass. A strike pauses finds for 3 s (overspending in those 3 s doesn't strike
+again); three end the session's finds. A world hop restarts the 5 s wait before finds.
+
+### The companion play bonus (built, paused)
+
+Not running: no season's drop is listed, the treasury's form to start one is off (`BONUS_POOL_FORM`), and its
+public wording (docs, collection.json) is held back in a local stash. The room code ships inert. When it's switched
+on: while a companion follows its owner, the minutes they spend out delivering earn extra $STAMP: up to 120 active
+minutes a day, at most Pet 6, Space buddy 9, Legendary 12, Mecha 18 and Anime 24 $STAMP a day (`web/bonus-rules.js`).
+It can't come from the PostOffice (no owner, the only $STAMP minter), so it's a $STAMP drop in the live TokenDrops
+contract that the treasury funds from its share of in-game spending, in seasons. No contract changes.
+
+- **What counts** (multiplayer/src/index.js, `bonusTick`): a minute with at least one position update from a socket
+  signed in to the hunt (signature or resume token), whose name tag is that wallet, with that wallet's own companion
+  following, a post office open, at least 3 m moved since the wallet's last counted minute, a minute's warm-up, and no
+  speed strikes; one per wallet per minute across tabs. Counted from the position updates the game already sends.
+- **One companion, one wallet a day**: at random times (2 to 25 minutes apart), and once more at 23:59:30 UTC (an
+  alarm, so even a sleeping room checks), the room reads every earning wallet's companions in one `balanceOfBatch`; a
+  wallet that doesn't hold the kind it earned with loses that kind's minutes for the day, and one that does is
+  confirmed.
+- **Settled the next day, pro rata**: once a day is over, each wallet's coins are its tier-weighted minutes, or its share
+  of the drop's `dailyCoins` in proportion to what it earned if everyone together earned more. They're signed as that
+  drop's day + 1 (claimable that day and the next, with the treasure hunt's Claim button), so nobody can race for the
+  pool. Only minutes an ownership check confirmed are paid.
+
+- **Seasons** (after the companions are deployed): in the Post Office panel's treasury box, "Companion bonus pool"
+  creates a season's drop starting tomorrow (pool per day, days, $STAMP to put in; perCoin 1 $STAMP, 24 a wallet).
+  Then add its id to `BONUS_DROPS` in `web/bonus-rules.js` and deploy the room and the site before it starts: until
+  then the drop would look like the golden stamps' drop. A season pays play day d as day d + 1, so create the next
+  season's drop on the current one's last day (it starts the day after); keep a season listed until two days after its
+  end (its last claims). "End" on a
+  bonus drop ends it after tomorrow, so today's play is still paid. Until `BONUS_DROPS` lists a drop, the game says
+  nothing about the bonus beyond the docs.
+  `wrangler dev` alone can set BONUS_DEV_MINUTE_MS, BONUS_DEV_SAMPLE_MS and BONUS_DEV_DAYS to try it in seconds.
+
 - `web/companion-kinds.js`: what each kind is (name, tier, blurb...), shared by the game, the Post Office panel (the
   shop, where players also pick which companion follows them), the server and the metadata. Prices and supplies live
   on chain.
 - `web/companions.js` draws the companions and makes them follow their courier (`createFollower(id)`), on every
-  world; `web/companions-premium.js` has the bigger models (the mecha, the colossus and the anime companions).
-- The multiplayer room shows a player's companion to others only after reading on-chain that the wallet on their
-  name tag owns it (`COMPANIONS_ADDRESS`).
+  world; `web/companions-premium.js` has the bigger models (the mecha, the colossus and the anime companions). Every
+  kind a wallet owns can follow at once (each toggled in the panel, kept per wallet), in pairs behind the courier
+  (`slotOf`), keeping clear of each other.
+- The multiplayer room shows a player's companions to others only after reading on chain, in one `balanceOfBatch`,
+  that the wallet on their name tag owns them (`COMPANIONS_ADDRESS`). The hello carries `companions` (all) and
+  `companion` (the dearest, for games and rooms from before several could follow).
 - Without a companions address (`chain.companions` null, no `COMPANIONS_ADDRESS` in the room), everything hides
   itself, as it did before the deploy.
 - Metadata: `web/companions/<id>.json` (name, description, picture, and Tier / Kind / Moves traits) under the

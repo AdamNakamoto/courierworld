@@ -9,7 +9,8 @@
 // wearing a Courier Skin is shown in it only once the room has read on-chain that their wallet owns it.
 // Players can pick a name (web/name-rules.js): their wallet signs for it, and the room shows it instead of
 // their wallet address from then on. A Courier Companion following a player is shown only once the room has read
-// on chain that their wallet owns one of that kind.
+// on chain that their wallet owns one of that kind, and earns them the companion bonus (web/bonus-rules.js) for the
+// minutes they spend out delivering with it.
 import { DurableObject } from "cloudflare:workers";
 import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -21,6 +22,7 @@ import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
 import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
 import { COMPANION_IDS } from "../../web/companion-kinds.js";
+import { BONUS_DROPS, BONUS_MINUTES, BONUS_MOVE_M, BONUS_WARMUP_MS, bonusCoins, bonusShare, bonusPayDay } from "../../web/bonus-rules.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -50,10 +52,18 @@ const DROPS_ABI = parseAbi([
 const DROPS_CHECK_MS = 60_000; // how long the running drops are trusted before they're read again
 const SKIN_CHECK_MS = 60_000; // how long a skin's owner is trusted before it's read again
 // Courier Companions (an ERC-1155: each kind is a token id), at COMPANIONS_ADDRESS once it's deployed.
-const COMPANIONS_ABI = parseAbi(["function balanceOf(address account, uint256 id) view returns (uint256)"]);
+const COMPANIONS_ABI = parseAbi([
+  "function balanceOf(address account, uint256 id) view returns (uint256)",
+  "function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])",
+]);
 const COMPANION_CHECK_MS = 3 * 60_000; // how long a wallet's companions are trusted before they're read again
 const COMPANION_MISS_MS = 15_000; // ...and how long "not theirs" is, so a companion just bought shows soon
 const COMPANION_RECHECK_MS = 16_000; // one more look this long after a miss (a buy the RPC hadn't seen; a hiccup)
+// The companion bonus (web/bonus-rules.js). A wallet's day is kept in memory and written every few counted minutes;
+// the companions that earned are all checked at once, at random times, so nobody can time handing one around.
+const BONUS_SAVE_EVERY = 5; // counted minutes between writes of a wallet's day (and when its last connection closes)
+const BONUS_SAMPLE_MS = 10 * 60_000; // the mean time between ownership checks (each 2 to 25 minutes after the last)
+const BONUS_STATUS_EVERY = 5; // counted minutes between updates to the player
 const CHAT_KEEP = 30; // chat lines kept for players who join later
 const CHAT_RECENT_MS = 60 * 60_000; // ...if they're less than an hour old
 const CHAT_ROOM_MAX = 20; // lines from everyone together every five seconds
@@ -68,6 +78,12 @@ const sha256 = async (s) => new Uint8Array(await crypto.subtle.digest("SHA-256",
 // for the find to count, the fastest anyone moves (paper plane, running: ~13 m/s; this allows lag),
 // and how long a voucher lasts.
 const REACH = 3.2, REACH_UP = 1.6, TOP_SPEED = 22, VOUCHER_SECS = 3600;
+// The speed check is a travel budget in the room's time: it grows at TOP_SPEED (up to BUDGET_M saved up, 15 s of it)
+// and each update spends the distance moved. So nobody averages more than TOP_SPEED, however their updates are bunched:
+// updates the network held back for up to ~20 s and delivered together are paid for by what the wait saved, while a
+// stream of hops faster than TOP_SPEED, or one jump further than two seconds at it, strikes. After a strike, finds and
+// the bonus wait CLEAN_MS (and overspending within that time doesn't strike again).
+const BUDGET_M = TOP_SPEED * 15, CLEAN_MS = 3000;
 const spotDir = SPOTS.map((p) => {
   const l = Math.hypot(p.x, p.y, p.z);
   return [p.x / l, p.y / l, p.z / l];
@@ -78,6 +94,8 @@ const TICKET_AGE = 3 * 3600; // seconds: how old a trip ticket's transaction can
 const HUNT_TOKEN_MS = 12 * 3600_000; // how long a browser can pick the hunt up again without signing
 /// Which world a player is on: "moon", "mars" (trips: everyone there is near), or the planet.
 const worldOf = (a) => (TRIPS[a.world] ? a.world : "planet");
+/// A wallet's bonus minutes for a day ({ kind: minutes }), without the companions that left it that day.
+const keptMinutes = (v) => Object.fromEntries(Object.entries(v?.min ?? {}).filter(([k]) => !(v.lost ?? []).includes(Number(k))));
 
 const colour = (v) => (Number.isInteger(v) && v >= 0 && v <= 0xffffff) || (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v));
 const send = (ws, m) => {
@@ -88,8 +106,8 @@ const send = (ws, m) => {
 
 /// A player's hello with anything unexpected dropped: a look built only from known keys and values,
 /// a ride, their wallet address if they're logged in (shown on their name tag; not checked), and the
-/// Courier Skin they'd like to wear and the Courier Companion they'd like to have follow them (both
-/// checked in `hi` before anyone sees them).
+/// Courier Skin they'd like to wear and the Courier Companions they'd like to have follow them (all
+/// checked in `hi` before anyone sees them; a game from before several could follow sends just one).
 function cleanHello(h) {
   if (!h || typeof h !== "object") return null;
   const src = h.look && typeof h.look === "object" ? h.look : {};
@@ -100,7 +118,10 @@ function cleanHello(h) {
   const out = { look, ride: RIDES.includes(h.ride) ? h.ride : "foot" };
   if (typeof h.addr === "string" && /^0x[0-9a-fA-F]{40}$/.test(h.addr)) out.addr = h.addr;
   if (out.addr && Number.isInteger(h.skinId) && h.skinId >= 1 && h.skinId <= SKIN_SUPPLY) out.skinId = h.skinId;
-  if (out.addr && COMPANION_IDS.includes(h.companion)) out.companionId = h.companion;
+  if (out.addr) {
+    const kinds = [...new Set((Array.isArray(h.companions) ? h.companions : [h.companion]).filter((k) => COMPANION_IDS.includes(k)))];
+    if (kinds.length) out.companionIds = kinds.sort((x, y) => x - y);
+  }
   return out;
 }
 
@@ -185,15 +206,22 @@ export class Planet extends DurableObject {
       if (!s) return;
       // Faster than anyone can travel (a teleport, a script): count a strike; three, and this session's
       // finds stop counting. (On the moon or Mars, distances are on the moon or Mars.)
-      const world = worldOf(a);
+      const world = worldOf(a), wr = TRIPS[world]?.R ?? R;
       if (a.s && a.sAt) {
-        const secs = (now - a.sAt) / 1000;
-        if (secs > 0.12 && arcBetween(a.s, s, TRIPS[world]?.R ?? R) / secs > TOP_SPEED) a.strikes = (a.strikes ?? 0) + 1;
-      }
+        const gap = (now - a.sAt) / 1000, step = arcBetween(a.s, s, wr);
+        a.budget = Math.min(BUDGET_M, (a.budget ?? BUDGET_M) + TOP_SPEED * gap) - step;
+        // (And no one update jumps further than two seconds at top speed, or its own gap: the game sends at least that
+        // often while moving, held back or not.)
+        if (a.budget < 0 || step > TOP_SPEED * Math.max(gap, 2)) {
+          if (now >= (a.cleanAt ?? 0)) a.strikes = (a.strikes ?? 0) + 1;
+          [a.cleanAt, a.budget] = [now + CLEAN_MS, 0];
+        }
+      } else a.budget = BUDGET_M; // (the first position isn't checked, so starting full gives nothing away)
       a.firstAt ??= now;
       a.sAt = now;
       a.s = s;
       a.n = (a.n + 1) % FAR_EVERY;
+      this.bonusTick(ws, a, s, world, now);
       ws.serializeAttachment(a);
       // Only to those on the same world (everyone on the moon or Mars is near).
       const out = JSON.stringify(["s", a.id, ...s]);
@@ -350,9 +378,9 @@ export class Planet extends DurableObject {
     const hello = cleanHello(raw);
     if (!hello) return;
     const seq = (a.hiSeq = (a.hiSeq ?? 0) + 1);
-    const id = hello.skinId, kind = hello.companionId;
+    const id = hello.skinId, kinds = hello.companionIds ?? [];
     delete hello.skinId;
-    delete hello.companionId;
+    delete hello.companionIds;
     // Skins and companions are read from the chain (never taken on the client's word) for the wallet on their name
     // tag, the address everyone sees: a hunt sign-in may be for a wallet they've since switched from. Both at once,
     // on a client with short timeouts, so a slow chain can't hold up their arrival for long.
@@ -361,32 +389,38 @@ export class Planet extends DurableObject {
     if (skinAsk) [a.skinAsked, a.skinAskedAt] = [id, Date.now()];
     const [design, owned] = await Promise.all([
       skinAsk ? this.skinDesign(id, hello.addr) : null,
-      kind ? this.ownsCompanion(kind, hello.addr, a) : false,
+      kinds.length ? this.ownsCompanions(kinds, hello.addr, a) : new Map(),
     ]);
     if (a.hiSeq !== seq) return; // a newer hello arrived while we were checking (or they left)
     if (design !== null) hello.skin = design;
-    if (owned === true) hello.companion = kind;
-    else if (owned === undefined && a.hello?.companion === kind) hello.companion = kind; // (no answer: keep the one already shown)
-    if (kind && owned === null) {
+    // Their companions: those the chain says are theirs (and, while it hasn't answered, those already shown for this
+    // wallet). `companion`,
+    // the dearest, is for games from before several could follow (and is the one the companion bonus counts).
+    const same = a.hello?.addr?.toLowerCase() === hello.addr?.toLowerCase();
+    const shownBefore = same ? a.hello?.companions ?? [] : [];
+    const verified = kinds.filter((k) => owned.get(k) === true || (owned.get(k) == null && shownBefore.includes(k)));
+    if (verified.length) [hello.companions, hello.companion] = [verified, verified[verified.length - 1]];
+    if (kinds.some((k) => owned.get(k) === null)) {
       // Too soon after the last new check: look again once one's allowed, unless a newer hello comes first (so
-      // flicking through companions in the panel still ends with the last one showing).
+      // flicking through companions in the panel still ends with the last ones showing).
       const wait = 2100 - (Date.now() - a.companionAskedAt);
       setTimeout(() => a.hiSeq === seq && this.seen.get(ws) === a && this.hi(ws, a, raw).catch(() => {}), Math.max(100, wait));
-    } else if (kind && owned !== true) {
-      // Not theirs as far as the chain said (or it didn't answer): one more look in a little while, for this hello
-      // only, and the room hears again only if it's theirs after all.
+    } else if (kinds.some((k) => owned.get(k) !== true)) {
+      // Some not theirs as far as the chain said (or it didn't answer): one more look in a little while, for this
+      // hello only, and the room hears again only if one of them is theirs after all.
+      const doubt = kinds.filter((k) => owned.get(k) !== true);
       setTimeout(async () => {
         if (a.hiSeq !== seq || this.seen.get(ws) !== a) return;
-        if ((await this.ownsCompanion(kind, hello.addr, a)) === true && a.hiSeq === seq && this.seen.get(ws) === a) {
-          this.hi(ws, a, raw).catch(() => {});
-        }
+        const again = await this.ownsCompanions(doubt, hello.addr, a);
+        if (doubt.some((k) => again.get(k) === true) && a.hiSeq === seq && this.seen.get(ws) === a) this.hi(ws, a, raw).catch(() => {});
       }, COMPANION_RECHECK_MS);
     }
     await this.decorate(hello, a);
     if (a.hiSeq !== seq) return;
-    const first = !a.hello;
+    const first = !a.hello, followed = a.hello?.companion;
     a.hello = hello;
     ws.serializeAttachment(a);
+    if (a.wallet && hello.companion !== followed) this.sendBonus(ws, a).catch(() => {}); // (the bonus follows the companion)
     if (first) {
       const recent = (await this.chatLog()).filter((l) => Date.now() - l[3] < CHAT_RECENT_MS);
       // (Everyone starts on the planet; those on the moon or Mars come with where they are only for their world.)
@@ -426,26 +460,43 @@ export class Planet extends DurableObject {
     }));
   }
 
-  /// Whether `owner` holds a companion of `kind`, read from the CourierCompanions contract (ERC-1155 balanceOf): kept
-  /// a few minutes if so, a few seconds if not. False if not (or there's no contract yet); undefined if the chain
-  /// didn't answer; null if it isn't known and a new read would come sooner than two seconds after this player's last
-  /// one (so nobody can make the room hammer the chain).
-  async ownsCompanion(kind, owner, a) {
-    if (!this.env.COMPANIONS_ADDRESS || !owner) return false;
-    const key = `${owner.toLowerCase()}:${kind}`, c = this.companions.get(key);
-    if (c && Date.now() - c.at < (c.owned ? COMPANION_CHECK_MS : COMPANION_MISS_MS)) return c.owned;
-    if (Date.now() - (a.companionAskedAt ?? 0) < 2000) return null;
+  /// Whether `owner` holds a companion of each of `kinds` (a Map: kind -> answer), read from the CourierCompanions
+  /// contract (ERC-1155 balanceOfBatch, one read for all of them): kept a few minutes if so, a few seconds if not.
+  /// False if not (or there's no contract yet); undefined if the chain didn't answer; null if it isn't known and a new
+  /// read would come sooner than two seconds after this player's last one (so nobody can make the room hammer the chain).
+  async ownsCompanions(kinds, owner, a) {
+    const out = new Map();
+    if (!this.env.COMPANIONS_ADDRESS || !owner) {
+      for (const k of kinds) out.set(k, false);
+      return out;
+    }
+    // Known ones from what was read lately; the rest in one read (at most one every two seconds per player).
+    const ask = [];
+    for (const k of kinds) {
+      const c = this.companions.get(`${owner.toLowerCase()}:${k}`);
+      if (c && Date.now() - c.at < (c.owned ? COMPANION_CHECK_MS : COMPANION_MISS_MS)) out.set(k, c.owned);
+      else ask.push(k);
+    }
+    if (!ask.length) return out;
+    if (Date.now() - (a.companionAskedAt ?? 0) < 2000) {
+      for (const k of ask) out.set(k, null);
+      return out;
+    }
     a.companionAskedAt = Date.now();
     try {
       const held = await this.cosmeticChain().readContract({
-        address: this.env.COMPANIONS_ADDRESS, abi: COMPANIONS_ABI, functionName: "balanceOf", args: [owner.toLowerCase(), BigInt(kind)],
+        address: this.env.COMPANIONS_ADDRESS, abi: COMPANIONS_ABI, functionName: "balanceOfBatch",
+        args: [ask.map(() => owner.toLowerCase()), ask.map((k) => BigInt(k))],
       });
-      this.companions.set(key, { at: Date.now(), owned: held > 0n });
-      if (this.companions.size > 2000) this.companions.delete(this.companions.keys().next().value);
-      return held > 0n;
+      ask.forEach((k, i) => {
+        this.companions.set(`${owner.toLowerCase()}:${k}`, { at: Date.now(), owned: held[i] > 0n });
+        out.set(k, held[i] > 0n);
+      });
+      while (this.companions.size > 3000) this.companions.delete(this.companions.keys().next().value);
     } catch {
-      return undefined;
+      for (const k of ask) out.set(k, undefined);
     }
+    return out;
   }
 
   /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from TokenDrops and kept a minute.
@@ -506,7 +557,7 @@ export class Planet extends DurableObject {
         ok = await verifyMessage({ address: wallet, message: authMessage(wallet, a.code), signature });
       } catch {}
       if (!ok) return send(ws, ["nope", -1, "That signature didn't check out. Try signing in again."]);
-      a.wallet = getAddress(wallet);
+      await this.switchWallet(a, getAddress(wallet));
       await this.tickets(a); // (tickets bought before, still good)
       ws.serializeAttachment(a);
       // A token for this browser to pick the hunt up again on a new connection (a reload, a dropped line) without
@@ -514,7 +565,8 @@ export class Planet extends DurableObject {
       const token = randomHex(16);
       await this.ctx.storage.put(`htok:${a.wallet}`, { token, at: now });
       send(ws, ["hunttoken", token]);
-      return send(ws, await state());
+      send(ws, await state());
+      return this.sendBonus(ws, a).catch(() => {});
     }
     if (m[0] === "resume") {
       // ["resume", wallet, token]: the token we gave this browser when it signed in.
@@ -522,10 +574,11 @@ export class Planet extends DurableObject {
       if (typeof wallet !== "string" || !isAddress(wallet) || typeof token !== "string" || token.length > 64) return;
       const t = await this.ctx.storage.get(`htok:${getAddress(wallet)}`);
       if (!t || t.token !== token || now - t.at > HUNT_TOKEN_MS) return;
-      a.wallet = getAddress(wallet);
+      await this.switchWallet(a, getAddress(wallet));
       await this.tickets(a);
       ws.serializeAttachment(a);
-      return send(ws, await state());
+      send(ws, await state());
+      return this.sendBonus(ws, a).catch(() => {});
     }
     if (m[0] === "hunt") return send(ws, await state());
     if (!a.wallet) return send(ws, ["nope", -1, "Sign in with your wallet to hunt for treasure."]);
@@ -539,11 +592,12 @@ export class Planet extends DurableObject {
       const { key, set } = await this.finds(day, a.wallet, owner);
       if (set.has(i)) return send(ws, ["found", day, i, set.size, owner]);
       if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement, so finds aren't counting this session. Reload to try again.");
-      if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000) return nope("Keep exploring a moment, then try again.");
+      if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000 || now < (a.cleanAt ?? 0)) return nope("Keep exploring a moment, then try again.");
       const p = SPOTS[i], far = arcBetween(a.s, spotDir[i]), up = Math.abs(a.s[6] + 0.85 - p.h);
       if (far > REACH || up > REACH_UP) return nope("You weren't close enough to that one.");
       set.add(i);
       await this.ctx.storage.put(key, [...set]);
+      this.vouchersSent?.delete(ws); // (the next vouchers include it)
       return send(ws, ["found", day, i, set.size, owner]);
     }
     if (m[0] === "wgrab" || m[0] === "mgrab") {
@@ -558,40 +612,449 @@ export class Planet extends DurableObject {
       const { key, set } = await this.finds(day, a.wallet, k);
       if (set.has(i)) return send(ws, ["found", day, i, set.size, k]);
       if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement, so finds aren't counting this session. Reload to try again.");
-      if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000) return nope("Keep exploring a moment, then try again.");
+      if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000 || now < (a.cleanAt ?? 0)) return nope("Keep exploring a moment, then try again.");
       const p = trip.spots[i], far = arcBetween(a.s, p.d, trip.R), up = Math.abs(a.s[6] + 0.85 - p.h);
       if (far > trip.reach || up > trip.reachUp) return nope("You weren't close enough to that one.");
       set.add(i);
       await this.ctx.storage.put(key, [...set]);
+      this.vouchersSent?.delete(ws); // (the next vouchers include it)
       return send(ws, ["found", day, i, set.size, k]);
     }
     if (m[0] === "vouchers") {
-      // ["vouchers"]: a signed note of each drop's finds, today's and yesterday's, for TokenDrops.claimMany.
+      // ["vouchers"]: a signed note of each drop's finds, today's and yesterday's, for TokenDrops.claimMany. (The same
+      // answer again for a few seconds, so asking over and over can't keep the room signing.)
       if (!on) return send(ws, ["nope", -1, "The treasure hunt isn't paying out yet."]);
-      const signer = privateKeyToAccount(this.env.DROPS_KEY);
-      const deadline = Math.floor(now / 1000) + VOUCHER_SECS;
-      const out = [];
-      for (const d of [day - 1, day]) {
-        const lay = layDrops(d, SPOTS.length, await this.dropsOn(d));
-        const wanted = lay.coins.map((c) => [c.drop, c.drop]);
-        if (lay.golden.drop !== null) wanted.unshift([lay.golden.drop, "golden"]);
-        for (const [drop, key] of wanted) {
-          // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop.)
-          let n = (await this.finds(d, a.wallet, key)).set.size;
-          if (key === "golden") for (const k of Object.keys(TRIPS)) n += (await this.finds(d, a.wallet, k)).set.size;
-          if (!n) continue;
-          const coins = Math.min(n, key === "golden" ? HUNT_STAMPS + Object.values(TRIPS).reduce((t, x) => t + x.stamps, 0) : 65535);
-          const signature = await signer.signTypedData({
-            domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
-            types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
-            primaryType: "Finds",
-            message: { player: a.wallet, drop: BigInt(drop), day: d, coins, deadline: BigInt(deadline) },
-          });
-          out.push({ drop, day: d, coins, deadline, signature });
+      this.vouchersSent ??= new WeakMap();
+      const sent = this.vouchersSent.get(ws);
+      if (sent && sent.wallet === a.wallet && now - sent.at < 5000) return send(ws, await sent.reply);
+      const reply = this.vouchers(a, day, now);
+      this.vouchersSent.set(ws, { at: now, wallet: a.wallet, reply });
+      reply.catch(() => this.vouchersSent.get(ws)?.reply === reply && this.vouchersSent.delete(ws));
+      return send(ws, await reply);
+    }
+  }
+
+  /// The ["vouchers"] answer for a signed-in hunter: a signed note of each drop's finds, today's and yesterday's, and
+  /// their companion bonus shares, for TokenDrops.claimMany.
+  async vouchers(a, day, now) {
+    const signer = (this.signer ??= privateKeyToAccount(this.env.DROPS_KEY));
+    const deadline = Math.floor(now / 1000) + VOUCHER_SECS;
+    const out = [];
+    for (const d of [day - 1, day]) {
+      const lay = layDrops(d, SPOTS.length, await this.dropsOn(d));
+      const wanted = lay.coins.map((c) => [c.drop, c.drop]);
+      if (lay.golden.drop !== null) wanted.unshift([lay.golden.drop, "golden"]);
+      for (const [drop, key] of wanted) {
+        // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop.)
+        let n = (await this.finds(d, a.wallet, key)).set.size;
+        if (key === "golden") for (const k of Object.keys(TRIPS)) n += (await this.finds(d, a.wallet, k)).set.size;
+        if (!n) continue;
+        const coins = Math.min(n, key === "golden" ? HUNT_STAMPS + Object.values(TRIPS).reduce((t, x) => t + x.stamps, 0) : 65535);
+        const signature = await signer.signTypedData({
+          domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
+          types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
+          primaryType: "Finds",
+          message: { player: a.wallet, drop: BigInt(drop), day: d, coins, deadline: BigInt(deadline) },
+        });
+        out.push({ drop, day: d, coins, deadline, signature });
+      }
+    }
+    // The companion bonus: yesterday's share (paid as today) and the day before's (paid as yesterday, still open).
+    if (await this.bonusDropsReady()) {
+      const { day: today, ms } = this.bonusClock(now), until = Math.floor(ms / 1000) + VOUCHER_SECS;
+      for (const playDay of [today - 2, today - 1]) {
+        const p = await this.bonusPaid(a.wallet, playDay);
+        if (!p) continue;
+        const signature = await signer.signTypedData({
+          domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
+          types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
+          primaryType: "Finds",
+          message: { player: a.wallet, drop: BigInt(p.drop), day: p.payDay, coins: p.coins, deadline: BigInt(until) },
+        });
+        out.push({ drop: p.drop, day: p.payDay, coins: p.coins, deadline: until, signature });
+      }
+    }
+    return out.length ? ["vouchers", out] : ["nope", -1, "Find a golden stamp or a coin first."];
+  }
+
+  // ---------------------------------------------------------------- the companion bonus
+
+  /// The bonus's clock: { ms, day, minute } at `now`. (`wrangler dev` alone can set BONUS_DEV_DAYS, to try settling a
+  /// day without waiting for it to end, and BONUS_DEV_MINUTE_MS and BONUS_DEV_SAMPLE_MS, to try it in seconds.)
+  bonusClock(now) {
+    const ms = now + Number(this.env.BONUS_DEV_DAYS ?? 0) * 86_400_000;
+    return { ms, day: huntDay(ms), minute: Math.floor(now / Number(this.env.BONUS_DEV_MINUTE_MS ?? 60_000)) };
+  }
+
+  /// The bonus drops (bonus-rules.js) as last read from TokenDrops, kept a minute: [{ id, startDay, endDay, dailyCoins,
+  /// dry }] ($STAMP drops only). null when there's no bonus at all (none listed, no companions contract, no voucher
+  /// key); undefined until they've been read once (the last good list is also kept in storage, for after a wake).
+  bonusDrops() {
+    if (!BONUS_DROPS.length || !this.env.COMPANIONS_ADDRESS || !this.env.DROPS_KEY || !this.env.DROPS_ADDRESS) return null;
+    const c = this.bonusDropsCache;
+    if (!c || Date.now() - c.at > DROPS_CHECK_MS) this.readBonusDrops();
+    return c?.drops;
+  }
+  /// The same, waiting for the first read.
+  async bonusDropsReady() {
+    if (this.bonusDrops() === undefined) await this.bonusDropsRead;
+    return this.bonusDrops();
+  }
+  readBonusDrops() {
+    return (this.bonusDropsRead ??= (async () => {
+      try {
+        if (!this.bonusDropsCache) {
+          const kept = await this.ctx.storage.get("bonusDrops");
+          if (kept && !this.bonusDropsCache) this.bonusDropsCache = { at: 0, drops: kept };
+        }
+        this.chain ??= createPublicClient({ transport: http(this.env.PAD_RPC ?? this.env.SKINS_RPC ?? "https://robinhood-rpc.publicnode.com") });
+        const read = (functionName, args = []) => this.chain.readContract({ address: this.env.DROPS_ADDRESS, abi: DROPS_ABI, functionName, args });
+        this.dropStamp ??= (await read("stamp")).toLowerCase();
+        const drops = [];
+        for (const id of BONUS_DROPS) {
+          let d;
+          try {
+            d = await read("drop", [BigInt(id)]);
+          } catch (e) {
+            if (e?.walk?.((x) => x?.name === "ContractFunctionRevertedError")) continue; // (no such drop: a typo in the list)
+            throw e;
+          }
+          if (d.token.toLowerCase() !== this.dropStamp) continue;
+          drops.push({ id, startDay: Number(d.startDay), endDay: Number(d.endDay), dailyCoins: Number(d.dailyCoins), dry: d.left < d.perCoin });
+        }
+        if (JSON.stringify(drops) !== JSON.stringify(this.bonusDropsCache?.drops)) await this.ctx.storage.put("bonusDrops", drops);
+        this.bonusDropsCache = { at: Date.now(), drops };
+      } catch {
+        // (The chain didn't answer: keep what was known, and try again in 10 s.)
+        this.bonusDropsCache = { at: Date.now() - DROPS_CHECK_MS + 10_000, drops: this.bonusDropsCache?.drops };
+      } finally {
+        this.bonusDropsRead = null;
+      }
+    })());
+  }
+  /// The bonus drop that pays for `playDay`'s minutes (the latest listed one whose days include its pay day), or null.
+  bonusDropFor(drops, playDay) {
+    const payDay = bonusPayDay(playDay);
+    return drops?.findLast((d) => payDay >= d.startDay && payDay <= d.endDay) ?? null;
+  }
+
+  /// A wallet's bonus for `day`: { day, min: { kind: minutes }, lost: [kinds that left the wallet that day], last (the
+  /// minute last counted), at and world (where), dirty (minutes counted since it was written), savedAt, ready }. From
+  /// memory, or loading (`loading` until `ready` settles). What was counted but not yet written also rides in the
+  /// counting connection's attachment (`bonusMem`), so a room that sleeps and wakes doesn't lose it.
+  bonusRec(wallet, day) {
+    this.bonus ??= new Map();
+    const r = this.bonus.get(wallet);
+    if (r && r.day === day) return r;
+    if (r?.dirty && !r.loading) this.saveBonus(wallet, r); // (the last minutes of their day before)
+    const rec = { day, loading: true, min: {}, lost: [], last: 0, dirty: 0, savedAt: 0 };
+    rec.ready = this.ctx.storage.get(`bonus:${day}:${wallet}`).then((v) => {
+      if (v) Object.assign(rec, { min: v.min ?? {}, lost: v.lost ?? [], last: v.last ?? 0 });
+      // (Counts only grow within a day, so the most any of their connections counted is right.)
+      for (const ws of this.ctx.getWebSockets()) {
+        const m = this.info(ws)?.bonusMem;
+        if (m?.wallet !== wallet || m.day !== day) continue;
+        for (const [k, n] of Object.entries(m.min)) if (n > (rec.min[k] ?? 0)) [rec.min[k], rec.dirty] = [n, rec.dirty + 1];
+        for (const k of m.lost) if (!rec.lost.includes(k)) rec.lost.push(k);
+        rec.last = Math.max(rec.last, m.last);
+      }
+      rec.loading = false;
+    }, () => {
+      if (this.bonus.get(wallet) === rec) this.bonus.delete(wallet); // (try again next time)
+    });
+    this.bonus.set(wallet, rec);
+    if (this.bonus.size > 3000) {
+      for (const [w, x] of this.bonus) if (!x.dirty && !x.loading && w !== wallet) {
+        this.bonus.delete(w);
+        break;
+      }
+    }
+    return rec;
+  }
+  /// A connection signs in as `wallet`: if it was counting another wallet's bonus, that wallet's minutes are written
+  /// first (the new wallet starts from its own).
+  async switchWallet(a, wallet) {
+    if (a.bonusMem && a.bonusMem.wallet !== wallet) await this.flushMem(a.bonusMem).catch(() => {});
+    if (a.wallet !== wallet) a.bonusMem = undefined;
+    a.wallet = wallet;
+  }
+
+  /// Write what a connection counted (its attachment's `bonusMem`) into its wallet's day, if it adds anything: for when
+  /// the room has slept since and only the attachment still has it.
+  async flushMem(mem) {
+    const grow = (rec) => {
+      let more = false;
+      for (const [k, n] of Object.entries(mem.min)) {
+        if (n > (rec.min[k] ?? 0)) [rec.min[k], more] = [n, true];
+      }
+      for (const k of mem.lost) {
+        if (!rec.lost.includes(k)) {
+          rec.lost.push(k);
+          more = true;
         }
       }
-      if (!out.length) return send(ws, ["nope", -1, "Find a golden stamp or a coin first."]);
-      return send(ws, ["vouchers", out]);
+      if (mem.last > rec.last) [rec.last, more] = [mem.last, true];
+      return more;
+    };
+    const live = this.bonus?.get(mem.wallet);
+    if (live?.day === mem.day) {
+      await live.ready;
+      if (!live.loading && grow(live)) await this.saveBonus(mem.wallet, live);
+      return;
+    }
+    const key = `bonus:${mem.day}:${mem.wallet}`, v = (await this.ctx.storage.get(key)) ?? {};
+    const rec = { min: v.min ?? {}, lost: v.lost ?? [], last: v.last ?? 0 };
+    if (grow(rec)) await this.ctx.storage.put(key, rec);
+  }
+  saveBonus(wallet, rec) {
+    [rec.dirty, rec.savedAt] = [0, Date.now()];
+    return this.ctx.storage.put(`bonus:${rec.day}:${wallet}`, { min: rec.min, lost: rec.lost, last: rec.last }).catch(() => {
+      rec.dirty ||= 1;
+    });
+  }
+
+  /// Everyone who has earned with each companion on `day` ("wallet:kind"), for the ownership checks...
+  bonusWho(day) {
+    return this.daySet("bonusWho", day);
+  }
+  /// ...and those an ownership check found still holding it: only their minutes are paid.
+  bonusOk(day) {
+    return this.daySet("bonusOk", day);
+  }
+  daySet(name, day) {
+    this.daySets ??= new Map();
+    const key = `${name}:${day}`;
+    let p = this.daySets.get(key);
+    if (!p) {
+      p = this.ctx.storage.get(key).then((v) => new Set(v ?? []));
+      p.catch(() => this.daySets.get(key) === p && this.daySets.delete(key));
+      this.daySets.set(key, p);
+      if (this.daySets.size > 12) this.daySets.delete(this.daySets.keys().next().value);
+    }
+    return p;
+  }
+  async addWho(day, wallet, kind) {
+    const set = await this.bonusWho(day), k = `${wallet}:${kind}`;
+    if (set.has(k)) return;
+    set.add(k);
+    (this.whoAt ??= new Map()).set(k, Date.now());
+    await this.ctx.storage.put(`bonusWho:${day}`, [...set]);
+    // The day's last ownership check, just before it ends (an alarm wakes even a sleeping room for it).
+    const at = (day + 1) * 86_400_000 - Number(this.env.BONUS_DEV_DAYS ?? 0) * 86_400_000 - 30_000;
+    if ((await this.ctx.storage.getAlarm()) !== at) await this.ctx.storage.setAlarm(at);
+  }
+  async alarm() {
+    // The day's last ownership check; if the chain doesn't answer, again in ten seconds while the day lasts. (A room
+    // the alarm wakes hasn't read the drops yet: the check doesn't need them, only that there's a bonus at all.)
+    const now = Date.now(), { day } = this.bonusClock(now);
+    if (this.bonusDrops() === null) return;
+    try {
+      await this.sampling?.catch(() => {}); // (a random check in flight: let it finish, then look afresh)
+      await this.sampleOwners(day);
+    } catch {
+      if (this.bonusClock(now + 10_000).day === day) await this.ctx.storage.setAlarm(now + 10_000);
+    }
+  }
+
+  /// Whether `wallet` has a post office open (only those can claim, so only they earn): a yes is kept for the day, a
+  /// no for ten minutes (they may open one). null while it's being read.
+  officeOpen(wallet, day) {
+    if (!this.env.POST_OFFICE) return true;
+    this.offices ??= new Map();
+    const c = this.offices.get(wallet);
+    if (c && !c.reading && (c.ok ? c.day === day : Date.now() - c.at < 10 * 60_000)) return c.ok;
+    if (!c?.reading) {
+      this.offices.set(wallet, { ok: c?.ok ?? null, reading: true });
+      this.cosmeticChain().readContract({ address: this.env.POST_OFFICE, abi: OFFICES_ABI, functionName: "offices", args: [wallet] }).then(
+        ([open]) => this.offices.set(wallet, { ok: open, day, at: Date.now() }),
+        () => this.offices.set(wallet, { ok: null, day, at: Date.now() - 9 * 60_000 }), // (again in a minute)
+      );
+      if (this.offices.size > 3000) this.offices.delete(this.offices.keys().next().value);
+    }
+    return c?.ok ?? null;
+  }
+
+  /// Why a player's minutes aren't counting toward the bonus right now (see the ["bonus"] status in web/net.js), or
+  /// null if they are; undefined while something it needs is still being read ("checking").
+  bonusWhy(a, drops, day, now) {
+    if (!drops) return undefined;
+    if (!this.bonusDropFor(drops, day)) return "season";
+    const w = a.wallet, kind = a.hello?.companion;
+    if (!w) return "signin";
+    if (!a.hello?.addr || a.hello.addr.toLowerCase() !== w.toLowerCase()) return "wallet";
+    if (!kind) return "companion";
+    if ((a.strikes ?? 0) >= 3) return "strikes";
+    const rec = this.bonusRec(w, day);
+    if (rec.loading) return undefined;
+    if (rec.lost.includes(kind)) return "left";
+    if (Object.values(rec.min).reduce((t, m) => t + m, 0) >= BONUS_MINUTES) return "full";
+    // (An office seen open today stays known in their attachment, so a room that wakes needn't ask the chain again.)
+    if (a.officeOk?.wallet !== w || a.officeOk.day !== day) {
+      const open = this.officeOpen(w, day);
+      if (open === null) return undefined;
+      if (!open) return "office";
+      a.officeOk = { wallet: w, day };
+    }
+    if (now - (a.bonusFrom ?? now) < BONUS_WARMUP_MS || now < (a.cleanAt ?? 0)) return "warmup";
+    return null;
+  }
+
+  /// One more update from a moving player: count this minute toward their companion bonus if it qualifies (moved far
+  /// enough since their last counted minute, and not already counted from another of their tabs), and tell them when
+  /// that changes. Synchronous: what needs the chain or storage starts here and counts from a later update.
+  bonusTick(ws, a, s, world, now) {
+    const drops = this.bonusDrops();
+    if (drops === null) return;
+    a.bonusFrom ??= now;
+    this.maybeSample(now);
+    const { day, minute } = this.bonusClock(now), why = this.bonusWhy(a, drops, day, now);
+    let counted = 0;
+    if (why === null) {
+      const rec = this.bonusRec(a.wallet, day);
+      if (rec.last === minute) return;
+      if (rec.at && rec.world === world && arcBetween(rec.at, s, TRIPS[world]?.R ?? R) < BONUS_MOVE_M) return;
+      const kind = a.hello.companion;
+      if (!rec.min[kind]) this.addWho(day, a.wallet, kind).catch(() => {});
+      rec.min[kind] = (rec.min[kind] ?? 0) + 1;
+      [rec.last, rec.at, rec.world] = [minute, s.slice(0, 3), world];
+      if (a.bonusMem && (a.bonusMem.day !== day || a.bonusMem.wallet !== a.wallet)) this.flushMem(a.bonusMem).catch(() => {});
+      a.bonusMem = { wallet: a.wallet, day, min: { ...rec.min }, lost: [...rec.lost], last: rec.last };
+      if (++rec.dirty >= BONUS_SAVE_EVERY) this.saveBonus(a.wallet, rec);
+      counted = Object.values(rec.min).reduce((t, m) => t + m, 0);
+    }
+    const shown = why === undefined ? "checking" : why;
+    if (shown !== a.bonusWhy || day !== a.bonusDay || (counted && counted % BONUS_STATUS_EVERY === 0)) {
+      [a.bonusWhy, a.bonusDay] = [shown, day]; // (and a new day starts afresh)
+      this.sendBonus(ws, a, now).catch(() => {});
+    }
+  }
+
+  /// Tell a player how their companion bonus stands: whether a season is running (`live`), what's counted today, why it
+  /// isn't counting now (if it isn't), and their shares of the last two days, waiting to be claimed.
+  async sendBonus(ws, a, now = Date.now()) {
+    if (!BONUS_DROPS.length || !this.env.COMPANIONS_ADDRESS) return; // (no bonus at all: nothing to say)
+    const drops = await this.bonusDropsReady();
+    if (drops === null) return;
+    const { day } = this.bonusClock(now), w = a.wallet, live = this.bonusDropFor(drops, day);
+    let minutes = 0, coins = 0, lost = [];
+    const paid = [];
+    if (w) {
+      const rec = this.bonusRec(w, day);
+      await rec.ready;
+      minutes = Object.values(rec.min).reduce((t, m) => t + m, 0);
+      coins = bonusCoins(keptMinutes(rec));
+      lost = rec.lost;
+      for (const playDay of [day - 2, day - 1]) {
+        const p = await this.bonusPaid(w, playDay).catch(() => null);
+        if (p) paid.push(p);
+      }
+    }
+    let why = this.bonusWhy(a, drops, day, now);
+    if (why === undefined) why = "checking"; // (null goes out only when minutes really count)
+    send(ws, ["bonus", { on: true, live: !!live, dry: !!live?.dry, day, minutes, max: BONUS_MINUTES, kind: a.hello?.companion ?? null, coins, why, lost, pool: live?.dailyCoins ?? 0, paid }]);
+  }
+
+  /// A wallet's minutes for a day that count: without the companions that left it, and only those an ownership check
+  /// found it holding.
+  paidMinutes(v, wallet, ok) {
+    return Object.fromEntries(Object.entries(keptMinutes(v)).filter(([k]) => ok.has(`${wallet}:${k}`)));
+  }
+
+  /// Everyone's coins for `day` together, before any sharing: added up once the day is over, and kept.
+  bonusTotal(day) {
+    this.totals ??= new Map();
+    let p = this.totals.get(day);
+    if (!p) {
+      p = (async () => {
+        const kept = await this.ctx.storage.get(`bonusTotal:${day}`);
+        if (kept !== undefined) return kept;
+        // (What's only in memory or in a connection's attachment for that day is written first, so it's counted.)
+        await Promise.all([...(this.bonus ?? [])].filter(([, r]) => r.day === day && r.dirty && !r.loading).map(([w, r]) => this.saveBonus(w, r)));
+        for (const ws of this.ctx.getWebSockets()) {
+          const m = this.info(ws)?.bonusMem;
+          if (m?.day === day) await this.flushMem(m);
+        }
+        const ok = await this.bonusOk(day);
+        let total = 0;
+        for (const [key, v] of await this.ctx.storage.list({ prefix: `bonus:${day}:` })) total += bonusCoins(this.paidMinutes(v, key.split(":")[2], ok));
+        await this.ctx.storage.put(`bonusTotal:${day}`, total);
+        return total;
+      })();
+      p.catch(() => this.totals.get(day) === p && this.totals.delete(day));
+      this.totals.set(day, p);
+      for (const d of this.totals.keys()) if (d < day - 3) this.totals.delete(d);
+    }
+    return p;
+  }
+
+  /// A wallet's share of `playDay`'s pool, once that day is over ({ drop, payDay, coins }: paid by bonus drop `drop` as
+  /// its day payDay), or null if there's nothing (or no season paid for that day).
+  async bonusPaid(wallet, playDay) {
+    const drop = this.bonusDropFor(this.bonusDrops(), playDay), payDay = bonusPayDay(playDay);
+    if (!drop || playDay >= this.bonusClock(Date.now()).day) return null;
+    this.paidCache ??= new Map();
+    const key = `${playDay}:${wallet}`;
+    if (!this.paidCache.has(key)) {
+      // (A day that's over doesn't change, so its share is worked out once.)
+      const [total, ok, v] = [await this.bonusTotal(playDay), await this.bonusOk(playDay), await this.ctx.storage.get(`bonus:${playDay}:${wallet}`)];
+      this.paidCache.set(key, bonusShare(bonusCoins(this.paidMinutes(v, wallet, ok)), total, drop.dailyCoins));
+      if (this.paidCache.size > 4000) this.paidCache.delete(this.paidCache.keys().next().value);
+    }
+    const coins = this.paidCache.get(key);
+    return coins > 0 ? { drop: drop.id, payDay, coins } : null;
+  }
+
+  /// Now and then (at random times, so nobody can time handing a companion from wallet to wallet), and once more just
+  /// before the day ends (alarm), check in one read that every wallet that has earned today still holds the companion
+  /// it earned with. One that does is confirmed (only confirmed minutes are paid); one that doesn't loses that
+  /// companion's minutes for the day. So a companion earns for one wallet a day.
+  maybeSample(now) {
+    const mean = Number(this.env.BONUS_DEV_SAMPLE_MS ?? BONUS_SAMPLE_MS);
+    const gap = () => Math.min(2.5 * mean, Math.max(0.2 * mean, -Math.log(1 - Math.random()) * mean));
+    this.nextSample ??= now + gap();
+    if (now < this.nextSample || this.sampling) return;
+    this.nextSample = now + gap();
+    this.sampleOwners(this.bonusClock(now).day).catch(() => {});
+  }
+  async sampleOwners(day) {
+    if (this.sampling) return this.sampling;
+    this.sampling = (async () => {
+      // (A pair that started earning in the last minute is left to the next check: the read may not show a companion
+      // bought moments ago yet.)
+      const recent = Date.now() - 60_000;
+      const pairs = [...(await this.bonusWho(day))].filter((k) => !((this.whoAt?.get(k) ?? 0) > recent)).map((k) => {
+        const [w, kind] = k.split(":");
+        return [w, Number(kind)];
+      });
+      const held = [];
+      for (let i = 0; i < pairs.length; i += 200) {
+        const part = pairs.slice(i, i + 200);
+        held.push(...await this.cosmeticChain().readContract({
+          address: this.env.COMPANIONS_ADDRESS, abi: COMPANIONS_ABI, functionName: "balanceOfBatch",
+          args: [part.map(([w]) => w), part.map(([, k]) => BigInt(k))],
+        }));
+      }
+      if (this.bonusClock(Date.now()).day !== day) return; // (past midnight: tomorrow's holdings say nothing of today's)
+      const ok = await this.bonusOk(day), had = ok.size;
+      for (let j = 0; j < pairs.length; j++) {
+        if (held[j] > 0n) ok.add(`${pairs[j][0]}:${pairs[j][1]}`);
+        else await this.loseBonus(day, ...pairs[j]);
+      }
+      if (ok.size !== had) await this.ctx.storage.put(`bonusOk:${day}`, [...ok]);
+    })().finally(() => (this.sampling = null));
+    return this.sampling;
+  }
+  /// `wallet` no longer holds a `kind` it earned with today: those minutes don't count today.
+  async loseBonus(day, wallet, kind) {
+    const rec = this.bonusRec(wallet, day);
+    await rec.ready;
+    if (rec.loading || rec.lost.includes(kind)) return;
+    rec.lost.push(kind);
+    await this.saveBonus(wallet, rec);
+    for (const ws of this.ctx.getWebSockets()) {
+      const o = this.info(ws);
+      if (o?.bonusMem?.wallet === wallet && o.bonusMem.day === day && !o.bonusMem.lost.includes(kind)) o.bonusMem.lost.push(kind);
+      if (o?.wallet === wallet) this.sendBonus(ws, o).catch(() => {});
     }
   }
 
@@ -660,6 +1123,8 @@ export class Planet extends DurableObject {
     a.world = TRIPS[w] ? w : undefined;
     a.s = null;
     a.sAt = 0;
+    // (Where they were is on another world now: the speed check starts afresh, and finds wait as on a new connection.)
+    a.firstAt = null;
     ws.serializeAttachment(a);
     if (a.hello) this.broadcast(ws, ["world", a.id, w]);
     // Where everyone already there is (those standing still don't send it again).
@@ -669,20 +1134,28 @@ export class Planet extends DurableObject {
     })]);
   }
 
-  webSocketClose(ws, code) {
-    this.left(ws);
+  async webSocketClose(ws, code) {
+    await this.left(ws);
     try {
       ws.close(code >= 1000 && code < 1004 ? code : 1000, "Bye");
     } catch {}
   }
-  webSocketError(ws) {
-    this.left(ws);
+  async webSocketError(ws) {
+    await this.left(ws);
   }
-  left(ws) {
+  async left(ws) {
     const a = this.info(ws);
     this.seen.delete(ws);
     if (a) a.hiSeq = (a.hiSeq ?? 0) + 1; // (a hello still reading the chain stops there: no join for someone gone)
     if (a?.hello) this.broadcast(ws, ["leave", a.id]);
+    // Their companion bonus's last minutes, if this was their last connection (from memory, or after the room slept,
+    // from what this connection carried).
+    const mem = a?.bonusMem;
+    if (mem && !this.ctx.getWebSockets().some((o) => o !== ws && this.info(o)?.bonusMem?.wallet === mem.wallet)) {
+      const rec = this.bonus?.get(mem.wallet);
+      if (rec?.day === mem.day && rec.dirty && !rec.loading) await this.saveBonus(mem.wallet, rec);
+      else await this.flushMem(mem).catch(() => {});
+    }
   }
 }
 
