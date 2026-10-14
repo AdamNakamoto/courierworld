@@ -5,7 +5,10 @@
   "rpcUrl": "https://robinhood-rpc.publicnode.com",
   "walletRpcUrl": "https://robinhood-rpc.publicnode.com",
   "logsRpcUrl": "https://rpc.mainnet.chain.robinhood.com",
-  "logsRelays": ["/api/logs", "https://courier-world-mp.courier-world-mp.workers.dev/logs"],
+  "logsRelays": [
+    "/api/logs",
+    "https://courier-world-mp.courier-world-mp.workers.dev/logs"
+  ],
   "explorer": "https://robinhoodchain.blockscout.com",
   "stage": "game",
   "officeBlock": 84911029,
@@ -27,7 +30,8 @@
     "skinsStamp": "0x6DB7DCdFDBCe63Dd1e960CB8cE676bd32c99bc6a",
     "pad": "0x90c3aaae34cf4681701452379D3819D6Bc8Fe8CC",
     "padRouter": "0x7F3223C32a73f2e7233f8106D3a37F959d2a2B5d",
-    "padEthRouter": "0x51E57F0BA393e720786Bd6BDCFC6324246E5B96b"
+    "padEthRouter": "0x51E57F0BA393e720786Bd6BDCFC6324246E5B96b",
+    "companions": "0x4254cEac6B7C9F8911Ce908A910DD1874C5B49B7"
   },
   "abis": {
     "stamp": [
@@ -10991,8 +10995,1350 @@
           }
         ]
       }
+    ],
+    "companions": [
+      {
+        "type": "constructor",
+        "inputs": [
+          {
+            "name": "owner_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "stamp_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "treasury_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "validator_",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "base_",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "MAX_PER_BUY",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "MAX_ROYALTY_BPS",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "acceptOwnership",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "allKinds",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "ids",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "list",
+            "type": "tuple[]",
+            "internalType": "struct CourierCompanions.Kind[]",
+            "components": [
+              {
+                "name": "price",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "maxSupply",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "minted",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "perWallet",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "open",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "exists",
+                "type": "bool",
+                "internalType": "bool"
+              }
+            ]
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "balanceOf",
+        "inputs": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "balanceOfBatch",
+        "inputs": [
+          {
+            "name": "accounts",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "ids",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "base",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "bought",
+        "inputs": [
+          {
+            "name": "buyer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "buy",
+        "inputs": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxCost",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "buyWithPermit",
+        "inputs": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxCost",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "v",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "r",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "s",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "contractURI",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "getTransferValidationFunction",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "functionSignature",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "isViewFunction",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "stateMutability": "pure"
+      },
+      {
+        "type": "function",
+        "name": "getTransferValidator",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "isApprovedForAll",
+        "inputs": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "operator",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "kindCount",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "kindIds",
+        "inputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "kinds",
+        "inputs": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "price",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "maxSupply",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minted",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "perWallet",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "open",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "exists",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "name",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "owner",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "pendingOwner",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "renounceOwnership",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "rescue",
+        "inputs": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "contract IERC20"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "royaltyInfo",
+        "inputs": [
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "salePrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "safeBatchTransferFrom",
+        "inputs": [
+          {
+            "name": "from",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "ids",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "values",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "safeTransferFrom",
+        "inputs": [
+          {
+            "name": "from",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "setApprovalForAll",
+        "inputs": [
+          {
+            "name": "operator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "approved",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "setBase",
+        "inputs": [
+          {
+            "name": "base_",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "setKind",
+        "inputs": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "price",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxSupply",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "perWallet",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "open_",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "setRoyalty",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "bps",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "setTransferValidator",
+        "inputs": [
+          {
+            "name": "validator",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "setTreasury",
+        "inputs": [
+          {
+            "name": "treasury_",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "stamp",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "address",
+            "internalType": "contract IERC20"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "supportsInterface",
+        "inputs": [
+          {
+            "name": "interfaceId",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "symbol",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "transferOwnership",
+        "inputs": [
+          {
+            "name": "newOwner",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "type": "function",
+        "name": "transferValidator",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "treasury",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "",
+            "type": "address",
+            "internalType": "address"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "uri",
+        "inputs": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "",
+            "type": "string",
+            "internalType": "string"
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "type": "event",
+        "name": "ApprovalForAll",
+        "inputs": [
+          {
+            "name": "account",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "operator",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "approved",
+            "type": "bool",
+            "indexed": false,
+            "internalType": "bool"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "BaseSet",
+        "inputs": [
+          {
+            "name": "base",
+            "type": "string",
+            "indexed": false,
+            "internalType": "string"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "Bought",
+        "inputs": [
+          {
+            "name": "buyer",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "id",
+            "type": "uint256",
+            "indexed": true,
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          },
+          {
+            "name": "stampPaid",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "ContractURIUpdated",
+        "inputs": [],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "KindSet",
+        "inputs": [
+          {
+            "name": "id",
+            "type": "uint256",
+            "indexed": true,
+            "internalType": "uint256"
+          },
+          {
+            "name": "price",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxSupply",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          },
+          {
+            "name": "perWallet",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          },
+          {
+            "name": "open",
+            "type": "bool",
+            "indexed": false,
+            "internalType": "bool"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "OwnershipTransferStarted",
+        "inputs": [
+          {
+            "name": "previousOwner",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "newOwner",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "OwnershipTransferred",
+        "inputs": [
+          {
+            "name": "previousOwner",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "newOwner",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "TransferBatch",
+        "inputs": [
+          {
+            "name": "operator",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "from",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "ids",
+            "type": "uint256[]",
+            "indexed": false,
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "values",
+            "type": "uint256[]",
+            "indexed": false,
+            "internalType": "uint256[]"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "TransferSingle",
+        "inputs": [
+          {
+            "name": "operator",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "from",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "to",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          },
+          {
+            "name": "id",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "indexed": false,
+            "internalType": "uint256"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "TransferValidatorUpdated",
+        "inputs": [
+          {
+            "name": "oldValidator",
+            "type": "address",
+            "indexed": false,
+            "internalType": "address"
+          },
+          {
+            "name": "newValidator",
+            "type": "address",
+            "indexed": false,
+            "internalType": "address"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "TreasurySet",
+        "inputs": [
+          {
+            "name": "treasury",
+            "type": "address",
+            "indexed": true,
+            "internalType": "address"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "event",
+        "name": "URI",
+        "inputs": [
+          {
+            "name": "value",
+            "type": "string",
+            "indexed": false,
+            "internalType": "string"
+          },
+          {
+            "name": "id",
+            "type": "uint256",
+            "indexed": true,
+            "internalType": "uint256"
+          }
+        ],
+        "anonymous": false
+      },
+      {
+        "type": "error",
+        "name": "BadPrice",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "BadQuantity",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "BadSupply",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "BadTreasury",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "CannotRenounce",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "Closed",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "ERC1155InsufficientBalance",
+        "inputs": [
+          {
+            "name": "sender",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "balance",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC1155InvalidApprover",
+        "inputs": [
+          {
+            "name": "approver",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC1155InvalidArrayLength",
+        "inputs": [
+          {
+            "name": "idsLength",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "valuesLength",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC1155InvalidOperator",
+        "inputs": [
+          {
+            "name": "operator",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC1155InvalidReceiver",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC1155InvalidSender",
+        "inputs": [
+          {
+            "name": "sender",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC1155MissingApprovalForAll",
+        "inputs": [
+          {
+            "name": "operator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC2981InvalidDefaultRoyalty",
+        "inputs": [
+          {
+            "name": "numerator",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "denominator",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC2981InvalidDefaultRoyaltyReceiver",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC2981InvalidTokenRoyalty",
+        "inputs": [
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "numerator",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "denominator",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ERC2981InvalidTokenRoyaltyReceiver",
+        "inputs": [
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "receiver",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "NotAContract",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "OwnableInvalidOwner",
+        "inputs": [
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "OwnableUnauthorizedAccount",
+        "inputs": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "PermitFailed",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "PriceChanged",
+        "inputs": [
+          {
+            "name": "price",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "ReentrancyGuardReentrantCall",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "RoyaltyTooHigh",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "SafeERC20FailedOperation",
+        "inputs": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "type": "error",
+        "name": "SoldOut",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "SupplyCanOnlyShrink",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "UnknownKind",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "WalletLimit",
+        "inputs": []
+      },
+      {
+        "type": "error",
+        "name": "ZeroAddress",
+        "inputs": []
+      }
     ]
   },
   "skinsBlock": 26171009,
-  "padBlock": 26178528
+  "padBlock": 26178528,
+  "companionsBlock": 26191324
 }

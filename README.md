@@ -213,7 +213,8 @@ add the X link (https://x.com/PlayCourierWld) to the collection's links and turn
 
 ## Courier Companions
 
-`CourierCompanions.sol` (not deployed yet) sells companions that follow your courier around. It's an ERC-1155: each
+`CourierCompanions.sol` (live since 2026-10-14 at `0x4254cEac6B7C9F8911Ce908A910DD1874C5B49B7`, owned by the treasury) sells companions
+that follow your courier around. It's an ERC-1155: each
 kind of companion is a token id with its own $STAMP price, a limited supply (which can only shrink) and a per-wallet
 limit (counting purchases, per address). Paid only in $STAMP, straight from the buyer to the treasury (`buy`, or
 `buyWithPermit` for one signature); buyers name the most they'll pay, nothing is minted except by buying, and resales
@@ -227,7 +228,8 @@ pets 100 $STAMP (300 of each, 5 a wallet), space buddies 250 (150, 3 a wallet), 
 mecha guardian and colossus 2,500 (30, 1 a wallet) and three anime-style companions 3,000 (25, 1 a wallet).
 
 IMD audited it ([job 145af84f](https://explorer.imd.fun/jobs/145af84f-02c5-4db7-8dc3-3ec3a300b8f1): 3 low, 6
-informational, no critical, high or medium). All nine are addressed (waiting on IMD's re-check): the royalty follows the treasury, the treasury
+informational, no critical, high or medium). All nine are addressed (deployed without IMD re-checking the fixes): the
+royalty follows the treasury, the treasury
 can't be the contract, `renounceOwnership` reverts, a failed permit reverts `PermitFailed`, new kinds announce their
 `URI`, `contractURI` (ERC-7572) and `rescue` exist, the trust notes are in the NatSpec, every kind has a wallet limit,
 the royalty is now enforced (finding 6 offered it as an option; Courier World wants its royalties enforced), and the
@@ -241,8 +243,8 @@ every call's outcome and fails on any surprise).
   world; `web/companions-premium.js` has the bigger models (the mecha, the colossus and the anime companions).
 - The multiplayer room shows a player's companion to others only after reading on-chain that the wallet on their
   name tag owns it (`COMPANIONS_ADDRESS`).
-- Until the contract is deployed, everything hides itself: `chain.companions` is null and the server has no
-  `COMPANIONS_ADDRESS`, so the live site plays as before.
+- Without a companions address (`chain.companions` null, no `COMPANIONS_ADDRESS` in the room), everything hides
+  itself, as it did before the deploy.
 - Metadata: `web/companions/<id>.json` (name, description, picture, and Tier / Kind / Moves traits) under the
   contract's `base` (`COMPANIONS_BASE`, https://courierworld.fun/companions/ by default), plus `collection.json`. The
   pictures (`<id>.png`, `collection.png`) are rendered from the game models. `contractURI()` serves `collection.json`
@@ -251,7 +253,7 @@ every call's outcome and fails on any surprise).
 ```bash
 cd contracts
 ./script/deploy-companions.sh                                                # dry run on a fork
-./script/deploy-companions.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet (it becomes the owner)
+RPC_URL=… ./script/deploy-companions.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet (it becomes the owner); RPC_URL: the official RPC (drpc drops deploys)
 cd ../multiplayer   # set COMPANIONS_ADDRESS in wrangler.toml's [vars], then
 npx wrangler deploy
 ```
@@ -396,7 +398,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierSkins.sol` | 999 cosmetic skins: blind mint, commit-reveal shuffle, on-chain metadata, enforced 5% royalty (ERC721-C) |
 | `TokenDrops.sol` | The treasure hunt's payouts: the treasury's token drops and the golden stamps ($STAMP), for finds the multiplayer room has checked |
 | `StampHunt.sol` | The earlier $STAMP-only hunt (replaced by TokenDrops, never deployed) |
-| `CourierCompanions.sol` | Companions that follow your courier: ERC-1155 kinds sold only for $STAMP (straight to the treasury), supplies that only shrink, wallet limits, enforced 5% royalty (ERC1155-C) (not deployed yet) |
+| `CourierCompanions.sol` | Companions that follow your courier: ERC-1155 kinds sold only for $STAMP (straight to the treasury), supplies that only shrink, wallet limits, enforced 5% royalty (ERC1155-C); live at `0x4254…49B7` |
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
