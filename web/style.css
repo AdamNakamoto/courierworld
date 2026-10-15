@@ -112,22 +112,12 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 @keyframes hunt-tick { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { .hunt-ticker .track { animation: none; } }
 #hud > * { pointer-events: auto; }
-.bag { position: absolute; top: 14px; left: 14px; padding: 6px 14px; transform: rotate(-1deg); display: flex; align-items: center; gap: 6px; }
-.bag b { font-size: 24px; }
-.bag .sep { width: 2px; height: 20px; background: var(--ink); margin: 0 6px; opacity: .4; }
-.bag .gold { color: #d9a21f; font-size: 18px; line-height: 1; -webkit-text-stroke: 1px var(--ink); }
-.env {
-  width: 26px; height: 19px; border: 2.5px solid var(--ink); background: var(--paper); position: relative; display: inline-block; margin-right: 2px;
-}
-.env::after {
-  content: ""; position: absolute; left: 3px; top: -5px; width: 15px; height: 15px;
-  border-right: 2.5px solid var(--ink); border-bottom: 2.5px solid var(--ink); transform: rotate(45deg) scaleY(.7);
-}
+/* The compass: only on the moon and Mars, the way back to the rocket. */
 #compass {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%) rotate(.6deg);
   padding: 6px 16px; display: flex; gap: 10px; align-items: center; white-space: nowrap; max-width: calc(100% - 28px);
 }
-/* The way to the goal: an arrow (a head and a shaft) turned toward it; up is straight ahead. */
+/* The way to the rocket: an arrow (a head and a shaft) turned toward it; up is straight ahead. */
 #arrow { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: none; transition: transform .12s linear; }
 #arrow svg { display: block; }
 #target { overflow: hidden; text-overflow: ellipsis; }
@@ -218,7 +208,7 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 }
 .settings .seg button.on { background: var(--yellow); }
 .settings .note { margin: 6px 0 0; font-size: 14px; line-height: 1.2; color: var(--muted); }
-.fps { position: absolute; top: 62px; left: 150px; padding: 3px 10px; font: 700 14px ui-monospace, Menlo, monospace; transform: rotate(-.6deg); }
+.fps { position: absolute; top: 14px; left: 150px; padding: 3px 10px; font: 700 14px ui-monospace, Menlo, monospace; transform: rotate(-.6deg); }
 @media (max-width: 640px) { .fps { top: 110px; left: auto; right: 64px; } .settings { right: 60px; width: min(250px, calc(100vw - 80px)); } }
 .phrases { position: absolute; top: 152px; right: 64px; display: grid; grid-template-columns: repeat(2, auto); gap: 6px; padding: 8px; transform: rotate(-.6deg); }
 .phrases button {
@@ -243,11 +233,11 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 /* Leave the emote bar its corner: the controls help wraps beside it, and steps aside on narrow windows. */
 @media (hover: hover) and (min-width: 641px) { .help { max-width: calc(100% - 520px); } }
 @media (hover: hover) and (min-width: 641px) and (max-width: 900px) { .help { display: none; } }
-.online { position: absolute; top: 62px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(.8deg); }
+.online { position: absolute; top: 14px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(.8deg); }
 .online b { font-size: 20px; }
 @media (max-width: 640px) { .online { top: 110px; } } /* below the compass, which drops to the second row on phones */
 /* The companion bonus: today's minutes with your companion, under the online count (dimmed while they aren't counting). */
-.bonus-chip { position: absolute; top: 108px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(-.6deg); cursor: pointer; }
+.bonus-chip { position: absolute; top: 60px; left: 14px; padding: 3px 12px; font-size: 17px; transform: rotate(-.6deg); cursor: pointer; }
 .bonus-chip b { font-size: 20px; }
 .bonus-chip.off { opacity: .6; }
 @media (max-width: 640px) { .bonus-chip { top: 156px; left: auto; right: 64px; } } /* (the skins mint button has the spot under it on phones) */

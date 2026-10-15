@@ -3,19 +3,19 @@
 // while moving. The room passes that on to the players near them, and now and then to everyone
 // else, so the far side of the planet still knows who's about. Waves and preset phrases go to the
 // players nearby, and chat lines (text only: no links) to everyone. It also runs the treasure hunt:
-// golden stamps and the treasury's token drops (coins scattered round the planet, web/drop-pick.js). A
+// the treasury's token drops (coins scattered round the planet, web/drop-pick.js). A
 // hunter signs in with their wallet, the room checks each find against where they've actually been, and
 // signs vouchers the TokenDrops contract pays for. Positions and emotes are just for show; only the vouchers touch the chain. A player
 // wearing a Courier Skin is shown in it only once the room has read on-chain that their wallet owns it.
 // Players can pick a name (web/name-rules.js): their wallet signs for it, and the room shows it instead of
 // their wallet address from then on. A Courier Companion following a player is shown only once the room has read
 // on chain that their wallet owns one of that kind, and earns them the companion bonus (web/bonus-rules.js) for the
-// minutes they spend out delivering with it.
+// minutes they spend out exploring with it.
 import { DurableObject } from "cloudflare:workers";
 import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import SPOTS from "../../web/hunt-spots.json";
-import { HUNT_STAMPS, huntDay, authMessage } from "../../web/hunt-pick.js";
+import { huntDay, authMessage, authMessageBefore } from "../../web/hunt-pick.js";
 import { layDrops } from "../../web/drop-pick.js";
 import { TRIPS, TREASURY, WORLDS } from "../../web/trips.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
@@ -74,7 +74,7 @@ const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).jo
 const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
 const sha256 = async (s) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
 
-// The hunt: how close (in metres, and in height) a hunter's last reported position must be to a stamp
+// The hunt: how close (in metres, and in height) a hunter's last reported position must be to a coin
 // for the find to count, the fastest anyone moves (paper plane, running: ~13 m/s; this allows lag),
 // and how long a voucher lasts.
 const REACH = 3.2, REACH_UP = 1.6, TOP_SPEED = 22, VOUCHER_SECS = 3600;
@@ -370,7 +370,7 @@ export class Planet extends DurableObject {
     }
   }
 
-  // ---------------------------------------------------------------- the golden stamp hunt
+  // ---------------------------------------------------------------- the treasure hunt
 
   /// Who they are: their look, the Courier Skin they asked to wear if it's theirs (its design number), and
   /// the Courier Companion they asked for if they own one of that kind.
@@ -500,7 +500,7 @@ export class Planet extends DurableObject {
   }
 
   /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from TokenDrops and kept a minute.
-  /// If the chain doesn't answer, the last list (or none) is used: golden stamps keep working either way.
+  /// If the chain doesn't answer, the last list (or none) is used: coins already out keep working either way.
   async dropsOn(day) {
     this.dropCache ??= new Map();
     const c = this.dropCache.get(day);
@@ -522,10 +522,10 @@ export class Planet extends DurableObject {
     }
   }
 
-  /// A wallet's finds for one day: the golden stamps (`key` "golden") or a token drop's coins (its id).
-  async finds(day, wallet, key = "golden") {
+  /// A wallet's finds for one day: a token drop's coins (`key`: its id).
+  async finds(day, wallet, key) {
     this.found ??= new Map();
-    const k = key === "golden" ? `hunt:${day}:${wallet}` : `drop:${day}:${key}:${wallet}`;
+    const k = `drop:${day}:${key}:${wallet}`;
     if (!this.found.has(k)) {
       this.found.set(k, new Set((await this.ctx.storage.get(k)) ?? []));
       if (this.found.size > 2000) this.found.delete(this.found.keys().next().value);
@@ -537,25 +537,38 @@ export class Planet extends DurableObject {
     const on = !!(this.env.DROPS_KEY && this.env.DROPS_ADDRESS);
     const day = huntDay(now);
     const state = async () => {
-      // (For each trip: its stamps found today, and when your ticket runs out, as `moon`, `moonUntil` and so on.)
+      // (For each trip: when your ticket runs out, as `moonUntil` and so on. `found`, `moon` and `mars` stay, always
+      // empty, for games loaded before golden stamps ended: their panel reads them.)
       const away = {};
-      for (const k of Object.keys(TRIPS)) [away[k], away[`${k}Until`]] = [a.wallet ? [...(await this.finds(day, a.wallet, k)).set] : [], (a.wallet && a[`${k}Until`]) || 0];
+      for (const k of Object.keys(TRIPS)) [away[k], away[`${k}Until`]] = [[], (a.wallet && a[`${k}Until`]) || 0];
       if (!a.wallet) return ["hunt", { on, day, wallet: null, found: [], coins: {}, ...away }];
       const lay = layDrops(day, SPOTS.length, await this.dropsOn(day));
       const coins = {};
       for (const c of lay.coins) coins[c.drop] = [...(await this.finds(day, a.wallet, c.drop)).set];
-      return ["hunt", { on, day, wallet: a.wallet, found: [...(await this.finds(day, a.wallet)).set], coins, ...away }];
+      return ["hunt", { on, day, wallet: a.wallet, found: [], coins, ...away }];
+    };
+    // A golden stamp grabbed in a game loaded before they ended: nothing is kept, and the game hears why once per
+    // connection (-3: just a toast, with no look again that would bring the stamp back).
+    const goldenEnded = () => {
+      if (a.goldenSaid) return;
+      a.goldenSaid = true;
+      ws.serializeAttachment(a);
+      send(ws, ["nope", -3, "Golden stamps are gone: they were just for fun and never paid $STAMP. Reload for the latest Courier World."]);
     };
 
     if (m[0] === "auth") {
-      // ["auth", wallet, signature]: they signed authMessage(wallet, the code we sent at welcome).
+      // ["auth", wallet, signature]: they signed authMessage(wallet, the code we sent at welcome), or, in a game loaded
+      // before 2026-10-15, authMessageBefore.
       const [, wallet, signature] = m;
       if (typeof wallet !== "string" || !isAddress(wallet) || typeof signature !== "string" || signature.length > 200) return;
       let ok = false;
-      try {
-        // The message carries the address as the game wrote it (wallets often report it in lower case).
-        ok = await verifyMessage({ address: wallet, message: authMessage(wallet, a.code), signature });
-      } catch {}
+      // The message carries the address as the game wrote it (wallets often report it in lower case).
+      for (const message of [authMessage(wallet, a.code), authMessageBefore(wallet, a.code)]) {
+        try {
+          ok = await verifyMessage({ address: wallet, message, signature });
+        } catch {}
+        if (ok) break;
+      }
       if (!ok) return send(ws, ["nope", -1, "That signature didn't check out. Try signing in again."]);
       await this.switchWallet(a, getAddress(wallet));
       await this.tickets(a); // (tickets bought before, still good)
@@ -584,10 +597,11 @@ export class Planet extends DurableObject {
     if (!a.wallet) return send(ws, ["nope", -1, "Sign in with your wallet to hunt for treasure."]);
 
     if (m[0] === "grab") {
-      // ["grab", spot]: they say they've just picked up the stamp or coin at that spot. Check they were there.
+      // ["grab", spot]: they say they've just picked up the coin at that spot. Check they were there.
       const i = m[1];
       const nope = (why) => send(ws, ["nope", i, why]);
       const owner = Number.isInteger(i) ? layDrops(day, SPOTS.length, await this.dropsOn(day)).owner.get(i) : undefined;
+      if (owner === "golden") return goldenEnded();
       if (owner === undefined) return nope("Nothing is out there today.");
       const { key, set } = await this.finds(day, a.wallet, owner);
       if (set.has(i)) return send(ws, ["found", day, i, set.size, owner]);
@@ -600,26 +614,9 @@ export class Planet extends DurableObject {
       this.vouchersSent?.delete(ws); // (the next vouchers include it)
       return send(ws, ["found", day, i, set.size, owner]);
     }
-    if (m[0] === "wgrab" || m[0] === "mgrab") {
-      // ["wgrab", world, spot]: a stamp on the moon or Mars (an index into that trip's spots) picked up there, with a
-      // ticket. (["mgrab", spot]: a moon stamp, from a game loaded before Mars.)
-      const [k, i] = m[0] === "mgrab" ? ["moon", m[1]] : [m[1], m[2]];
-      const trip = TRIPS[k];
-      if (!trip) return;
-      const nope = (why) => send(ws, ["nope", i, why, k]);
-      if (!Number.isInteger(i) || !trip.pick(day).includes(i)) return nope("Nothing is out there today.");
-      if (worldOf(a) !== k || !(a[`${k}Until`] > now)) return nope(`Those stamps count for couriers with a ticket to ${trip.name}.`);
-      const { key, set } = await this.finds(day, a.wallet, k);
-      if (set.has(i)) return send(ws, ["found", day, i, set.size, k]);
-      if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement, so finds aren't counting this session. Reload to try again.");
-      if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000 || now < (a.cleanAt ?? 0)) return nope("Keep exploring a moment, then try again.");
-      const p = trip.spots[i], far = arcBetween(a.s, p.d, trip.R), up = Math.abs(a.s[6] + 0.85 - p.h);
-      if (far > trip.reach || up > trip.reachUp) return nope("You weren't close enough to that one.");
-      set.add(i);
-      await this.ctx.storage.put(key, [...set]);
-      this.vouchersSent?.delete(ws); // (the next vouchers include it)
-      return send(ws, ["found", day, i, set.size, k]);
-    }
+    // ["wgrab", world, spot] and ["mgrab", spot]: a golden stamp on the moon or Mars, from a game loaded before they
+    // ended.
+    if (m[0] === "wgrab" || m[0] === "mgrab") return goldenEnded();
     if (m[0] === "vouchers") {
       // ["vouchers"]: a signed note of each drop's finds, today's and yesterday's, for TokenDrops.claimMany. (The same
       // answer again for a few seconds, so asking over and over can't keep the room signing.)
@@ -642,14 +639,10 @@ export class Planet extends DurableObject {
     const out = [];
     for (const d of [day - 1, day]) {
       const lay = layDrops(d, SPOTS.length, await this.dropsOn(d));
-      const wanted = lay.coins.map((c) => [c.drop, c.drop]);
-      if (lay.golden.drop !== null) wanted.unshift([lay.golden.drop, "golden"]);
-      for (const [drop, key] of wanted) {
-        // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop.)
-        let n = (await this.finds(d, a.wallet, key)).set.size;
-        if (key === "golden") for (const k of Object.keys(TRIPS)) n += (await this.finds(d, a.wallet, k)).set.size;
+      for (const { drop } of lay.coins) {
+        const n = (await this.finds(d, a.wallet, drop)).set.size;
         if (!n) continue;
-        const coins = Math.min(n, key === "golden" ? HUNT_STAMPS + Object.values(TRIPS).reduce((t, x) => t + x.stamps, 0) : 65535);
+        const coins = Math.min(n, 65535);
         const signature = await signer.signTypedData({
           domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
           types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
@@ -674,7 +667,7 @@ export class Planet extends DurableObject {
         out.push({ drop: p.drop, day: p.payDay, coins: p.coins, deadline: until, signature });
       }
     }
-    return out.length ? ["vouchers", out] : ["nope", -1, "Find a golden stamp or a coin first."];
+    return out.length ? ["vouchers", out] : ["nope", -1, "Find a coin first."];
   }
 
   // ---------------------------------------------------------------- the companion bonus

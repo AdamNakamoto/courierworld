@@ -3,7 +3,7 @@
 //
 // The houses, shops, park and poles that were there are still drawn at random and keep their places in
 // the town (see "left out" in world.js), so nothing anywhere else moves: each building's footprint, door
-// and residents stay, under a tower, and the golden stamps and the players' lots are kept clear.
+// and residents stay, under a tower, and the treasure hunt's spots and the players' lots are kept clear.
 //
 // The screens show posters for the game and for shows that only play on this planet; a few show the ad
 // that's on the Orb (orb.json) at the time. None of them name a real brand. One poster shows the biggest
@@ -301,14 +301,15 @@ const POSTERS = [
     say(g, "POST OFFICE", tx, ty + h * (wide ? 0.2 : 0.1), (wide ? w * 0.66 : w) * 0.92, h * (wide ? 0.2 : 0.1), bungee, "#fbf6ea");
     say(g, "EARN $STAMP EVERY DAY", tx, ty + h * (wide ? 0.38 : 0.19), (wide ? w * 0.66 : w) * 0.86, h * (wide ? 0.09 : 0.045), hand, "#ffe1a8");
   },
-  // The treasure hunt: a token drop's coins while one is running (img.drops, from showDrops), else the golden stamps.
+  // The treasure hunt: a token drop's coins while one is running (img.drops, from showDrops), else word that coins
+  // come with a drop.
   function hunt(g, w, h, wide, img) {
     if (img.drops?.length) return coinDrop(g, w, h, wide, img.drops);
     gradient(g, w, h, "#16958d", "#0e5f5a");
     for (let i = 0; i < 9; i++) star(g, ((i * 71 + 13) % 100) / 100 * w, ((i * 43 + 7) % 100) / 100 * h, Math.min(w, h) * (0.04 + (i % 3) * 0.02), "#f2c94c");
-    say(g, "GOLDEN STAMP", w / 2, h * (wide ? 0.36 : 0.4), w * 0.9, h * (wide ? 0.2 : 0.1), bungee, "#ffe27a");
+    say(g, "TREASURE", w / 2, h * (wide ? 0.36 : 0.4), w * 0.9, h * (wide ? 0.2 : 0.1), bungee, "#ffe27a");
     say(g, "HUNT", w / 2, h * (wide ? 0.6 : 0.52), w * 0.8, h * (wide ? 0.24 : 0.12), bungee, "#ffe27a");
-    say(g, "24 HIDDEN ON THE PLANET", w / 2, h * (wide ? 0.83 : 0.65), w * 0.84, h * (wide ? 0.09 : 0.045), hand, "#ffffff");
+    say(g, "COINS WHEN A DROP IS ON", w / 2, h * (wide ? 0.83 : 0.65), w * 0.84, h * (wide ? 0.09 : 0.045), hand, "#ffffff");
   },
   function advertise(g, w, h, wide) {
     fill(g, w, h, "#0b1024");
@@ -468,7 +469,7 @@ export function createSquare(k) {
     };
     im.src = src;
   }
-  const TICKER = " ★ COURIER WORLD ★ DELIVERING HAPPINESS ★ $STAMP ★ GM COURIERS ★ POST OFFICES OPEN 24/7 ★ FIND THE GOLDEN STAMPS ★ PICK YOUR NAME AT THE POST OFFICE";
+  const TICKER = " ★ COURIER WORLD ★ DELIVERING HAPPINESS ★ $STAMP ★ GM COURIERS ★ POST OFFICES OPEN 24/7 ★ FLY TO THE MOON AND MARS ★ PICK YOUR NAME AT THE POST OFFICE";
   let tickerTokens = ""; // once the Launchpad is open: an invitation, and its biggest tokens (from showLaunches)
   let tickerDrops = ""; // the treasury's token drops running today (from showDrops)
   // The ticker's line fills its texture exactly, so it runs round without a seam.

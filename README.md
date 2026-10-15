@@ -63,7 +63,7 @@ and their wallet if logged in), then sends where they are while moving; the room
 the players near them, plus waves and emotes (keys 1-9, 0), and chat lines to everyone (text only:
 `web/chat-rules.js`, shared with the game, refuses links and wallet addresses; one line every two
 seconds; the last 30 kept for newcomers). It reads the chain only to check worn Courier Skins, and
-signs golden stamp hunt vouchers. `GET /count` tells the title screen how many are playing.
+signs the treasure hunt's coin vouchers. `GET /count` tells the title screen how many are playing.
 
 ```bash
 cd multiplayer
@@ -86,22 +86,29 @@ sent in a hello is ignored, so nobody can wear someone else's. `GET /names` list
 to `BANNED` in `web/name-rules.js` and redeploy the room and the site; its owner shows as their
 wallet address again and the name can't be used.
 
-## The treasure hunt: golden stamps and token drops
+## The treasure hunt: token drops
 
 Every UTC day the spots in `web/hunt-spots.json` are shuffled (`web/hunt-pick.js`, `web/drop-pick.js`, the same
-in the game and on the server): the first 24 are the golden stamps, and each token drop running that day puts
+in the game and on the server): the first 24 stay empty (they held the golden stamps until 2026-10-15; the order is
+kept so the coins' spots, which finds are stored by, never move), and each token drop running that day puts
 its coins on the next ones, oldest drop first, with the token's picture on them. Anyone can collect them for fun.
 A player with a post office can also sign in with their wallet (one signature, no transaction): the
 multiplayer room then checks each find against where they've actually been, and signs a voucher per drop for
 the day's finds. `TokenDrops.sol` pays them from each drop's own tokens (it never mints), claimed for the day of
 the finds or the day after, all drops in one transaction from the Post Office panel's Treasure hunt section.
+The golden stamps (and the moon's and Mars's) ended on 2026-10-15: players took them for $STAMP earnings, and they
+paid nothing. Games loaded before then still grab them (`["grab", spot]` on one of the 24, `["wgrab", world, spot]`,
+`["mgrab", spot]`): the room keeps nothing and answers once per connection with a nope (-3) saying they're gone. Its
+hunt state still carries empty `found`, `moon` and `mars` lists for those games' panel, and sign-in accepts the old
+wording (`authMessageBefore`) as well as the new.
 `TokenDrops` is live since 2026-10-13 at `0xD0e785276840F7175DF12678991605042e89771C` (source verified on Sourcify);
 the room's voucher key is the multiplayer server's secret `DROPS_KEY` (its address, `0xac7e8d5A3b94ac56Ec1DD10a0Ec6a5ABD3b155Ca`,
 is the contract's signer).
 
 Only the treasury (the contract's owner) starts drops, from that same section: a launchpad token (its 5% of
-each launch) or $STAMP, which pays for the golden stamps. Each drop sets the tokens per coin, how many coins are
-out a day (1 to 48; 24 golden stamps for $STAMP), how many one wallet is paid for a day, how many are paid a day
+each launch). TokenDrops always gives a $STAMP drop the 24 golden spots, which the game no longer fills, so the panel
+only offers launchpad tokens ($STAMP drops are only for the companion bonus pool). Each drop sets the tokens per coin,
+how many coins are out a day (1 to 48), how many one wallet is paid for a day, how many are paid a day
 across everyone (required, up to 10,000: every player can collect each coin, so this caps a day, and it's the most a
 leaked server key could take from a drop a day), and for how many days. The treasury can top a drop up, end it after today, take what's left
 back once nobody can claim, and pause every claim (if the server's key leaks, say). In Times Square, a drop
@@ -126,14 +133,13 @@ The neon district's rocket flies couriers to two small worlds, each built the fi
 their base, a saucer) and Mars (`web/mars.js`, rules in `web/mars-pick.js`: as big as the planet, radius 34 m, gravity 0.55; the spaceport;
 Mars City with a walk-in plaza dome, greenhouses, homes, tubes, pools, farms and a ring road; red mountains; a canyon,
 a sleeping volcano and an ice cap; seven Martians and thirteen astronauts; a rover to drive; and a dust storm every
-seven minutes, the same for everyone). Mars's static scenery is merged into one mesh as it's built. `web/trips.js` holds both trips' tickets and stamps in one table, shared by the
-game and the server; `web/space.js` holds what both worlds share (the pad and rocket, the post box, the locals, the
-day's stamps). Each world's group sits so its top is where the planet's is, so the sun, the shadows and the camera work
+seven minutes, the same for everyone). Mars's static scenery is merged into one mesh as it's built. `web/trips.js` holds both trips' tickets in one table, shared by the
+game and the server; `web/space.js` holds what both worlds share (the pad and rocket, a post box for show, the
+locals). On a trip the arrow at the top points back to the rocket. Each world's group sits so its top is where the planet's is, so the sun, the shadows and the camera work
 unchanged; `main.js` walks on whichever world you're on (its radius, centre, ground, obstacles and gravity) and turns
 that one under you. The painted sky has a "space" mode for the moon and a "mars" mode (butterscotch, hazier in a storm).
 
-Each world has a post box by its pad that fills an empty bag with three letters for the locals there; they count with
-the planet's deliveries. The rover is a ride (`rides.js`): hopping in swaps your courier onto it, and it's parked where
+The rover is a ride (`rides.js`): hopping in swaps your courier onto it, and it's parked where
 you hop out (back in the garage when you fly home).
 
 A ticket is sent from the player's wallet to the treasury (`chain.ticket(world)`: 100 $STAMP for the moon, 200 for
@@ -141,10 +147,9 @@ Mars), good for an hour. The room checks it (`["ticket", world, txHash]`): a suc
 signed-in hunt wallet that moved at least the price to the treasury, less than three hours old, never used before for
 any trip; the ticket is kept per wallet, so a reload doesn't lose it. Players tell the room which world they're on
 (`["world", "moon" | "mars" | "planet"]`, a trip only with its ticket), and positions and emotes go only to players
-on the same world; a newcomer gets everyone there (`["here", …]`). Twelve golden stamps a day on each world
-(`["wgrab", world, spot]`, checked against that world's spots with its radius) count with the golden stamps: the
-vouchers for the $STAMP drop add them up, within its limits. The room still answers games loaded before Mars
-(`["moon", txHash]`, `["mgrab", spot]`).
+on the same world; a newcomer gets everyone there (`["here", …]`). The room still answers games loaded before Mars
+(`["moon", txHash]`). The moon and Mars stamps ended with the golden stamps (see the treasure hunt); `MOON_SPOTS` and
+`MARS_SPOTS` stay only so the scenery that keeps clear of them doesn't move.
 
 Signing in to the hunt also gives the browser a token (`["hunttoken"]`, kept for the session) so a new connection
 picks the hunt up again (`["resume"]`) without another signature. For local testing, `MOON_DEV=1` in
@@ -249,7 +254,7 @@ again); three end the session's finds. A world hop restarts the 5 s wait before 
 
 Not running: no season's drop is listed, the treasury's form to start one is off (`BONUS_POOL_FORM`), and its
 public wording (docs, collection.json) is held back in a local stash. The room code ships inert. When it's switched
-on: while a companion follows its owner, the minutes they spend out delivering earn extra $STAMP: up to 120 active
+on: while a companion follows its owner, the minutes they spend playing (moving about any world) earn extra $STAMP: up to 120 active
 minutes a day, at most Pet 6, Space buddy 9, Legendary 12, Mecha 18 and Anime 24 $STAMP a day (`web/bonus-rules.js`).
 It can't come from the PostOffice (no owner, the only $STAMP minter), so it's a $STAMP drop in the live TokenDrops
 contract that the treasury funds from its share of in-game spending, in seasons. No contract changes.
@@ -270,7 +275,7 @@ contract that the treasury funds from its share of in-game spending, in seasons.
 - **Seasons** (after the companions are deployed): in the Post Office panel's treasury box, "Companion bonus pool"
   creates a season's drop starting tomorrow (pool per day, days, $STAMP to put in; perCoin 1 $STAMP, 24 a wallet).
   Then add its id to `BONUS_DROPS` in `web/bonus-rules.js` and deploy the room and the site before it starts: until
-  then the drop would look like the golden stamps' drop. A season pays play day d as day d + 1, so create the next
+  then the game and the room don't know it's the bonus's drop, and nothing pays from it. A season pays play day d as day d + 1, so create the next
   season's drop on the current one's last day (it starts the day after); keep a season listed until two days after its
   end (its last claims). "End" on a
   bonus drop ends it after tomorrow, so today's play is still paid. Until `BONUS_DROPS` lists a drop, the game says
@@ -388,10 +393,10 @@ wires give way to grey paving, red steps you can climb (a ticket booth tucked un
 courier on a plinth, parked yellow cabs, a red tour bus and two people to talk to.
 
 The screens show posters that take turns every few seconds: the game's own (Courier Skins, $STAMP, post
-offices, the golden stamp hunt, "advertise here") and shows that only play on this planet ("The Letter
+offices, the treasure hunt, "advertise here") and shows that only play on this planet ("The Letter
 King", "Mail-a-Mia!", "Phantom of the Post Office"...), none naming a real brand, plus the Orb's ad.
 Like the Orb, what the square replaces is still drawn at random and left out, so nothing else in the
-town moves: the same addresses, lots, golden stamps and obstacles everywhere outside it.
+town moves: the same houses, lots, hunt spots and obstacles everywhere outside it.
 
 ## On Robinhood Chain
 
@@ -440,7 +445,7 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `CourierNFT.sol` | 3,333 couriers, commit-reveal, duty lock, on-chain renderer hook, `tokensOfOwner`; ownership renounced when the game launches |
 | `CourierRenderer.sol`, `CourierSVG.sol`, `CourierTraits.sol` | On-chain metadata and art |
 | `CourierSkins.sol` | 999 cosmetic skins: blind mint, commit-reveal shuffle, on-chain metadata, enforced 5% royalty (ERC721-C) |
-| `TokenDrops.sol` | The treasure hunt's payouts: the treasury's token drops and the golden stamps ($STAMP), for finds the multiplayer room has checked |
+| `TokenDrops.sol` | The treasure hunt's payouts: the treasury's token drops, for finds the multiplayer room has checked (and the companion bonus's $STAMP drops) |
 | `StampHunt.sol` | The earlier $STAMP-only hunt (replaced by TokenDrops, never deployed) |
 | `CourierCompanions.sol` | Companions that follow your courier: ERC-1155 kinds sold only for $STAMP (straight to the treasury), supplies that only shrink, wallet limits, enforced 5% royalty (ERC1155-C); live at `0x4254…49B7` |
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |

@@ -1,9 +1,9 @@
-// Mars (mars-pick.js has its rules: size, ground, ticket, places, the day's stamps). Built the first time someone flies
+// Mars (mars-pick.js has its rules: size, ground, ticket, places). Built the first time someone flies
 // there: a red world as big as Courier World. At its top the spaceport (the landing pad with the rocket home, tall
 // rockets, a launch tower, the Mars Post box and the rover garage); beside it Mars City (a big glass plaza dome you
 // can walk into, greenhouse and living domes joined by tubes, pools, farms and a ring road); red mountains beyond; a
 // winding canyon, a big sleeping volcano and an ice cap; Martians and astronaut colonists; a shuttle overhead, Mars's
-// two little moons and Courier World in a butterscotch sky; dust storms; and the day's golden Mars stamps.
+// two little moons and Courier World in a butterscotch sky; and dust storms.
 //
 // Like the moon, its group sits so its top is where the planet's is, and main.js turns it under the courier the way
 // it turns the planet: `ground` is what main.js walks on. Everything that stands still is merged into one mesh.
@@ -11,8 +11,8 @@ import * as THREE from "https://esm.sh/three@0.160.0";
 import { mergeVertices, mergeGeometries } from "https://esm.sh/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js";
 import { R, toon, mulberry32, texFromCanvas, Batch } from "./world.js";
 import { LANDING } from "./moon-pick.js";
-import { MARS_R, MARS_GRAVITY, MARS_SPOTS, MARS_CRATERS, MOUNTAINS, marsHeight, marsSpots, CITY, VOLCANO, ICE, RADIO, CANYON, canyonAt, canyonFloor } from "./mars-pick.js";
-import { facing, padAndRocket, postBox, createLocals, dayStamps, homePlanet } from "./space.js";
+import { MARS_R, MARS_GRAVITY, MARS_SPOTS, MARS_CRATERS, MOUNTAINS, marsHeight, CITY, VOLCANO, ICE, RADIO, CANYON, canyonAt, canyonFloor } from "./mars-pick.js";
+import { facing, padAndRocket, postBox, createLocals, homePlanet } from "./space.js";
 import { createRide } from "./rides.js";
 import { createCharacter } from "./character.js";
 
@@ -173,7 +173,7 @@ export function createMars(W) {
   const keepOut = [{ d: top, r: 9 }]; // (rocks and the locals out in the wild stay clear of these)
   const blinkers = []; // glowing bits that blink ({ m, every, on, ph }) or pulse ({ m, pulse: true })
   const spotDirs = MARS_SPOTS.map((s) => V(...s.d));
-  /// The nearest spot to `d0` (within `within` metres) at least `clear` metres from every stamp spot and clear of
+  /// The nearest spot to `d0` (within `within` metres) at least `clear` metres from every old stamp spot and clear of
   /// what's already here; `d0` itself if there's none.
   const settle = (d0, clear, within = 4) => {
     const t1 = new THREE.Vector3().crossVectors(d0, Math.abs(d0.y) < 0.9 ? top : east).normalize(), t2 = new THREE.Vector3().crossVectors(d0, t1);
@@ -227,7 +227,7 @@ export function createMars(W) {
   }
 
   // ---- the spaceport: the landing pad with the rocket home, two tall rockets and a launch tower, the Mars Post box
-  // and the rover garage. You step out beside the pad, facing the city.
+  // (for show) and the rover garage. You step out beside the pad, facing the city.
   const { pad, rocket } = padAndRocket(mesh);
   place(pad, top, 0.02);
   place(rocket, top, 0.07, 0.6);
@@ -573,8 +573,8 @@ export function createMars(W) {
   const parkHome = () => parkRover(garageD, toward(garageD, top));
   parkHome();
 
-  // ---- the locals: Martians and astronaut colonists, in the city and out where the exploring is. Each gets letters.
-  const locals = createLocals(MARS_R), residents = [];
+  // ---- the locals: Martians and astronaut colonists, in the city and out where the exploring is.
+  const locals = createLocals(MARS_R);
   const add = (f, d, name, lines, look = top) => {
     f.g.position.copy(d).multiplyScalar(MARS_R + ht(d));
     f.g.quaternion.copy(facing(d, toward(d, look)));
@@ -582,7 +582,6 @@ export function createMars(W) {
     circle(d.clone(), 0.42, { y1: ht(d) + 1.7 });
     keepOut.push({ d, r: 1.2 });
     locals.add(f, d, name, lines, rnd() * 6);
-    residents.push({ name, d });
   };
   const martian = (d, name, lines, colors, look) => add(martianMesh(...colors, mesh), d, name, lines, look);
   let crew = 0;
@@ -591,9 +590,8 @@ export function createMars(W) {
 
   martian(at(3.0, 1.6), "Mayor Zibble", [
     "Welcome to Mars City! Population twenty. Twenty-one with you. Twenty-two if you count the rover. We count the rover.",
-    "Mail used to take seven months to reach us. Then you showed up with a rocket.",
+    "Visitors used to take seven months to reach us. Then you showed up with a rocket.",
     "Our motto: dust off and carry on. It's also our cleaning schedule.",
-    "The Mars Post box by the spaceport has letters for all of us. Some of us live a very long walk away.",
   ], [0x3fb7a8, 0xffe066, 0xf2a03d], top);
   astronaut(at(-3.4, -1.0), "Commander Ada", [
     "I run this city. Mostly that means reminding everyone the dome door is not a window.",
@@ -603,7 +601,7 @@ export function createMars(W) {
   astronaut(at(-1.0, 3.5), "Chef Marco", [
     "Tonight's special: rusty potatoes, grown next door. They taste like home. A very red home.",
     "Cooking in low gravity is easy. Keeping the soup in the pot is the hard part.",
-    "A letter for the chef? Put it with the others. I use them for recipes. Kidding. Mostly.",
+    "Taste this. No, don't ask what it is. Just taste it.",
   ], 0xd9534a, cityD);
   astronaut(doorOf(DOMES[0].a), "Botanist Mei", [
     "Every plant in this greenhouse has a name. That one's Gerald. Gerald is a tomato.",
@@ -623,7 +621,7 @@ export function createMars(W) {
   astronaut(doorOf(DOMES[1].a), "Medic Ines", [
     "Bumped your helmet? Twisted an ankle on a big Mars jump? The clinic's open all night.",
     "Remember: drink water, wear your suit, and don't lick the ice cap. Tula did. Once.",
-    "Thank you for the letters. The post is the best medicine out here.",
+    "Visitors are the best medicine out here. Second best is actual medicine.",
   ], 0xf4f1ea, cityD);
   astronaut(doorOf(DOMES[5].a), "Teacher Lena", [
     "We have three pupils and one rover. The rover is the best behaved.",
@@ -637,20 +635,20 @@ export function createMars(W) {
   ], 0x5fb8de, pools[0]);
   astronaut(round(rocketN, toward(rocketN, top), 2.4), "Pilot Sam", [
     "I fly the shuttle you see going over. Same route every day. Nice view, though.",
-    "These big rockets are ours. Your little one's cute. Very good for letters.",
+    "These big rockets are ours. Your little one's cute. Very good for day trips.",
     "Landing on Mars is easy. You just need to stop before the ground does it for you.",
   ], 0xf2a03d, top);
   astronaut(round(rocketS, toward(rocketS, top), 2.4), "Engineer Rosa", [
     "I keep the rockets, the tower and the domes running. Mostly with tape.",
     "Pip looks after the rover. I look after everything Pip breaks fixing the rover.",
-    "Got a letter? Leave it on the toolbox. I'll read it on my break. My break is next year.",
+    "Need a spanner? I've got forty. I can't find any of them.",
   ], 0xe46f5f, top);
   martian(round(garageD, toward(garageD, top), 2.3), "Pip", [
     "That's our rover. Six wheels, no brakes worth mentioning. Hop in (E) and take it for a spin.",
     "Drive it to the canyon, up the volcano, round to the ice cap. Bring it back. Mostly in one piece.",
     "I fixed the rover with a spoon. Don't ask which part.",
   ], [0x7fd1a0, 0xff7a5c, 0xfbf6ea], top);
-  // Out in the wild, clear of the stamp spots.
+  // Out in the wild, clear of the old stamp spots.
   martian(settle(V(...canyonFloor(-8)), 2.4, 3), "Geo", [
     "This canyon is very old. Older than your postcode.",
     "Every stripe in these walls is a different century of dust. I've read most of them.",
@@ -659,7 +657,7 @@ export function createMars(W) {
   astronaut(settle(V(...canyonFloor(9)), 2.4, 3), "Geologist Ravi", [
     "Geo and I disagree about everything. Except that this canyon is beautiful.",
     "These layers are a history book of Mars. Every page is red.",
-    "If you see a shiny rock, tell me. If you see a shiny stamp, keep it.",
+    "If you see a shiny rock, tell me. If you see a shiny rock that moves, run.",
   ], 0x8a6a4a, V(...canyonFloor(0)));
   const volD = V(...VOLCANO.d), upVol = toward(volD, top);
   const ozzyD = settle(round(volD, upVol, VOLCANO.crater + 1.4), 3.2, 3);
@@ -694,14 +692,14 @@ export function createMars(W) {
   astronaut(settle(round(volD, upVol, VOLCANO.r + 1.5), 2.4, 3), "Hiker Bo", [
     "I'm climbing the volcano today. I said that yesterday too. It's a big volcano.",
     "Low gravity makes the climb easy. It's the coming down that's bouncy.",
-    "Ozzy lives at the top. Bring him a letter. He'll pretend he doesn't want it.",
+    "Ozzy lives at the top. Say hi from me. He'll pretend he doesn't know me.",
   ], 0x9cc46f, volD);
   {
     const peak = MOUNTAINS.reduce((a, b) => (b.h > a.h ? b : a)), pd = V(...peak.d);
     astronaut(settle(round(pd, toward(pd, top), peak.r * 0.45), 2.4, 3), "Climber Juno", [
       "These are the Red Ridge mountains. I've climbed every one. Twice. On Mars that's not even hard.",
       "From up here you can see the whole city, the spaceport, and a shuttle going over.",
-      "A letter, all the way up here? You're my favourite courier. Don't tell the others.",
+      "Visitors, all the way up here? You're my favourite courier. Don't tell the others.",
     ], 0xe46f5f, cityD);
   }
   {
@@ -747,11 +745,11 @@ export function createMars(W) {
     martian(settle(round(cd, toward(cd, top), c.r + 1.0), 2.4, 3), "Nix", [
       "I race the dust devils. They always win, but I'm getting closer.",
       "Mum says don't play in the craters. This isn't a crater. It's a very big hole.",
-      "Is that a real paper letter? Can I keep the envelope too?",
+      "Is it true your planet has a blue sky? Every day? That sounds made up.",
     ], [0x8c9eff, 0x7dff6a, 0xf2c94c], cd);
   }
 
-  // ---- rocks, and chunks of ice by the cap, kept off the places, the stamp spots and each other
+  // ---- rocks, and chunks of ice by the cap, kept off the places, the old stamp spots and each other
   {
     const iceD = V(...ICE.d), rocks = [];
     for (let i = 0; i < 4000 && rocks.length < 80; i++) {
@@ -832,9 +830,6 @@ export function createMars(W) {
   W.noNormals.push(motes);
   let dust = 0;
 
-  // ---- the day's golden Mars stamps
-  const stamps = dayStamps(W, group, (obj, d, h, spin) => place(obj, d, h, spin, group), { R: MARS_R, spots: MARS_SPOTS, pick: marsSpots }, rnd);
-
   // ---- everything that stands still, merged into one mesh (glass, lights, signs and anything that glows stay apart)
   {
     const batch = new Batch(), merged = [];
@@ -861,16 +856,6 @@ export function createMars(W) {
     /// Where you step out (beside the pad, facing the city) and the rocket home (stand within `reach`).
     arrival: { d: arrive, tangent: east.clone() },
     rocket: { d: top.clone(), reach: 2.9 },
-    /// The Mars Post box (stand within `reach` with an empty bag for letters), and who the letters are for.
-    post: { d: postD, reach: 1.8, name: "Mars Post box" },
-    residents,
-    thanks: [
-      "Mail! The last letter took seven months. You took seven minutes.",
-      "Real paper! It even smells like Courier World.",
-      "A letter, on Mars. I'm framing it. Then I'm framing the envelope.",
-      "You came all the way to the red planet for this? Legend.",
-      "Thank you, courier. Mind the dust on your way out.",
-    ],
     /// The rover: where it's parked (stand within `reach` to hop in), taken while someone drives it, and parked
     /// again where they hop out (`look`: the way they face) or back in the garage.
     rover: {
@@ -885,10 +870,6 @@ export function createMars(W) {
       park: parkRover,
       home: parkHome,
     },
-    /// Mars stamps found today (the server's record, for signed-in couriers).
-    setFound: (d, ids) => stamps.setFound(d, ids),
-    get found() { return stamps.found; },
-    get out() { return stamps.out; },
     /// The local within `reach` metres of `me`, nearest first, to talk to: { name, line(), talk(on) }, or null.
     nearestLocal: (me, reach) => locals.nearest(me, reach),
     /// How thick the dust is right now (0 … 1).
@@ -898,10 +879,9 @@ export function createMars(W) {
       motes.visible = false;
       dust = 0;
     },
-    /// The locals, the lights, the shuttle, the moons, the dust, and the stamps: they spin and bob, and any the
-    /// courier reaches (`me`: where they are, Mars-local; `chest`: how high) is picked up. Returns the spot picked up,
-    /// or null.
-    update(dt, t, { me, chest, active }) {
+    /// The locals, the lights, the shuttle, the moons and the dust (`me`: where the courier is, Mars-local; the
+    /// locals watch them).
+    update(dt, t, { me }) {
       locals.update(dt, t, me);
       for (const b of blinkers) {
         if (b.pulse) b.m.material.opacity = 0.3 + 0.25 * (0.5 + 0.5 * Math.sin(t * 1.3));
@@ -931,7 +911,6 @@ export function createMars(W) {
         }
         dgeo.attributes.position.needsUpdate = true;
       }
-      return stamps.update(dt, t, me, chest, active);
     },
   };
 }

@@ -1,5 +1,5 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { createWorld, R, UP, arc, texFromCanvas } from "./world.js";
+import { createWorld, R, UP, arc } from "./world.js";
 import { SEA_LEVEL, STEP, SWIM } from "./terrain.js";
 import { createCharacter, COURIER } from "./character.js";
 import { createRide } from "./rides.js";
@@ -15,7 +15,7 @@ import { createOffice, bonusWhy } from "./office.js";
 import { createPad } from "./pad.js";
 import { createDust } from "./fx.js";
 import { createLife } from "./life.js";
-import { createStamps, STAMPS } from "./stamps.js";
+import { createStamps } from "./stamps.js";
 import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { createMoon } from "./moon.js";
 import { createMars } from "./mars.js";
@@ -29,7 +29,7 @@ import { COMPANION_IDS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, bonusCap } from "./bonus-rules.js";
 
 const $ = (id) => document.getElementById(id);
-// Golden stamp spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
+// Treasure hunt spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
 const HUNT_SPOTS = await fetch("./hunt-spots.json").then((r) => r.json());
 const W = createWorld($("c"), { keepClear: HUNT_SPOTS });
 const { scene, camera } = W;
@@ -37,11 +37,11 @@ let world = W.world; // the world group that turns under the courier: the planet
 // What you walk on: the planet, or on a trip the moon (moon.js) or Mars (mars.js). Its radius, centre (theirs sit
 // lower, so their top is where the planet's is), what you can stand on, what's in the way, and gravity.
 const planetGround = { key: "planet", R, center: new THREE.Vector3(), group: W.world, gravity: 1, terrain: W.terrain, obstacles: W.obstacles };
-// The trips from the neon district's rocket (trips.js): each world built the first time someone goes, with its dust
-// and sparkles and the letters in your bag for the locals there. `away` is the one you're on (null at home).
+// The trips from the neon district's rocket (trips.js): each world built the first time someone goes, with its dust.
+// `away` is the one you're on (null at home).
 const trips = {
-  moon: { key: "moon", build: createMoon, w: null, bag: [] },
-  mars: { key: "mars", build: createMars, w: null, bag: [] },
+  moon: { key: "moon", build: createMoon, w: null },
+  mars: { key: "mars", build: createMars, w: null },
 };
 let G = planetGround, away = null;
 /// Metres along the ground you're on between two directions.
@@ -53,30 +53,9 @@ const NAMES = [
   "Hana", "Mr. Oda", "Grandpa Ren", "Mika", "Sora", "Old Kenji", "Aiko", "Taro", "Yui", "Mrs. Mori",
   "Daichi", "Emi", "Prof. Sato", "Kaito", "Nana", "Mr. Ishii", "Rin", "Haru", "Auntie Fumi", "Jun",
 ];
-const THANKS = [
-  "A letter from my daughter! She never writes. Thank you!",
-  "Finally, the seeds I ordered. Spring can start now.",
-  "You're out early. Tea? ...No? Next time, then.",
-  "Is that for me? It is! How exciting.",
-  "Bills again... well, thank you anyway.",
-  "My pen pal from the other side of the planet! You're a star.",
-  "Careful on the hill road, the wind picks up there.",
-  "Oh, the concert tickets! I owe you one.",
-  "Thank you. Mind the cat on the wall, she bites.",
-  "A postcard from the sea. I can almost smell it.",
-  "You walked all this way? The planet's small, but still.",
-  "Ah, my glasses came back from the repair shop. Wonderful.",
-];
-const POSTMASTER = [
-  "Morning! Three more letters for the neighbourhood.",
-  "Back already? Here's the next bundle.",
-  "The town's chatty today. Off you go!",
-  "Three more. One of them smells like curry.",
-];
 const INTRO = [
-  { name: "You", text: "Overslept again... the post office opened ages ago." },
-  { name: "You", text: "Three letters in the bag. Better get walking." },
-  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around and scroll (or pinch) to zoom. Follow the arrow at the top (and the golden light) to each delivery." },
+  { name: "You", text: "Morning, Courier World! Time to have a look round." },
+  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around and scroll (or pinch) to zoom." },
 ];
 
 // ---------------------------------------------------------------- characters
@@ -290,7 +269,6 @@ function checkCompanion(s) {
 
 W.addresses.forEach((a, i) => {
   if (!a.landmark) a.name = NAMES[i % NAMES.length];
-  a.no = i + 1;
 });
 
 const dust = createDust(world, W.noNormals);
@@ -328,14 +306,13 @@ async function refreshBoard(chain) {
       net.retag();
     }
     const earned = Number(board.totalEarned / 10n ** 18n);
-    $("live").textContent = `📮 ${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open · ${earned.toLocaleString()} $STAMP earned`;
+    $("live").textContent = `📮 ${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open · ${earned.toLocaleString()} $STAMP earned by post offices`;
     $("live").hidden = false;
   } catch (e) {
     console.warn(e);
   }
 }
 
-// Golden stamps to find, and the sparkle when you do.
 // ---------------------------------------------------------------- other players
 
 // The multiplayer room (multiplayer/ in the repo, on Cloudflare). ?mp=ws://… points the game at
@@ -355,22 +332,20 @@ const net = createNet(W, {
     const o = board?.list.find((x) => x.owner.toLowerCase() === addr.toLowerCase());
     return o ? TIERS[Math.min(o.tier, 4)] : null;
   },
-  // The treasure hunt: the room's view of you (signed in? what you've found today, golden stamps and coins).
+  // The treasure hunt: the room's view of you (signed in? the coins you've found today, your tickets).
   onHunt(state) {
     huntState = state;
     paintTicker();
     if (state?.wallet) {
-      stamps.setFound(state.day, state.found, state.coins);
-      for (const trip of Object.values(trips)) trip.w?.setFound(state.day, state[trip.key] ?? []);
+      stamps.setFound(state.day, state.coins);
       // Back on a new connection while away: the room has your ticket again, so it shows you there.
       if (away && ticketLeft(away.key) > 0) net.setWorld(away.key);
     }
     office?.huntChanged();
-    hud();
   },
   onFound(day, spot, count, owner) {
-    if (huntState && huntState.day === day) {
-      const list = owner === "golden" ? huntState.found : trips[owner] ? (huntState[owner] ??= []) : (huntState.coins[owner] ??= []);
+    if (huntState && huntState.day === day && Number.isInteger(owner)) {
+      const list = (huntState.coins[owner] ??= []);
       if (!list.includes(spot)) list.push(spot);
     }
     paintTicker();
@@ -500,30 +475,28 @@ $("chatBtn").addEventListener("click", () => {
   $("chatBtn").setAttribute("aria-expanded", String(!$("phrases").hidden));
 });
 
-// Every spot a golden stamp can be out at (the multiplayer server reads the same file).
+// Every spot a coin can be out at (the multiplayer server reads the same file).
 const stamps = createStamps(W, HUNT_SPOTS);
 let huntState = null, huntHinted = false;
 const sparkle = createDust(world, W.noNormals, 24, 0xffd75e);
 function collected(s) {
   sounds.collect();
   sparkle.puff(s.mesh.position, s.d, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
-  hud();
-  const drop = s.kind === "coin" ? droppingToday.find((d) => d.id === s.drop) : null;
+  const drop = droppingToday.find((d) => d.id === s.drop);
   if (drop) {
     const c = stamps.coins(drop.id);
     toast(`🪙 $${drop.symbol} coin! ${c.found} of ${c.out} today`);
-  } else toast(stamps.found === STAMPS ? "Every golden stamp on the planet!" : `Golden stamp! ${stamps.found} of ${STAMPS}`);
+  }
   // Signed-in hunters have the room count it (and pay for it); everyone else gets a hint, once.
   if (huntState?.wallet) net.grab(s.id);
-  else if (chainRef?.drops && !huntHinted && (drop || goldenPays)) {
+  else if (chainRef?.drops && !huntHinted && drop) {
     huntHinted = true;
     setTimeout(() => toast("Treasure pays out: open the Post Office panel (P) and sign in to hunt."), 1800);
   }
-  if (!drop && stamps.found === STAMPS) say([{ name: "You", text: `That's all ${STAMPS} golden stamps. The whole planet, done!` }]);
 }
 
 // The treasury's token drops running today: their coins go out round the planet, with the token's picture.
-let droppingToday = [], goldenPays = false, dropsDay = -1;
+let droppingToday = [], dropsDay = -1;
 const coinPictures = new Map(); // picture URL -> Image (null while loading)
 // The coins a drop has paid so far (for its size as it started: its tokens left plus what it's paid out). Days
 // before yesterday can't be claimed any more, so those are read once.
@@ -545,7 +518,6 @@ async function refreshDrops() {
   try {
     const running = await chain.drops.running(day);
     if (day !== huntDay()) return;
-    goldenPays = running.some((d) => d.isStamp && !d.isBonus && d.left >= d.perCoin); // (the companion bonus's drop pays for play)
     const tokens = running.filter((d) => !d.isStamp);
     for (const d of tokens) {
       d.empty = d.left < d.perCoin; // paid out: its coins stay off the map (their spots stay reserved, so nothing moves)
@@ -671,38 +643,6 @@ function paintBonus() {
 }
 $("bonusChip").addEventListener("click", () => office && showOffice(true));
 
-// ---------------------------------------------------------------- envelope markers
-
-const ENVELOPE = (() => {
-  const c = document.createElement("canvas"); c.width = 128; c.height = 96;
-  const g = c.getContext("2d");
-  g.fillStyle = "#fbf8ef"; g.strokeStyle = "#283033"; g.lineWidth = 7;
-  g.fillRect(8, 12, 112, 72); g.strokeRect(8, 12, 112, 72);
-  g.beginPath(); g.moveTo(8, 12); g.lineTo(64, 54); g.lineTo(120, 12); g.stroke();
-  g.fillStyle = "#d9534a"; g.beginPath(); g.arc(64, 54, 10, 0, 7); g.fill();
-  return texFromCanvas(c);
-})();
-const markers = new Map(); // address index -> sprite
-function showMarker(i) {
-  const a = W.addresses[i];
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: ENVELOPE, alphaTest: 0.5 }));
-  s.scale.set(0.95, 0.72, 1);
-  s.userData.base = a.markerDir.clone().multiplyScalar(R + a.markerH);
-  s.userData.up = a.markerDir.clone();
-  s.position.copy(s.userData.base);
-  world.add(s);
-  W.noNormals.push(s);
-  markers.set(i, s);
-}
-function hideMarker(i) {
-  const s = markers.get(i);
-  if (!s) return;
-  world.remove(s);
-  W.noNormals.splice(W.noNormals.indexOf(s), 1);
-  s.material.dispose();
-  markers.delete(i);
-}
-
 // ---------------------------------------------------------------- dialog
 
 let dialog = null; // { lines, i, chars, onDone }
@@ -737,39 +677,8 @@ function advance() {
 }
 $("dialog").addEventListener("click", advance);
 
-// ---------------------------------------------------------------- deliveries
-
-let bag = [];
-let delivered = 0;
-try { delivered = Number(localStorage.getItem("courier:delivered")) || 0; } catch {}
-const random = (n) => Math.floor(Math.random() * n);
-
-function fillBag() {
-  const picks = new Set();
-  // Every house still standing (the ones cleared for the Orb's plaza get no letters).
-  const open = W.addresses.flatMap((a, i) => (a.cleared ? [] : [i]));
-  while (picks.size < Math.min(3, open.length)) picks.add(open[random(open.length)]);
-  bag = [...picks];
-  bag.forEach(showMarker);
-  hud();
-}
-function deliver(i) {
-  const a = W.addresses[i];
-  bag = bag.filter((b) => b !== i);
-  hideMarker(i);
-  delivered++;
-  sounds.chime();
-  try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
-  hud();
-  const lines = [{ name: a.name, text: THANKS[random(THANKS.length)] }];
-  if (!bag.length) lines.push({ name: "You", text: "That's the bag empty. Back to the post office for more." });
-  say(lines);
-}
-function hud() {
-  $("bagN").textContent = (away ? away.bag : bag).length;
-  $("doneN").textContent = delivered;
-  $("stampN").textContent = `${stamps.found}/${STAMPS}`;
-}
+// Letter deliveries ended 2026-10-15: tidy away the old count.
+try { localStorage.removeItem("courier:delivered"); } catch {}
 
 // ---------------------------------------------------------------- input
 
@@ -1506,7 +1415,6 @@ function frame() {
       companionHere();
       $("hud").hidden = false;
       introduce();
-      fillBag();
       say(INTRO);
     }
   } else {
@@ -1608,24 +1516,8 @@ function frame() {
       skidIn = 0.05;
     }
 
-    // Deliveries and the post office (on the planet: the moon's and Mars's are in tripTick).
-    if (!dialog && !away) {
-      for (const i of bag) {
-        if (arc(p, W.addresses[i].dir) < 1.4) {
-          deliver(i);
-          break;
-        }
-      }
-      if (!bag.length && !dialog && arc(p, W.spawn.post) < 1.8) {
-        fillBag();
-        say([{ name: "Postmaster", text: POSTMASTER[random(POSTMASTER.length)] }]);
-      }
-    }
-    if (away) {
-      tripTick(p, dt, t);
-      beam.visible = false;
-    } else {
-      compass(p, t);
+    if (away) tripTick(p, dt, t);
+    else {
       placeTitle(p, dt);
       padHint(p);
       rocketHint(p);
@@ -1681,7 +1573,6 @@ function frame() {
     speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: away ? 0 : weather.rain, step: stepped && mode === "play" && !wading,
     ...(mode === "play" ? nearby(localPos()) : {}),
   });
-  for (const s of markers.values()) s.position.copy(s.userData.base).addScaledVector(s.userData.up, Math.sin(t * 3) * 0.18);
   if (dialog) {
     const line = dialog.lines[dialog.i];
     if (dialog.chars < line.text.length) {
@@ -1728,20 +1619,6 @@ function nearby(p) {
   return out;
 }
 
-/// Arrow toward the nearest letter's door, or back to the post office.
-function compass(p, t = 0) {
-  let best = null;
-  const targets = bag.length ? bag.map((i) => ({ d: W.addresses[i].dir, top: W.addresses[i].markerDir, name: `${W.addresses[i].name} · No. ${W.addresses[i].no}` }))
-    : [{ d: W.spawn.post, top: W.spawn.post, name: "post office", post: true }];
-  for (const tgt of targets) {
-    const dd = arc(p, tgt.d);
-    if (!best || dd < best.dd) best = { ...tgt, dd };
-  }
-  const w = best.d.clone().applyQuaternion(world.quaternion);
-  $("target").textContent = `${best.post ? "Pick up letters at the" : "Deliver to"} ${best.name}`;
-  pointArrow(Math.atan2(w.x, -w.z), `· ${Math.round(best.dd)}m`);
-  guideTo(best, t);
-}
 /// The arrow in the top bar: turned toward the goal (up is straight ahead of the camera), always the short way round,
 /// so it never spins right round when the goal passes behind you. The end of the line (`lead`, the distance, then the
 /// way in words) never gets cut off on a narrow screen; the name does.
@@ -1751,25 +1628,6 @@ function pointArrow(a, lead, there = false) {
   $("arrow").style.transform = `rotate(${arrowAngle}rad)`;
   const deg = Math.abs(a) * (180 / Math.PI);
   $("way").textContent = there ? lead : `${lead} ${deg < 30 ? "straight ahead" : deg > 150 ? "behind you" : a < 0 ? "on your left" : "on your right"}`;
-}
-// The way to the next delivery, in the world: a column of golden light rising from it, seen over the roofs and
-// fading as you arrive.
-const beam = (() => {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 16, 16, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-  m.visible = false;
-  W.world.add(m);
-  W.noNormals.push(m);
-  return m;
-})();
-function guideTo(goal, t) {
-  const show = mode === "play" && !photo && !dialog && !away;
-  beam.visible = show && goal.dd > 3;
-  if (beam.visible) {
-    beam.position.copy(goal.top).multiplyScalar(R + 8);
-    beam.quaternion.setFromUnitVectors(UP, goal.top);
-    beam.material.opacity = Math.min(0.32, (goal.dd - 3) / 12) * (0.75 + 0.25 * Math.sin(t * 2.4));
-  }
 }
 
 // ---------------------------------------------------------------- the post office (on-chain)
@@ -1798,17 +1656,16 @@ let padHinted = false;
 // ---------------------------------------------------------------- trips: the moon and Mars
 // Trips from the neon district's rocket on a ticket paid in $STAMP (trips.js; the worlds themselves are moon.js and
 // mars.js, each built the first time someone goes). While you're there it's what you walk on (G), the planet is put
-// away, space (or Mars's sky) is overhead, and the room shows you only to the others there. Each world has its own
-// post box by the pad, with letters for the locals.
+// away, space (or Mars's sky) is overhead, and the room shows you only to the others there.
 let rocketHinted = false, flying = false, leftFrom = null, stormSaid = false;
 let tripPick = "moon"; // the trip the card at the rocket shows
 const TRIP_TEXT = {
-  moon: () => `Low gravity, craters, and Courier World hanging in a black sky. The moon frogs have letters waiting at the Moon Post box, and ${TRIPS.moon.stamps} golden moon stamps a day count with your golden stamps. A ticket is ${TRIPS.moon.priceText} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`,
-  mars: () => `A red world as big as ours: Mars City's glass domes by the spaceport, red mountains beyond, a canyon, a sleeping volcano, an ice cap and dust storms. Twenty Martians and astronauts have letters waiting at the Mars Post box, and there's a rover to drive. ${TRIPS.mars.stamps} golden Mars stamps a day count with your golden stamps. A ticket is ${TRIPS.mars.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
+  moon: () => `Low gravity, craters, and Courier World hanging in a black sky. Meet the moon frogs at Moon Base and jump higher than you ever could at home. A ticket is ${TRIPS.moon.priceText} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`,
+  mars: () => `A red world as big as ours: Mars City's glass domes by the spaceport, red mountains beyond, a canyon, a sleeping volcano, an ice cap and dust storms. Twenty Martians and astronauts to meet, and a rover to drive. A ticket is ${TRIPS.mars.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
 };
 const WELCOME = {
-  moon: () => `🌙 Welcome to the moon! Gravity is low, so jump. Moon mail is waiting in the Moon Post box, ${TRIPS.moon.stamps} golden moon stamps are out today, and the rocket flies you home.`,
-  mars: () => `🔴 Welcome to Mars! Mars City is just ahead, letters for its Martians and astronauts are in the Mars Post box, Pip's rover is in the garage (E to drive), and ${TRIPS.mars.stamps} golden Mars stamps are out today. Mind the dust storms.`,
+  moon: () => `🌙 Welcome to the moon! Gravity is low, so jump. Moon Base is close by, and the rocket flies you home.`,
+  mars: () => `🔴 Welcome to Mars! Mars City is just ahead, Pip's rover is in the garage (E to drive), and the rocket flies you home. Mind the dust storms.`,
 };
 const EMOJI = { moon: "🌙", mars: "🔴" };
 const NOUN = { moon: "Moon", mars: "Mars" };
@@ -1816,7 +1673,6 @@ function tripWorld(trip) {
   if (!trip.w) {
     trip.w = trip.build(W);
     trip.puffs = createDust(trip.w.group, W.noNormals);
-    trip.sparkle = createDust(trip.w.group, W.noNormals, 24, 0xffd75e);
   }
   return trip.w;
 }
@@ -1934,9 +1790,8 @@ function flyTo(k) {
     W.setSky(k === "mars" ? "mars" : "space", w.group);
     standAt(w.arrival.d, w.arrival.tangent);
     companionHere(); // (it flew with you)
-    if (huntState?.wallet) w.setFound(huntState.day, huntState[k] ?? []);
     net.setWorld(k);
-    hud();
+    $("compass").hidden = false; // (the way back to the rocket)
     setTimeout(() => toast(WELCOME[k]()), 1200);
   });
 }
@@ -1959,7 +1814,7 @@ function flyHome(why = null) {
     vel.set(0, 0);
     companionHere();
     net.setWorld("planet");
-    hud();
+    $("compass").hidden = true;
     if (why) setTimeout(() => toast(why), 1200);
   });
 }
@@ -1992,65 +1847,22 @@ function hopOut(park = true) {
   setPlayer(rider(o.params, o.rideKey, o.rideColour));
 }
 
-/// Letters away from home: the post box by the pad fills an empty bag with three letters for the locals.
-function fillAwayBag() {
-  const w = away.w, n = w.residents.length, picks = new Set();
-  while (picks.size < Math.min(3, n)) picks.add(random(n));
-  away.bag = [...picks];
-  hud();
-  const names = away.bag.map((i) => w.residents[i].name);
-  const who = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
-  say([{ name: w.post.name, text: `${names.length} letters: for ${who}. Follow the arrow at the top.` }]);
-}
-function deliverAway(i) {
-  const w = away.w, a = w.residents[i];
-  away.bag = away.bag.filter((b) => b !== i);
-  delivered++;
-  sounds.chime();
-  try { localStorage.setItem("courier:delivered", String(delivered)); } catch {}
-  hud();
-  const lines = [{ name: a.name, text: w.thanks[random(w.thanks.length)] }];
-  if (!away.bag.length) lines.push({ name: "You", text: `That's the bag empty. Back to the ${w.post.name} for more.` });
-  say(lines);
-}
 /// The arrow's angle toward `d` (a direction in the frame of the world you're on).
 const angleTo = (d) => {
   const v = d.clone().applyQuaternion(world.quaternion);
   return Math.atan2(v.x, -v.z);
 };
-/// Each frame on a trip: letters, the line under the compass (the next letter, or the stamps and the way to the post
-/// box and the rocket), the stamps, the rover, dust storms on Mars, and home when the ticket runs out.
+/// Each frame on a trip: the line under the compass (your ticket and the way to the rocket), the locals, the rover,
+/// dust storms on Mars, and home when the ticket runs out.
 function tripTick(p, dt, t) {
   const trip = away, w = trip.w, k = trip.key, left = ticketLeft(k);
   if (huntState?.wallet && left <= 0 && !flying) return flyHome(`Your ${NOUN[k].toLowerCase()} ticket ran out, so the rocket brought you home.`);
-  if (!dialog && !flying) {
-    const i = trip.bag.find((j) => gArc(p, w.residents[j].d) < 1.6);
-    if (i !== undefined) deliverAway(i);
-    else if (!trip.bag.length && gArc(p, w.post.d) < w.post.reach) fillAwayBag();
-  }
   const ticket = huntState?.wallet ? ` · ticket ${minutes(left)}` : "";
-  let goal = null;
-  for (const j of trip.bag) {
-    const r = w.residents[j], dd = gArc(p, r.d);
-    if (!goal || dd < goal.dd) goal = { ...r, dd };
-  }
-  if (goal) {
-    $("target").textContent = `${EMOJI[k]} Deliver to ${goal.name}${left < 10 * 60_000 ? ticket : ""}`;
-    pointArrow(angleTo(goal.d), `· ${Math.round(goal.dd)}m`);
-  } else {
-    const home = w.rocket, dd = gArc(p, home.d);
-    $("target").textContent = `${EMOJI[k]} ${NOUN[k]} stamps ${w.found}/${w.out}${ticket}`;
-    pointArrow(angleTo(home.d), dd < home.reach ? "· E to fly home" : `· post box & rocket ${Math.round(dd)}m`, dd < home.reach);
-  }
-  const got = w.update(dt, t, { me: p, chest: bodyY + 0.85, active: !dialog && !flying });
-  if (got !== null) {
-    sounds.collect();
-    trip.sparkle.puff(p.clone().multiplyScalar(TRIPS[k].R + bodyY + 0.9), p, { n: 14, size: 0.24, spread: 1.8, life: 0.7 });
-    toast(w.found === w.out ? `Every ${NOUN[k].toLowerCase()} stamp today!` : `${EMOJI[k]} ${NOUN[k]} stamp! ${w.found} of ${w.out}`);
-    if (huntState?.wallet) net.worldGrab(k, got);
-  }
+  const home = w.rocket, dd = gArc(p, home.d);
+  $("target").textContent = `${EMOJI[k]} ${NOUN[k]}${ticket}`;
+  pointArrow(angleTo(home.d), dd < home.reach ? "· E to fly home" : `· rocket ${Math.round(dd)}m`, dd < home.reach);
+  w.update(dt, t, { me: p });
   trip.puffs.update(dt, 1);
-  trip.sparkle.update(dt, 1);
   if (w.rover) {
     // (Got out some other way, say by switching couriers: the rover stays where you were.)
     if (w.rover.taken && player.rideKey !== "rover") w.rover.park(p, ahead());
@@ -2152,7 +1964,6 @@ const chainReady = connectChain()
 $("officeBtn").addEventListener("click", () => showOffice($("office").hidden));
 $("officeClose").addEventListener("click", () => office?.show(false));
 
-hud();
 applySettings();
 titleCount();
 setInterval(titleCount, 30_000);

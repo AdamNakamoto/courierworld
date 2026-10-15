@@ -606,9 +606,9 @@ export async function connectChain() {
   } : null;
 
   // ---------------------------------------------------------------- the treasure hunt
-  // Golden stamps and the treasury's token drops (TokenDrops): coins round the planet that the multiplayer server
-  // checks and signs vouchers for. Only wallets with a post office can claim. The companion bonus (bonus-rules.js) is
-  // paid by a $STAMP drop here too: `isBonus` marks it, and it's never the golden stamps' drop.
+  // The treasury's token drops (TokenDrops): coins round the planet that the multiplayer server checks and signs
+  // vouchers for. Only wallets with a post office can claim. The companion bonus (bonus-rules.js) is paid by a $STAMP
+  // drop here too: `isBonus` marks it.
   const dropToken = new Map(); // token (lower case) -> { symbol, name, image }
   async function tokenInfo(token) {
     const k = token.toLowerCase();

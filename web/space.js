@@ -1,10 +1,7 @@
-// What the moon and Mars share (moon.js, mars.js): the landing pad with the rocket home on it, the post box that
-// hands out letters for the locals, the locals themselves (they breathe, blink, glow and turn to watch you, and hop
-// while they talk), and the day's golden stamps.
+// What the moon and Mars share (moon.js, mars.js): the landing pad with the rocket home on it, a post box for show,
+// and the locals (they breathe, blink, glow and turn to watch you, and hop while they talk).
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { toon, texFromCanvas } from "./world.js";
-import { huntDay } from "./hunt-pick.js";
-import { stampMesh, stampGlow } from "./stamps.js";
 
 /// A quaternion standing an object up at `d` (local +y) and facing it toward `target` (local +z).
 export function facing(d, target) {
@@ -137,62 +134,6 @@ export function createLocals(R) {
         for (const tp of f.tips) tp.scale.setScalar(1 + 0.3 * Math.sin(t * 4 + f.ph));
         f.tick?.(dt, t); // (anything else it does, like an astronaut's idle sway)
       }
-    },
-  };
-}
-
-/// The day's golden stamps on a world of radius `R`: `spots` is every spot one can be out at ({ d, h }), `pick(day)`
-/// today's, laid out with `place(obj, d, h, spin)`. They spin and bob, and `update` picks up any the courier reaches.
-export function dayStamps(W, group, place, { R, spots, pick }, rnd) {
-  let day = -1, found = new Set(), stamps = [];
-  const glow = stampGlow();
-  const arcOn = (a, b) => R * Math.acos(Math.min(1, Math.max(-1, a.dot(b))));
-  function layOut() {
-    for (const s of stamps) {
-      group.remove(s.mesh);
-      W.noNormals.splice(W.noNormals.indexOf(s.halo), 1);
-    }
-    day = huntDay();
-    stamps = pick(day).map((i) => {
-      const sp = spots[i], d = new THREE.Vector3(...sp.d), m = stampMesh(), halo = new THREE.Sprite(glow);
-      halo.scale.set(1.3, 1.3, 1);
-      m.add(halo);
-      m.scale.setScalar(1.6);
-      W.noNormals.push(halo);
-      place(m, d, sp.h, rnd() * 6);
-      m.visible = !found.has(i);
-      return { id: i, d, h: sp.h, mesh: m, halo, base: m.position.clone(), ph: rnd() * 6 };
-    });
-  }
-  layOut();
-  return {
-    /// Stamps found today (the server's record, for signed-in couriers).
-    setFound(d, ids) {
-      if (d !== day) return;
-      found = new Set(ids);
-      for (const s of stamps) s.mesh.visible = !found.has(s.id);
-    },
-    get found() { return stamps.filter((s) => found.has(s.id)).length; },
-    get out() { return stamps.length; },
-    /// `me`: where the courier is (a direction in the world's frame); `chest`: how high. Returns the spot picked up,
-    /// or null.
-    update(dt, t, me, chest, active) {
-      if (huntDay() !== day) {
-        found = new Set();
-        layOut();
-      }
-      let got = null;
-      for (const s of stamps) {
-        if (!s.mesh.visible) continue;
-        s.mesh.rotateY(dt * 1.8);
-        s.mesh.position.copy(s.base).addScaledVector(s.d, Math.sin(t * 2.2 + s.ph) * 0.1);
-        if (active && got === null && arcOn(s.d, me) < 0.85 && Math.abs(chest - s.h) < 0.85) {
-          s.mesh.visible = false;
-          found.add(s.id);
-          got = s.id;
-        }
-      }
-      return got;
     },
   };
 }

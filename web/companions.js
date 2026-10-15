@@ -726,8 +726,8 @@ function spirit() {
   const GOLD = 0xe8b93a, SHINE = { emissive: 0x4a3300 }, CREAM = 0xfbf6ea, INK = 0x2a1f1a;
   const group = new THREE.Group(), drift = pivot(group, 0, 0.36, 0), body = pivot(drift);
   add(body, new THREE.BoxGeometry(0.32, 0.4, 0.04), GOLD, 0, 0, 0, 1, 1, 1, SHINE);
-  // Perforations: a row of little bumps round every edge, the way a stamp's edge looks. (Only the plate glows warm like
-  // the hunt's golden stamps: glowing parts can't be merged, and there are thirty of these.)
+  // Perforations: a row of little bumps round every edge, the way a stamp's edge looks. (Only the plate glows warm:
+  // glowing parts can't be merged, and there are thirty of these.)
   for (let i = 0; i < 7; i++) for (const y of [-0.2, 0.2]) add(body, ball(0.021, 8), GOLD, -0.15 + i * 0.05, y, 0);
   for (let i = 1; i < 8; i++) for (const x of [-0.16, 0.16]) add(body, ball(0.021, 8), GOLD, x, -0.2 + i * 0.05, 0);
   add(body, new THREE.BoxGeometry(0.24, 0.3, 0.01), CREAM, 0, 0, 0.022);

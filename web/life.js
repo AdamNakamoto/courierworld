@@ -20,7 +20,7 @@ const CHAT = {
     "I walk this street every day. Round the planet and back by lunch!",
     "If you jump on the spot, the birds think you're one of them. Probably.",
     "The post office used to be a noodle shop, you know.",
-    "Somebody's been leaving golden stamps around town. Strange, isn't it?",
+    "They say the rocket in the neon district flies all the way to the moon. Imagine!",
     "My knees say rain's coming. My knees are usually right.",
   ],
   day: ["Lovely light today. The whole street looks freshly painted.", "The butterflies are out by the parks. Go and look!"],

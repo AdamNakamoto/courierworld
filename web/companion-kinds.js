@@ -19,7 +19,7 @@ export const COMPANIONS = [
   { id: 32, key: "colossus", name: "Colossus", tier: "Mecha", icon: "🗿", floats: false, height: 1.4, blurb: "A towering stone giant with mossy shoulders and warm amber eyes. Gentle, slow, unstoppable." },
   { id: 41, key: "sakura", name: "Sakura", tier: "Anime", icon: "🌸", floats: false, height: 0.95, blurb: "A cheerful companion in cherry-blossom pink, with a sakura hairpin and boundless energy." },
   { id: 42, key: "luna", name: "Luna", tier: "Anime", icon: "🌙", floats: false, height: 0.95, blurb: "A calm stargazer with silver hair and a crescent-moon cloak. Knows every constellation." },
-  { id: 43, key: "hana", name: "Hana", tier: "Anime", icon: "🌺", floats: false, height: 0.95, blurb: "A sunny flower-crowned helper with her own tiny satchel. Loves delivering letters with you." },
+  { id: 43, key: "hana", name: "Hana", tier: "Anime", icon: "🌺", floats: false, height: 0.95, blurb: "A sunny flower-crowned helper with her own tiny satchel. Loves exploring the planet with you." },
 ];
 export const COMPANION_IDS = COMPANIONS.map((c) => c.id);
 export const companionOf = (id) => COMPANIONS.find((c) => c.id === id) ?? null;

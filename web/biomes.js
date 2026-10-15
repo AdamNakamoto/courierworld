@@ -384,7 +384,7 @@ export function buildBiomes(k) {
         k.bake(sh, topAt, k.spinToward(topAt, step(topAt, dir, -1)), m.top);
         k.landmark({ dir: m.d.clone(), markerDir: m.d.clone(), markerH: m.top + 1.8, spin: 0, kind: "shrine", name: "Shrine keeper" });
         k.npc({ d: step(m.d, dir, -0.8), y: m.top, face: dir, name: "Shrine keeper", look: { shirt: 0xf4efe0, accent: 0xd9534a, bottomsStyle: "skirt", hairStyle: "bun", headwear: "none" },
-          lines: ["You climbed all those steps with a bag of letters? Sit, rest.", "From up here you can see the waterfalls, the woods and the sea.", "People leave wishes here. Mostly about the post arriving on time."] });
+          lines: ["You climbed all those steps? Sit, rest.", "From up here you can see the waterfalls, the woods and the sea.", "People leave wishes here. Mostly about the post arriving on time."] });
         k.stampSpot(step(m.d, basis(m.d)[1], 1.0), m.top);
       }
       k.addCircle(m.d, m.r + 0.05, { y1: m.top - 0.3, except: ramp, wall: { h: m.top } });
@@ -616,7 +616,7 @@ export function buildBiomes(k) {
       workers.forEach(([x, zz, name], i) => k.npc({
         d: shedAt.clone().multiplyScalar(R).add(V(x, 0, zz).applyQuaternion(q)).normalize(), y: 0, face: V(i ? -1 : 1, 0, 0.4).applyQuaternion(q).normalize(), name,
         look: { shirt: 0x3f7fb3, bottoms: 0x3f7fb3, bottomsStyle: "pants", headwear: "hardhat", accent: 0xf4efe0 },
-        lines: i ? ["Hard hats on past the barrier. Even couriers.", "Tank three hums a little tune at night. Honest.", "We make the paper for half the letters you carry."]
+        lines: i ? ["Hard hats on past the barrier. Even couriers.", "Tank three hums a little tune at night. Honest.", "We make the paper for half the letters in town."]
           : ["Post for the works? Leave it with me.", "The chimney's just steam these days. We went clean years ago.", "Climb the catwalk if you like the view. Mind the rail."],
       }));
       // A warning board by the door.
@@ -853,7 +853,7 @@ export function buildBiomes(k) {
           const d = step(step(plaza, e1, Math.cos(a) * 3.4), e2, Math.sin(a) * 3.4);
           if (!free(d, 0.4) || nearestRoad(d) < ROAD_HW + 0.3) continue;
           k.npc({ d, y: T.landAt(d), face: tangentTo(d, plaza), name: "Netrunner Rei", look: { hair: 0x7a4fd0, hairStyle: "bob", headwear: "headphones", accent: PINK, shirt: 0x2a2638, bottoms: 0x1c1a24, bottomsStyle: "pants", shoes: 0x2b2b2e },
-            lines: ["I hacked the hologram once. For a whole minute it was a picture of my cat.", "Everything here runs on neon and noodles. Mostly noodles.", "Your bag of letters is the most secure network in town. Nobody can phish paper.", "Up there, the towers. Down here, the real post moves."] });
+            lines: ["I hacked the hologram once. For a whole minute it was a picture of my cat.", "Everything here runs on neon and noodles. Mostly noodles.", "Paper is the most secure network in town. Nobody can phish paper.", "Up there, the towers. Down here, the real post moves."] });
           k.taken.push({ d, r: 0.6 });
           break;
         }
@@ -915,7 +915,7 @@ export function buildBiomes(k) {
         neonSign("ラーメン", GOLD, 1.6, 0.42, stall.clone().multiplyScalar(R).add(V(0, 0, 0.82).applyQuaternion(q)).normalize(), spin, 2.45);
         const chef = stall.clone().multiplyScalar(R).add(V(0, 0, -0.55).applyQuaternion(q)).normalize();
         k.npc({ d: chef, y: T.landAt(chef), face: faceOf(stall, spin), name: "Chef Jun", look: { shirt: 0xf4f1ea, accent: 0xd9534a, headwear: "beanie", bottomsStyle: "pants", bottoms: 0x2a2a35 },
-          lines: ["One bowl of ramen, extra noodles? Couriers eat free on rainy nights.", "I've been cooking under these signs for thirty years. The signs got brighter. The ramen stayed the same.", "Deliver this broth to the tower on the corner? Careful, it's hot!"] });
+          lines: ["One bowl of ramen, extra noodles? Couriers eat free on rainy nights.", "I've been cooking under these signs for thirty years. The signs got brighter. The ramen stayed the same.", "Careful with the broth, it's hot! Couriers always gulp it down at a run."] });
       }
 
       // ---- Cee Zee at the SAFU booth
@@ -935,7 +935,7 @@ export function buildBiomes(k) {
         const cz = booth.clone().multiplyScalar(R).add(V(-0.9, 0, 1.05).applyQuaternion(q)).normalize();
         k.npc({ d: cz, y: T.landAt(cz), face: faceOf(booth, spin), name: "Cee Zee", own: true, hi: ["SAFU!", "4", "Keep building!"],
           look: { hairStyle: "short", hair: 0x1c1a1c, skin: 0xeccfae, shirt: 0x1f2a44, accent: GOLD, collar: 0x1f2a44, bottoms: 0x1c1c22, bottomsStyle: "pants", shoes: 0xf4f1ea, headwear: "none", bag: "none", height: 1 },
-          lines: ["Funds are SAFU. Letters too. Especially the ones in your bag.", "4. That's it. That's the whole message.", "Ignore the noise. Deliver the post.", "Build. Ship. Deliver. Repeat.", "Stay SAFU out there, courier. Watch out for puddles."] });
+          lines: ["Funds are SAFU. Letters too.", "4. That's it. That's the whole message.", "Ignore the noise. Deliver the post.", "Build. Ship. Deliver. Repeat.", "Stay SAFU out there, courier. Watch out for puddles."] });
       }
 
       // ---- the rocket pad, where Elon Tusk and Doge wait for launch day
@@ -974,11 +974,11 @@ export function buildBiomes(k) {
         const doge = pad.clone().multiplyScalar(R).add(V(1.0, 0, 3.2).applyQuaternion(q)).normalize();
         k.npc({ d: elon, y: T.landAt(elon), face, name: "Elon Tusk", own: true, hi: ["To Mars!", "Hello, Earthling!", "Ship it!"],
           look: { hairStyle: "short", hair: 0x3a2a24, skin: 0xf2d3be, shirt: 0x1f2024, accent: 0x1f2024, bottoms: 0x2f3a4a, bottomsStyle: "pants", shoes: 0x2b2b2e, headwear: "none", bag: "none", height: 1.08 },
-          lines: ["We deliver letters to Mars now. The stamps had to be very, very big.", "This rocket is fully reusable. Like envelopes, if you're careful.",
+          lines: ["We fly couriers to Mars now. The rocket had to be very, very big.", "This rocket is fully reusable. Like envelopes, if you're careful.",
             "The Space Express leaves from right here: the moon, or Mars if you're brave. Stand by the rocket and press E. The view is free, the seat isn't.",
-            "Doge keeps saying it's going to the moon. Now it actually does. Low gravity, very good for jumping.", "I'm thinking of renaming the alphabet to just X. Saves ink.", "Some nights I sleep at the post office. Have you tried delivering faster?"] });
+            "Doge keeps saying it's going to the moon. Now it actually does. Low gravity, very good for jumping.", "I'm thinking of renaming the alphabet to just X. Saves ink.", "Some nights I sleep at the post office. Have you tried running faster?"] });
         k.npc({ d: doge, y: T.landAt(doge), face, name: "Doge", kind: "doge", own: true, hi: ["Wow!", "Such wow!", "Much hi!"],
-          lines: ["Wow. Such letters. Very delivery. Much stamps.", "Many courier. So planet. Wow.", "(Doge looks at the rocket, then at you, then back at the rocket. Much hope.)", "To the moon! Such ticket. Very jump. Wow.", "Golden stamps on the moon. Much shiny. So float."] });
+          lines: ["Wow. Such planet. Very round. Wow.", "Many courier. So planet. Wow.", "(Doge looks at the rocket, then at you, then back at the rocket. Much hope.)", "To the moon! Such ticket. Very jump. Wow.", "Frogs on the moon. Much green. So float."] });
         k.stampSpot(pad.clone().multiplyScalar(R).add(V(-1.7, 0, -1.3).applyQuaternion(q)).normalize(), 0.08);
       }
 

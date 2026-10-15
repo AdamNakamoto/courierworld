@@ -1,13 +1,11 @@
 // Mars: a red world as big as Courier World, which couriers fly to from the neon district's rocket for a ticket paid
 // in $STAMP to the Courier World treasury (twice the moon's: it's further). Gravity between the moon's and the
 // planet's; a domed city by the spaceport; red mountains beyond it; a winding canyon; a big sleeping volcano; an ice
-// cap at the bottom; dust storms; and golden Mars stamps that count with the golden stamps (paid by the treasury's
-// $STAMP drop, when one is running).
+// cap at the bottom; and dust storms.
 //
-// Shared by the game and the multiplayer server (no imports beyond moon-pick.js and hunt-pick.js, so both can load
-// it): Mars's size and ground, the ticket, where its places are, and where the day's Mars stamps are. Directions are
-// [x, y, z] unit vectors in Mars's own frame; the spaceport's landing pad (and the rocket home) is at its top.
-import { shuffleSpots } from "./hunt-pick.js";
+// Shared by the game and the multiplayer server (no imports beyond moon-pick.js, so both can load it): Mars's size
+// and ground, the ticket and where its places are. Directions are [x, y, z] unit vectors in Mars's own frame; the
+// spaceport's landing pad (and the rocket home) is at its top.
 import { MOON_TREASURY, LANDING, rng, dot, unit, randomDir } from "./moon-pick.js";
 
 export const MARS_R = 34; // metres, the same as Courier World
@@ -15,11 +13,9 @@ export const MARS_PRICE = 200n * 10n ** 18n; // a ticket, in $STAMP's smallest u
 export const MARS_PRICE_TEXT = "200";
 export const MARS_TREASURY = MOON_TREASURY; // where tickets go
 export const MARS_SECS = 3600; // how long a ticket lasts
-export const MARS_STAMPS = 12; // golden Mars stamps out each day
 export const MARS_GRAVITY = 0.55; // of the planet's: jumps go nearly twice as high
-export const MARS_REACH = 2.4, MARS_REACH_UP = 1.8; // how close a find has to be (metres)
 
-const CANDIDATES = 48; // spots a Mars stamp can be out at; each day takes MARS_STAMPS of them
+const CANDIDATES = 48; // spots the scenery keeps clear of (MARS_SPOTS)
 
 const clamp = (x, lo = -1, hi = 1) => Math.min(hi, Math.max(lo, x));
 const smooth = (a, b, x) => {
@@ -122,8 +118,8 @@ export function marsHeight(d) {
   return h;
 }
 
-/// Every spot a Mars stamp can be out at: { d, h (its height above Mars's radius) }. A third of them float high, for
-/// a Mars jump.
+/// The spots where the Mars stamps used to be (retired 2026-10-15): { d, h (its height above Mars's radius) }. Kept
+/// so Mars looks the same: the locals out in the wild (mars.js's settle) and the rocks keep clear of them.
 export const MARS_SPOTS = (() => {
   const rnd = rng(7171), out = [];
   for (let i = 0; i < 5000 && out.length < CANDIDATES; i++) {
@@ -134,6 +130,3 @@ export const MARS_SPOTS = (() => {
   }
   return out;
 })();
-
-/// The Mars stamps out on `day`: indexes into MARS_SPOTS (a shuffle of its own, so they don't follow the moon's).
-export const marsSpots = (day) => shuffleSpots(day + 60_000, MARS_SPOTS.length).slice(0, MARS_STAMPS);

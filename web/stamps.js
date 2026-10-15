@@ -1,22 +1,16 @@
-// The treasure hunt: golden stamps and the treasury's token drops, hidden around the planet. Some float at
-// arm's height, others only a jump reaches. They move every day: the spots in hunt-spots.json are shuffled
-// each UTC day (drop-pick.js, the same way the multiplayer server does): 24 golden stamps, then each running
-// token drop's coins, with the token's picture on them. Finds are remembered in this browser; signed-in players
-// with a post office also have them checked by the server, which signs vouchers the TokenDrops contract pays.
+// The treasure hunt: the treasury's token drops, as coins hidden around the planet. Some float at arm's height,
+// others only a jump reaches. They move every day: the spots in hunt-spots.json are shuffled each UTC day
+// (drop-pick.js, the same way the multiplayer server does), and each running token drop's coins, with the token's
+// picture on them, take their share. Finds are remembered in this browser; signed-in players with a post office
+// also have them checked by the server, which signs vouchers the TokenDrops contract pays.
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, ROAD_HW, arc, toon, mulberry32, texFromCanvas, nearestRoad } from "./world.js";
-import { HUNT_STAMPS, huntDay } from "./hunt-pick.js";
+import { huntDay } from "./hunt-pick.js";
 import { layDrops } from "./drop-pick.js";
 
-export const STAMPS = HUNT_STAMPS;
-const store = (day) => `courier:hunt:${day}`;
 const coinStore = (day) => `courier:coins:${day}`;
-function loadFound(day) {
-  try { return new Set(JSON.parse(localStorage.getItem(store(day)) || "[]")); } catch { return new Set(); }
-}
-function saveFound(day, found) {
-  try { localStorage.setItem(store(day), JSON.stringify([...found])); } catch {}
-}
+// The golden stamps' finds (retired 2026-10-15) were kept as courier:hunt:<day>: tidy them away.
+try { for (const k of Object.keys(localStorage)) if (/^courier:hunt:\d+$/.test(k)) localStorage.removeItem(k); } catch {}
 function loadCoins(day) {
   try { return new Set(JSON.parse(localStorage.getItem(coinStore(day)) || "[]")); } catch { return new Set(); }
 }
@@ -54,7 +48,7 @@ function coinFace(info) {
   return texFromCanvas(c);
 }
 
-/// Every spot a golden stamp can be out at (what hunt-spots.json holds): the high places the biomes
+/// Every spot a coin can be out at (what hunt-spots.json holds): the high places the biomes
 /// mark, then spots in the open spread round the planet, two in five only a jump reaches. Run once
 /// on the finished world to write the file; the game and the server both read that.
 export function huntCandidates(W, total = 120) {
@@ -75,24 +69,7 @@ export function huntCandidates(W, total = 120) {
   return spots;
 }
 
-export function stampMesh() {
-  const g = new THREE.Group();
-  const part = (geo, color, z, extra) => {
-    const m = new THREE.Mesh(geo, toon(color, extra));
-    m.position.z = z;
-    m.castShadow = true;
-    g.add(m);
-    return m;
-  };
-  part(new THREE.BoxGeometry(0.36, 0.44, 0.035), 0xe8b93a, 0, { emissive: 0x4a3300 });
-  for (const s of [-1, 1]) {
-    part(new THREE.BoxGeometry(0.26, 0.32, 0.01), 0xfbf6ea, s * 0.021);
-    part(new THREE.CircleGeometry(0.07, 14), 0xd9534a, s * 0.027).rotation.y = s < 0 ? Math.PI : 0;
-  }
-  return g;
-}
-
-/// The warm glow round a stamp or coin (a sprite material, shared).
+/// The warm glow round a coin (a sprite material, shared).
 let haloMat = null;
 export function stampGlow() {
   return (haloMat ??= (() => {
@@ -111,7 +88,7 @@ export function stampGlow() {
 export function createStamps(W, spots) {
   const rng = mulberry32(777);
   const glow = stampGlow();
-  let day = huntDay(), found = loadFound(day), coinsFound = loadCoins(day), stamps = [];
+  let day = huntDay(), coinsFound = loadCoins(day), stamps = [];
   let running = []; // the token drops with coins out today: [{ id, token, symbol, picture }]
   const rim = toon(0xe8b93a, { emissive: 0x4a3300 });
   const faces = new Map(); // drop id -> its coin face material
@@ -127,38 +104,36 @@ export function createStamps(W, spots) {
     return g;
   }
 
-  /// Put out the day's stamps and coins (taking in the last ones).
+  /// Put out the day's coins (taking in the last ones).
   function layOut() {
     for (const s of stamps) {
       W.world.remove(s.mesh);
       W.noNormals.splice(W.noNormals.indexOf(s.halo), 1);
     }
     const lay = layDrops(day, spots.length, running.map((d) => ({ id: d.id, spots: d.spots, isStamp: false })));
-    const put = (i, kind, drop) => {
+    const put = (i, drop) => {
       const sp = spots[i], d = new THREE.Vector3(sp.x, sp.y, sp.z).normalize();
-      const mesh = kind === "golden" ? stampMesh() : coinMesh(running.find((r) => r.id === drop));
+      const mesh = coinMesh(running.find((r) => r.id === drop));
       const halo = new THREE.Sprite(glow);
       halo.scale.set(1.3, 1.3, 1);
       mesh.add(halo);
       mesh.scale.setScalar(1.5);
       W.noNormals.push(halo);
-      const empty = kind === "coin" && running.find((r) => r.id === drop)?.empty;
-      mesh.visible = !empty && !(kind === "golden" ? found : coinsFound).has(i);
+      const empty = running.find((r) => r.id === drop)?.empty;
+      mesh.visible = !empty && !coinsFound.has(i);
       mesh.position.copy(d).multiplyScalar(R + sp.h);
       mesh.quaternion.copy(W.frameAt(d, rng() * 6));
       W.world.add(mesh);
-      return { id: i, kind, drop, d, mesh, halo, base: mesh.position.clone(), y: sp.h, ph: rng() * 6 };
+      return { id: i, drop, d, mesh, halo, base: mesh.position.clone(), y: sp.h, ph: rng() * 6 };
     };
-    stamps = [...lay.golden.spots.map((i) => put(i, "golden", null)), ...lay.coins.flatMap((c) => c.spots.map((i) => put(i, "coin", c.drop)))];
+    stamps = lay.coins.flatMap((c) => c.spots.map((i) => put(i, c.drop)));
   }
   layOut();
 
   return {
-    /// Golden stamps found today.
-    get found() { return stamps.filter((s) => s.kind === "golden" && found.has(s.id)).length; },
     /// A token drop's coins found today, and how many it has out.
     coins(drop) {
-      const mine = stamps.filter((s) => s.kind === "coin" && s.drop === drop);
+      const mine = stamps.filter((s) => s.drop === drop);
       return { found: mine.filter((s) => coinsFound.has(s.id)).length, out: mine.length };
     },
     get day() { return day; },
@@ -171,25 +146,23 @@ export function createStamps(W, spots) {
       running = list;
       layOut();
     },
-    /// The server's record of what you've found today (signed-in hunters): it wins over the browser's.
-    setFound(d, ids, coinIds = {}) {
+    /// The server's record of the coins you've found today (signed-in hunters, { drop id: [spots] }): it wins over
+    /// the browser's.
+    setFound(d, coinIds = {}) {
       if (d !== day) return;
-      found = new Set(ids);
       coinsFound = new Set(Object.values(coinIds).flat());
-      saveFound(day, found);
       saveCoins(day, coinsFound);
       for (const s of stamps) {
-        const empty = s.kind === "coin" && running.find((r) => r.id === s.drop)?.empty;
-        s.mesh.visible = !empty && !(s.kind === "golden" ? found : coinsFound).has(s.id);
+        const empty = running.find((r) => r.id === s.drop)?.empty;
+        s.mesh.visible = !empty && !coinsFound.has(s.id);
       }
     },
-    /// Spin and bob; collect any stamp or coin the courier reaches. Returns what was collected, if anything:
-    /// { id (its spot), kind ("golden" or "coin"), drop (a coin's drop id), mesh, d }.
+    /// Spin and bob; collect any coin the courier reaches. Returns what was collected, if anything:
+    /// { id (its spot), drop (its drop id), mesh, d }.
     update(dt, t, { me, chest, active }) {
       // A new day: everything moves (main.js sends the day's drops again).
       if (huntDay() !== day) {
         day = huntDay();
-        found = loadFound(day);
         coinsFound = loadCoins(day);
         running = [];
         layOut();
@@ -201,13 +174,8 @@ export function createStamps(W, spots) {
         s.mesh.position.copy(s.base).addScaledVector(s.d, Math.sin(t * 2.2 + s.ph) * 0.08);
         if (active && !got && arc(s.d, me) < 0.75 && Math.abs(chest - s.y) < 0.75) {
           s.mesh.visible = false;
-          if (s.kind === "golden") {
-            found.add(s.id);
-            saveFound(day, found);
-          } else {
-            coinsFound.add(s.id);
-            saveCoins(day, coinsFound);
-          }
+          coinsFound.add(s.id);
+          saveCoins(day, coinsFound);
           got = s;
         }
       }

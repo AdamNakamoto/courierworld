@@ -15,7 +15,7 @@ import { companionOf } from "./companion-kinds.js";
 export const BONUS_DROPS = [];
 /// Whether the treasury's panel shows the form that starts a season's drop: off while the bonus is paused.
 export const BONUS_POOL_FORM = false;
-/// Whether drop `id` is a companion bonus drop (and so never pays the golden stamps).
+/// Whether drop `id` is a companion bonus drop (it pays for play, not finds).
 export const isBonusDrop = (id) => BONUS_DROPS.includes(Number(id));
 
 /// The most active minutes a day that count.

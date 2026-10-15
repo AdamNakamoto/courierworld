@@ -281,8 +281,8 @@ function along(p) {
 }
 
 /// `url`: the room's WebSocket address. `makeRider(look, ride, rideColour)` builds a courier (the same as yours),
-/// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count)` and `onNope(spot, why)` hear
-/// from the golden stamp hunt, `onBonus(status)` hears how the companion bonus is going (bonus-rules.js: the room's
+/// `dispose(group)` frees one, `onHunt(state)`, `onFound(day, spot, count, drop)` and `onNope(spot, why)` hear
+/// from the treasure hunt, `onBonus(status)` hears how the companion bonus is going (bonus-rules.js: the room's
 /// { on, day, minutes, max, kind, coins, why, lost, pool, paid }, or null on a new connection),
 /// `tier(address)` names their post office tier (or null), `onCount(n)` hears how many are online
 /// (null while not connected). Names: `nameToken(address)` is the token the room gave that wallet when
@@ -302,7 +302,6 @@ export function createNet(W, {
   // Which world you're on ("planet", "moon" or "mars"): others are drawn only on yours. `world(w)` gives a world's
   // group and radius (null if it isn't built yet).
   let mine = "planet", ticketWait = null;
-  const wgrabs = []; // stamps picked up on the moon or Mars this frame: [world, spot]
   /// Put a player (or your emote anchor) in their world's group.
   function home(obj, w) {
     const g = world(w);
@@ -313,7 +312,7 @@ export function createNet(W, {
   let code = null, voucherWait = null; // the room's sign-in code for this connection; a pending voucher request
   let nameWait = null, checkWait = null; // a name being set, and a name being checked, waiting for the room
   let myId = null; // the room's name for you on this connection
-  const grabs = []; // stamps picked up this frame: sent right after where you are, so the room checks the spot
+  const grabs = []; // coins picked up this frame: sent right after where you are, so the room checks the spot
 
   const count = () => onCount(ws?.readyState === 1 && me ? players.size + 1 : null);
   const send = (m) => {
@@ -520,7 +519,7 @@ export function createNet(W, {
         onBonus(m[1] ?? null);
         return;
       case "found":
-        onFound(m[1], m[2], m[3], m[4] ?? "golden"); // (day, spot, that drop's finds today, "golden" or the drop id)
+        onFound(m[1], m[2], m[3], m[4]); // (day, spot, that drop's finds today, the drop id)
         return;
       case "vouchers":
         voucherWait?.resolve(m[1]);
@@ -666,16 +665,15 @@ export function createNet(W, {
         }
         // Send where you are when your movement changes, or now and then while it keeps on (see HEARTBEAT).
         since += dt;
-        if (state && (since >= MIN_GAP || grabs.length || wgrabs.length)) {
+        if (state && (since >= MIN_GAP || grabs.length)) {
           const moving = state.spd > 0.05;
           // Where the others' games put you now: your last update, carried on along the curve it gave.
           const seen = last && carried(last, since);
           const changed = !last || moving !== last.spd > 0.05 || (state.air > 0) !== (last.air > 0) || state.f.dot(seen.f) < 0.94 ||
             Math.abs(state.spd - last.spd) > 0.25 || Math.abs(state.h - last.h) > 0.25 || Math.abs(state.swim - last.swim) > 0.3 ||
             arc(state.p, seen.p) > DRIFT;
-          if (changed || (moving && since >= HEARTBEAT) || grabs.length || wgrabs.length) sendState(state);
+          if (changed || (moving && since >= HEARTBEAT) || grabs.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
-          while (wgrabs.length) send(["wgrab", ...wgrabs.shift()]);
         }
       }
       // Everyone else eases toward where they should be by now: their last update, carried on along the curve
@@ -742,7 +740,7 @@ export function createNet(W, {
       const p = players.get(id);
       if (p?.root.visible) emotes.say(p.rider.group, text, p.rider.ride ? 3.2 : 2.85);
     },
-    /// The treasure hunt (golden stamps and token drops): sign in with `wallet`, signing the room's message with
+    /// The treasure hunt (the treasury's token drops): sign in with `wallet`, signing the room's message with
     /// `sign(message)`.
     async huntSignIn(wallet, sign) {
       if (!code || ws?.readyState !== 1) throw new Error("Not connected to the other players yet. Try again in a moment.");
@@ -750,10 +748,8 @@ export function createNet(W, {
       send(["auth", wallet, signature]);
     },
     huntState: () => send(["hunt"]),
-    /// You just picked up the stamp or coin at `spot`: ask the room to count it.
+    /// You just picked up the coin at `spot`: ask the room to count it.
     grab: (spot) => grabs.push(spot),
-    /// A stamp picked up on the moon or Mars (`w`: "moon" or "mars"; `spot`: its index in that world's spots).
-    worldGrab: (w, spot) => wgrabs.push([w, spot]),
     /// Show the room a ticket to `w` ("moon" or "mars"): the hash of the transaction that paid for it. Resolves with
     /// when it runs out.
     ticket(w, hash) {

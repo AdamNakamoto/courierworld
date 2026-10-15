@@ -1,8 +1,7 @@
 // The Post Office panel: open an office, mint couriers, put them on duty, train
 // them, collect $STAMP. Re-rendered every second from the chain snapshot.
 import { formatEther, isAddress, parseEther } from "https://esm.sh/viem@2";
-import { huntDay, newSpotsIn, HUNT_STAMPS } from "./hunt-pick.js";
-import { TRIPS } from "./trips.js";
+import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
@@ -147,9 +146,8 @@ export function createOffice(chain, {
     const [running, own] = await Promise.all([chain.drops.running(day), chain.drops.owner()]);
     const mine = st?.wallet && snap?.account && st.wallet.toLowerCase() === snap.account.toLowerCase() ? st : null;
     for (const d of running) {
-      // (Golden stamps on the planet, the moon and Mars are paid by the same $STAMP drop. The companion bonus's pays
-      // for play, not finds: below.)
-      const n = d.isBonus ? 0 : d.isStamp ? (mine?.found.length ?? 0) + (mine?.moon?.length ?? 0) + (mine?.mars?.length ?? 0) : mine?.coins?.[d.id]?.length ?? 0;
+      // ($STAMP drops put no coins out, so they pay nothing for finds. The companion bonus's pays for play: below.)
+      const n = d.isStamp ? 0 : mine?.coins?.[d.id]?.length ?? 0;
       d.foundToday = n;
       d.pay = n ? (await chain.drops.claimable(d.id, day, Math.min(n, 65535)))[1] : 0n;
     }
@@ -173,7 +171,7 @@ export function createOffice(chain, {
     if (own.isOwner) {
       out.all = await chain.drops.all(day);
       const launched = chain.pad ? await chain.pad.tokens((await chain.pad.info()).count) : [];
-      out.tokens = [{ address: "stamp", symbol: "STAMP" }, ...launched.map((t) => ({ address: t.address, symbol: t.symbol }))];
+      out.tokens = launched.map((t) => ({ address: t.address, symbol: t.symbol })); // (a $STAMP drop would put no coins out)
     }
     return out;
   }
@@ -193,7 +191,7 @@ export function createOffice(chain, {
       if (d.paid >= Number(d.dailyCoins)) return `All ${d.dailyCoins} of ${when}'s $${d.symbol} coins have been claimed: each day pays a set number across everyone, first come first served. New coins come out at 00:00 UTC: claim soon after you find them.`;
     }
     const bonus = huntInfo?.bonusLive ? ", or play with your companion following you (that's paid the next day)" : "";
-    return vouchers.length ? `Nothing new to claim: find more golden stamps or coins first${bonus}.` : `Nothing to claim yet: find golden stamps or coins first${bonus}.`;
+    return vouchers.length ? `Nothing new to claim: find more coins first${bonus}.` : `Nothing to claim yet: find a coin first${bonus}.`;
   }
 
   async function run(label, fn) {
@@ -216,11 +214,12 @@ export function createOffice(chain, {
 
   /// The treasury's controls: start a drop, the list of drops (end, top up, withdraw), pause.
   function dropAdmin(h) {
-    const f = dropForm, isStamp = f.token === "stamp" || !f.token;
-    let html = `<div class="admin-hunt"><h4>Start a drop <span class="muted">you run the treasure hunt</span></h4>
-      <label class="field">Token<select data-act="dropToken">${h.tokens.map((t) => `<option value="${t.address}" ${t.address === (f.token || "stamp") ? "selected" : ""}>$${esc(t.symbol)}${t.address === "stamp" ? " (golden stamps)" : ""}</option>`).join("")}</select></label>
-      <label class="field">Tokens per coin<input data-act="dropPerCoin" value="${esc(f.perCoin)}" inputmode="decimal" placeholder="e.g. ${isStamp ? "10" : "100000"}"></label>
-      ${isStamp ? `<p class="note">$STAMP pays for the 24 golden stamps.</p>` : `<label class="field">Coins out each day (1 to 48)<input data-act="dropSpots" value="${esc(f.spots)}" inputmode="numeric"></label>`}
+    const f = dropForm, token = f.token || h.tokens[0]?.address;
+    let html = `<div class="admin-hunt"><h4>Start a drop <span class="muted">you run the treasure hunt</span></h4>`;
+    if (!h.tokens.length) html += `<p class="note">A drop's coins pay a Launchpad token: once one has launched, you can start a drop of it here.</p>`;
+    else html += `<label class="field">Token<select data-act="dropToken">${h.tokens.map((t) => `<option value="${t.address}" ${t.address === token ? "selected" : ""}>$${esc(t.symbol)}</option>`).join("")}</select></label>
+      <label class="field">Tokens per coin<input data-act="dropPerCoin" value="${esc(f.perCoin)}" inputmode="decimal" placeholder="e.g. 100000"></label>
+      <label class="field">Coins out each day (1 to 48)<input data-act="dropSpots" value="${esc(f.spots)}" inputmode="numeric"></label>
       <label class="field">Coins one wallet is paid for, per day<input data-act="dropMax" value="${esc(f.maxPerWallet)}" inputmode="numeric"></label>
       <label class="field">Coins paid per day, everyone together (every player can collect each coin, so this caps a day)<input data-act="dropDaily" value="${esc(f.dailyCoins)}" inputmode="numeric"></label>
       <label class="field">Days (from today)<input data-act="dropDays" value="${esc(f.days)}" inputmode="numeric"></label>
@@ -234,15 +233,14 @@ export function createOffice(chain, {
       <label class="field">Days (from tomorrow)<input data-act="bonusDays" value="${esc(b.days)}" inputmode="numeric"></label>
       <label class="field">$STAMP to put in${suggest ? ` <span class="muted">(${fmt(suggest, 0)} covers every day)</span>` : ""}<input data-act="bonusAmount" value="${esc(b.amount)}" inputmode="decimal" placeholder="${suggest ? formatEther(suggest) : ""}"></label>
       <button class="pbtn wide" data-act="bonusCreate" ${busy ? "disabled" : ""}>Start the bonus pool</button>
-      <p class="note">It starts tomorrow (UTC): today's play is the first it pays for, so start it the day before a season. The game pays the bonus from it only once its drop number is added to BONUS_DROPS in web/bonus-rules.js and the room and the site are deployed. Do both before tomorrow, or the game will treat it as the golden stamps' drop. To follow one season with the next, start the next on the current one's last day.</p>
+      <p class="note">It starts tomorrow (UTC): today's play is the first it pays for, so start it the day before a season. The game pays the bonus from it only once its drop number is added to BONUS_DROPS in web/bonus-rules.js and the room and the site are deployed. Do both before tomorrow, or the game won't pay it out. To follow one season with the next, start the next on the current one's last day.</p>
       ${bonusMade != null ? `<p class="note"><b>Your new pool is drop #${bonusMade}: add ${bonusMade} to BONUS_DROPS in web/bonus-rules.js and deploy the room and the site before 00:00 UTC.</b></p>` : ""}`;
     if (h.all?.length) {
       html += `<h4>Drops</h4>`;
-      const goldenId = h.running.find((d) => d.isStamp && !d.isBonus)?.id; // (the one that pays the golden stamps today)
       for (const d of h.all) {
         const live = d.startDay <= h.day && h.day <= d.endDay, over = h.day > d.endDay + 1 || d.endDay < d.startDay;
         const what = d.isBonus ? " · companion bonus" : d.id === bonusMade ? " · companion bonus (add it to BONUS_DROPS)"
-          : d.id === goldenId ? " · golden stamps" : d.isStamp && h.day < d.startDay ? " · $STAMP, not running yet" : "";
+          : d.isStamp && h.day < d.startDay ? " · $STAMP, not running yet" : d.isStamp ? " · $STAMP (no coins in the game: end it and withdraw)" : "";
         html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)}${what} · ${fmt(d.perCoin, 0)}/coin · ${live ? `running · paid today ${d.paidToday}/${d.dailyCoins}` : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
           <div class="row2">${live || h.day < d.startDay ? `<button class="pbtn" data-act="dropEnd" data-id="${d.id}" ${busy ? "disabled" : ""} ${d.isBonus ? `title="Today's play is the last it pays for (paid tomorrow)"` : ""}>End</button>` : ""}
           ${!over ? `<button class="pbtn" data-act="dropTopUp" data-id="${d.id}" data-token="${d.token}" ${busy ? "disabled" : ""}>Top up</button>` : ""}
@@ -409,19 +407,16 @@ export function createOffice(chain, {
       </section>`;
     }
 
-    // ---- the treasure hunt: golden stamps, and the treasury's token drops (coins round the planet)
+    // ---- the treasure hunt: the treasury's token drops (coins round the planet)
     if (s.game && chain.drops && hunt && huntInfo) {
       // The room's view of you counts only if it's for the wallet logged in now.
       const h = huntInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
-      const golden = h.running.find((d) => d.isStamp && !d.isBonus), coins = h.running.filter((d) => !d.isStamp);
+      const coins = h.running.filter((d) => !d.isStamp);
       const total = h.running.reduce((m, d) => (d.pay ? m.set(d.symbol, (m.get(d.symbol) ?? 0n) + d.pay) : m), new Map());
       // (The companion bonus's drops pay nothing for finds, so their shares are only counted here.)
       for (const x of h.bonus ?? []) if (x.pay) total.set("STAMP", (total.get("STAMP") ?? 0n) + x.pay);
       html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
       if (coins.some((d) => d.left >= d.perCoin)) html += `<p class="on">🪙 The hunt is on! New coins in ${newSpotsIn()}</p>`;
-      html += `<div class="kv"><span>★ Golden stamps${golden ? ` · ${fmt(golden.perCoin, 0)} $STAMP each` : " · just for fun today"}</span><b>${st ? `${st.found.length}/${HUNT_STAMPS}` : "–"}</b></div>`;
-      html += `<div class="kv"><span>🌙 Moon stamps <span class="muted">· fly from the neon district's rocket</span></span><b>${st ? `${st.moon?.length ?? 0}/${TRIPS.moon.stamps}` : "–"}</b></div>`;
-      html += `<div class="kv"><span>🔴 Mars stamps <span class="muted">· the same rocket, further</span></span><b>${st ? `${st.mars?.length ?? 0}/${TRIPS.mars.stamps}` : "–"}</b></div>`;
       // Each coin drop: what you've found of today's coins, what they pay, how many of the day's are left to claim
       // (each day pays a set number across everyone, first come first served), and how far through the drop it is.
       for (const d of coins) {
@@ -437,8 +432,8 @@ export function createOffice(chain, {
       }
       const bonus = BONUS_DROPS.length ? hunt.bonus?.() : null;
       if (bonus?.on && (bonus.live || h.bonus?.length)) html += bonusCard(bonus, h, st);
-      if (!coins.length && !golden) html += `<p class="note">No paid drops today: golden stamps are just for fun until the treasury runs a drop.</p>`;
-      if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get paid for the golden stamps and coins you find.</p>`;
+      if (!coins.length) html += `<p class="note">No coins out today: they appear when the treasury runs a drop.</p>`;
+      if (!s.account) html += `<p class="note">Log in, open a post office and sign in to get paid for the coins you find.</p>`;
       else if (!s.office?.open) html += `<p class="note">Open a post office to claim treasure.</p>`;
       else if (!st?.wallet) html += `<button class="pbtn primary wide" data-act="huntSignIn" ${busy ? "disabled" : ""}>Sign in to hunt</button>
         <p class="note">One signature proves this wallet is yours. It costs nothing and can't move anything. What you find after signing in counts.</p>`;
@@ -454,7 +449,7 @@ export function createOffice(chain, {
     // ---- the leaderboard
     if (s.game) {
       html += `<section><h3>Leaderboard <span class="muted">${board ? `${board.count.toLocaleString()} post office${board.count === 1 ? "" : "s"} open` : "loading…"}</span></h3>`;
-      if (board?.count) html += `<p class="earned-all"><b>${fmt(board.totalEarned, 0)}</b> $STAMP earned by all players so far</p>`;
+      if (board?.count) html += `<p class="earned-all"><b>${fmt(board.totalEarned, 0)}</b> $STAMP earned by post offices so far</p>`;
       if (board?.count) {
         const me = s.account?.toLowerCase();
         const row = (o, i) => {
@@ -742,7 +737,8 @@ export function createOffice(chain, {
         huntAt = 0;
       });
       case "dropCreate": {
-        const f = dropForm, stampDrop = !f.token || f.token === "stamp";
+        const f = dropForm, token = f.token || huntInfo?.tokens?.[0]?.address;
+        if (!token) return toast("No token has launched yet: a drop's coins pay a Launchpad token.", "error");
         let perCoin, amount;
         try {
           perCoin = parseEther(f.perCoin || "0");
@@ -750,11 +746,10 @@ export function createOffice(chain, {
         } catch {
           return toast("Enter the tokens per coin and how many to put in.", "error");
         }
-        const spots = stampDrop ? 24 : Number(f.spots), max = Number(f.maxPerWallet), daily = BigInt(f.dailyCoins || "0"), days = Number(f.days);
+        const spots = Number(f.spots), max = Number(f.maxPerWallet), daily = BigInt(f.dailyCoins || "0"), days = Number(f.days);
         if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || daily < BigInt(max) || daily > 10_000n || !(days >= 1 && days <= 365)) {
           return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), coins a day for everyone (a wallet's to 10,000), days (1 to 365), and the tokens to put in.", "error");
         }
-        const token = stampDrop ? chain.stampAddress : f.token;
         return run(`Starting a drop`, async () => {
           await chain.drops.admin.createDrop({ token, perCoin, spots, maxPerWallet: max, dailyCoins: daily, startDay: huntDay(), days, amount });
           Object.assign(dropForm, { perCoin: "", amount: "" });
@@ -774,7 +769,7 @@ export function createOffice(chain, {
         if (pool < 24n || pool > 10_000n || !(Number.isInteger(days) && days >= 1 && days <= 365) || amount <= 0n) {
           return toast("Check the bonus pool: $STAMP a day for everyone (24 to 10,000), days (1 to 365), and the $STAMP to put in.", "error");
         }
-        if (!confirm(`Put ${fmt(amount, 0)} $STAMP into a companion bonus pool of ${pool.toLocaleString()} $STAMP a day for ${days} day${days > 1 ? "s" : ""}, starting tomorrow?\n\nThe game pays the bonus from it only once its drop number is added to BONUS_DROPS in web/bonus-rules.js and the room and the site are deployed. Do both before tomorrow (00:00 UTC), or the game will treat it as the golden stamps' drop.`)) return;
+        if (!confirm(`Put ${fmt(amount, 0)} $STAMP into a companion bonus pool of ${pool.toLocaleString()} $STAMP a day for ${days} day${days > 1 ? "s" : ""}, starting tomorrow?\n\nThe game pays the bonus from it only once its drop number is added to BONUS_DROPS in web/bonus-rules.js and the room and the site are deployed. Do both before tomorrow (00:00 UTC), or the game won't pay it out.`)) return;
         return run("Starting the companion bonus pool", async () => {
           bonusMade = await chain.drops.admin.createBonusPool({ dailyCoins: pool, startDay: huntDay() + 1, days, amount });
           try {

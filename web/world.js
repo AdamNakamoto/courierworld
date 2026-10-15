@@ -11,7 +11,7 @@ import { createSquare } from "./square.js";
 
 export const R = 34;
 /// How much more ground there is than the planet was first designed for (radius 24): counts of things
-/// scattered about (people, parks, birds, golden stamps) scale with it so the bigger town isn't empty.
+/// scattered about (people, parks, birds, treasure hunt spots) scale with it so the bigger town isn't empty.
 export const K = (R / 24) ** 2;
 export const UP = new THREE.Vector3(0, 1, 0);
 export const ROAD_HW = 1.5; // asphalt half-width
@@ -504,7 +504,7 @@ const POST_FRAG = /* glsl */ `
 
 // ---------------------------------------------------------------- world
 
-/// opts.keepClear: spots ({ x, y, z } directions) that must stay outside the Orb's globe (the golden stamp
+/// opts.keepClear: spots ({ x, y, z } directions) that must stay outside the Orb's globe (the treasure hunt's
 /// spots); a warning if one doesn't.
 export function createWorld(canvas, { keepClear = [] } = {}) {
   const gl = new THREE.WebGLRenderer({ canvas, antialias: false });
@@ -945,7 +945,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     npcs.push({
       d: dog, y: terrain.surfaceAt(dog, 1.5), face, name: "DOg PEt", kind: "dog", own: true, hi: ["Woof!", "Arf!", "Woof woof!"],
       lines: [
-        "Woof! (DOg PEt sniffs your bag. One of the letters smells of biscuits.)",
+        "Woof! (DOg PEt sniffs your bag. Something in there smells of biscuits.)",
         "Arf! (It sits up very straight, guarding the post office. Good dog.)",
         "Woof woof! (It nudges your hand for a pat. Its tail goes even faster.)",
         "(DOg PEt yawns, turns round twice and flops down by Adam's feet.)",
@@ -1120,7 +1120,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
           "This is the greatest post office in the history of post offices. Maybe ever. Everybody says so.",
           "Tremendous letters. The best letters. Nobody delivers letters like you, believe me.",
           "Some people say this planet is small. It's not small. It's huge. Very round, very huge.",
-          "I know stamps. I have the best stamps. Golden ones. Many people are looking for them.",
+          "I know rockets. I have the best rockets. Many people are flying to the moon. Many people.",
           "You're doing a fantastic job, courier. Fantastic. People are talking about it.",
         ],
       });
@@ -1249,7 +1249,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     const { foot: FOOT, ball: BALL, lift: LIFT } = ORB;
     const d = orbAt, spin = faceStreet(d), q = frameAt(d, spin);
     for (const k of keepClear) {
-      if (arc(d, new THREE.Vector3(k.x, k.y, k.z)) < BALL + 0.3) console.warn("A golden stamp spot is inside the Orb", k);
+      if (arc(d, new THREE.Vector3(k.x, k.y, k.z)) < BALL + 0.3) console.warn("A treasure hunt spot is inside the Orb", k);
     }
     // The plaza: paving that follows the planet's curve, out to the pavement of the nearest street.
     const PLAZA = Math.min(ORB.clear - 1.5, nearestRoad(d) - ROAD_HW - WALK - 0.3);
@@ -1519,7 +1519,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     square: squareView,
     /// The lie of the land: places, ground and water heights, what you can stand on.
     terrain,
-    /// People who live out in the places (beach, pier, shrine, cabin, works), golden-stamp spots up
+    /// People who live out in the places (beach, pier, shrine, cabin, works), treasure hunt spots up
     /// high, and where the loud things are (the sea, the falls, the works) for the ambience.
     npcs, stampSpots, ambient,
     /// Draw at this fraction (0.5..1) of the screen's full resolution.

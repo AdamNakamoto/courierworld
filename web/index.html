@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Courier</title>
-  <meta name="description" content="Deliver letters around a tiny planet town.">
+  <meta name="description" content="Explore a tiny planet town: chat, take photos, fly to the moon and Mars.">
   <link rel="icon" href="favicon.ico" sizes="32x32">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -30,13 +30,12 @@
     </nav>
     <p id="live" class="live" hidden></p>
     <p id="onlineTitle" class="live" hidden></p>
-    <p class="credit">A tiny planet. A bag of letters. Inspired by Messenger.</p>
+    <p class="credit">A tiny planet to walk round. Inspired by Messenger.</p>
   </div>
 
   <div id="hud" hidden>
     <div id="huntTicker" class="hunt-ticker" hidden title="The treasure hunt: open the Post Office panel"><div class="track"><span></span><span aria-hidden="true"></span></div></div>
-    <div class="card bag"><span class="env" aria-hidden="true"></span><b id="bagN">0</b> in bag <span class="sep"></span> delivered <b id="doneN">0</b> <span class="sep"></span> <span class="gold" aria-label="Golden stamps">★</span> <b id="stampN">0</b></div>
-    <div id="compass" class="card"><span id="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 1.5 21.5 12H16v10.5H8V12H2.5z" fill="#5ea9dd" stroke="#283033" stroke-width="2" stroke-linejoin="round"/></svg></span><span id="target"></span><span id="way"></span></div>
+    <div id="compass" class="card" hidden><span id="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 1.5 21.5 12H16v10.5H8V12H2.5z" fill="#5ea9dd" stroke="#283033" stroke-width="2" stroke-linejoin="round"/></svg></span><span id="target"></span><span id="way"></span></div>
     <div id="online" class="card online" hidden title="Couriers on the planet right now">👥 <b id="onlineN">1</b> online</div>
     <div id="bonusChip" class="card bonus-chip" hidden title="Companion bonus"><span id="bonusIcon" aria-hidden="true">🐾</span> <b id="bonusN">0/120</b><span class="unit"> min</span></div>
     <div id="help" class="card help">WASD / arrows to walk · Shift to run · Space to jump · E to talk or wave · 1–9, 0 to emote · Enter to chat · C for photos · drag to look, scroll to zoom</div>

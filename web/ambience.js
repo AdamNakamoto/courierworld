@@ -1,7 +1,7 @@
 // Ambient sound for the planet, generated live with the Web Audio API (no audio files): footsteps
 // that follow your pace, the hum or rumble of your ride, birds by day and crickets at night, a
-// soft breeze, rain when it showers, a hop and a thud when you jump, and a chime for every
-// delivered letter. Like the music, it needs a click to start.
+// soft breeze, rain when it showers, and a hop and a thud when you jump. Like the music, it
+// needs a click to start.
 
 const VOLUME = 0.7;
 const STORE = "courier:sounds";
@@ -368,7 +368,7 @@ export function createAmbience() {
       burst(t, 0.12 + 0.2 * level, "bandpass", rand(900, 1500), 0.9, 0.08 + 0.12 * level, out, rand(0.7, 1));
       burst(t + 0.03, 0.08, "highpass", 3000, 0.7, 0.03 + 0.05 * level, out);
     },
-    /// A golden stamp: a bright little run up the scale.
+    /// A coin: a bright little run up the scale.
     collect() {
       if (!live()) return;
       const t = ctx.currentTime + 0.01;
@@ -444,19 +444,6 @@ export function createAmbience() {
       const v = 0.4 + 0.6 * level;
       tone(t, "sine", 120, 0.2 * v, 0.12, out, 55);
       burst(t, 0.1, "lowpass", 900, 0.7, 0.14 * v, out, 0.8);
-    },
-    /// A bright two-note bell for a delivered letter.
-    chime() {
-      if (!live()) return;
-      const t = ctx.currentTime + 0.01;
-      const g = ctx.createGain();
-      g.gain.value = 1;
-      g.connect(master);
-      g.connect(verbSend);
-      [[1318.5, 0], [1975.5, 0.13]].forEach(([f, dt]) => {
-        tone(t + dt, "triangle", f, 0.18, 1.3, g);
-        tone(t + dt, "sine", f * 2, 0.04, 0.6, g);
-      });
     },
   };
 }
