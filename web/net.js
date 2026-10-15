@@ -845,6 +845,8 @@ export function createNet(W, {
       send(["world", w]);
     },
     get world() { return mine; },
+    /// Where everyone else on your world is (unit directions in its frame), for the map.
+    others: () => [...players.values()].filter((p) => p.world === mine && p.target && p.placed).map((p) => p.pos),
     /// Fishing: cast (resolves with { id, biteIn }: when the bite comes, in ms), land the fish on cast `id` (resolves
     /// with { species, day, today, max }). Both go right after where you are, so the room checks the spot.
     fishCast() {

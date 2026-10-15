@@ -197,6 +197,7 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .set-btn { top: 206px; font-size: 22px; padding: 0; }
 .full-btn { top: 254px; display: grid; place-items: center; padding: 0; }
 .photo-btn { top: 302px; font-size: 19px; padding: 0; }
+.map-btn { top: 350px; font-size: 19px; padding: 0; }
 .full-btn.on { background: var(--yellow); }
 .settings { position: absolute; top: 200px; right: 64px; width: 250px; padding: 10px 12px 12px; transform: rotate(-.5deg); }
 .settings h3 { margin: 8px 0 5px; font: 400 13px/1.2 Bungee, Impact, sans-serif; letter-spacing: .03em; }
@@ -321,6 +322,7 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
   .set-btn { top: 300px; }
   .full-btn { top: 348px; }
   .photo-btn { top: 396px; }
+  .map-btn { top: 444px; }
   .settings { top: 296px; right: 58px; }
 }
 
@@ -447,6 +449,7 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 
 /* Everything on screen steps aside but the walking stick (on phones) and the photo controls. */
 body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card { display: none !important; }
+body.map-on #hud, body.map-on .office, body.map-on .orb-card, body.map-on .fish-card { display: none !important; }
 .photo { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
 .photo > * { pointer-events: auto; }
 .photo-bar {
@@ -593,3 +596,26 @@ body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card 
 .fish-tile b { position: absolute; top: 6px; right: 6px; padding: 1px 5px; background: var(--yellow); border: 2px solid var(--ink); border-radius: 3px; font: 400 11px/1.1 Bungee, Impact, sans-serif; }
 .fish-tile.none img { filter: grayscale(1) brightness(.55); opacity: .55; }
 .fish-tile.none span { color: var(--muted); }
+
+/* The map (web/map.js): names over the globe, you, everyone else as dots, and a bar to zoom and close */
+.map { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
+.map[hidden] { display: none; }
+.map-labels, .map-dots { position: absolute; inset: 0; width: 100%; height: 100%; }
+.map-label { position: absolute; left: 0; top: 0; white-space: nowrap; font: 400 15px/1.1 "Patrick Hand", sans-serif; color: var(--ink);
+  background: rgba(251, 248, 239, .9); border: 2px solid var(--ink); border-radius: 3px; padding: 1px 6px; transition: opacity .2s; }
+.map-label.zone { font: 400 13px/1.1 Bungee, Impact, sans-serif; letter-spacing: .04em; background: var(--yellow); }
+.map-label.mine { background: #9fd3f2; }
+.map-you { position: absolute; left: 0; top: 0; }
+.map-you i { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; background: #e8453c; border: 3px solid #fff;
+  box-shadow: 0 0 0 2px var(--ink); animation: mapPulse 1.4s ease-in-out infinite; }
+.map-you span { position: absolute; left: 14px; top: -22px; font: 400 12px/1 Bungee, Impact, sans-serif; color: #fff; background: #e8453c;
+  border: 2px solid var(--ink); border-radius: 3px; padding: 3px 5px; }
+@keyframes mapPulse { 50% { transform: scale(1.25); } }
+.map-bar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 6px 8px;
+  pointer-events: auto; }
+.map-bar b { font: 400 16px/1 Bungee, Impact, sans-serif; margin-left: 4px; }
+.map-bar .muted { margin-right: 6px; }
+.map-hint { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 10px; font-size: 15px;
+  width: max-content; max-width: calc(100vw - 32px); text-align: center; animation: place 6s forwards; }
+.map-bar .muted { white-space: nowrap; }
+@media (max-width: 640px) { #mapWhere { display: none; } }

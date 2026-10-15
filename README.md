@@ -349,6 +349,15 @@ cd contracts
 echo DEPLOY | RPC_URL=… ./script/deploy-planets.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet
 ```
 
+## The map
+
+G (or the 🗺 button) pulls the camera back from your courier to the whole world as a globe: drag to spin it, scroll,
+pinch or +/− to zoom, G or Esc to close (it glides back). The world turns so where you are faces the camera, the way
+you face at the top. `web/map.js` names the places (the areas, the post office, the Orb, Times Square and its
+Launchpad, the Space Express, the fishing pier, the lighthouse, the shrine, the ranger's cabin, the pond, the stage,
+and your own post office; on Mars its city, volcano, canyon and so on), marks you, and draws everyone else on your
+world as dots. Your courier waits while it's open; rain, the cutaway and the hunt's coins stay off it.
+
 ## Fishing and Courier Fish
 
 Players fish in the bay: on the pier, a bridge over the bay or at the water's edge, facing the water, E (or Hi)

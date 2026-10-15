@@ -28,6 +28,7 @@ import { createFollower } from "./companions.js";
 import { COMPANION_IDS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, bonusCap } from "./bonus-rules.js";
 import { createFishing } from "./fishing.js";
+import { createMapOverlay, planetPlaces, marsPlaces, moonPlaces } from "./map.js";
 import { fishOf } from "./fish-kinds.js";
 import { displayName } from "./names.js";
 
@@ -719,6 +720,16 @@ const keys = new Set();
 const typing = (e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
 addEventListener("keydown", (e) => {
   if (typing(e)) return;
+  if (e.key.toLowerCase() === "g" && !e.metaKey && !e.ctrlKey && (map || (mode === "play" && !dialog))) {
+    if (!e.repeat) mapMode(!map);
+    return;
+  }
+  if (map) {
+    if (e.key === "Escape") mapMode(false);
+    else if (e.key === "+" || e.key === "=") mapZoom(0.85);
+    else if (e.key === "-") mapZoom(1.18);
+    if (!["m", "n", "f"].includes(e.key.toLowerCase())) return;
+  }
   // Photo mode: C in and out, Space takes the picture, Escape steps back; walking and emotes still work.
   if (e.key.toLowerCase() === "c" && !e.metaKey && !e.ctrlKey && mode === "play" && !dialog) {
     photoMode(!photo);
@@ -804,6 +815,7 @@ const PITCH_MIN = -0.3, PITCH_MAX = 1.42, DIST_MIN = 2.5, DIST_MAX = 25;
 let lookHold = 0; // seconds the camera leaves your view alone after you move it (before swinging in behind again)
 /// Zoom by `f` (above 1: out): photo mode's camera, or the one you play with.
 function zoom(f) {
+  if (map) return mapZoom(f);
   if (photo) return photoZoom(f);
   dist = Math.min(DIST_MAX, Math.max(DIST_MIN, dist * f));
   lookHold = 3;
@@ -832,6 +844,7 @@ canvas.addEventListener("pointermove", (e) => {
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   drag = { x: e.clientX, y: e.clientY };
+  if (map) return mapSpin(dx, dy); // (the map turns the globe, never your courier)
   yaw(-dx * 0.006);
   if (photo) photo.pitch = Math.min(1.5, Math.max(-1.35, photo.pitch + dy * 0.004));
   else {
@@ -849,7 +862,7 @@ canvas.addEventListener("pointerup", (e) => {
   drag = null;
   // A quick tap (not a drag to look round) on the Orb, or on one of Times Square's ad screens, opens the ad;
   // on the Launchpad's sign, the Launchpad.
-  if (tap && !away && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
+  if (tap && !away && !map && performance.now() - tap.t < 400 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) {
     const r = canvas.getBoundingClientRect();
     orbRay.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), W.camera);
     const signs = launchpad ? W.square?.pad?.meshes ?? [] : [];
@@ -883,7 +896,7 @@ const joy = { x: 0, y: 0, id: null };
     pad.hidden = false;
     $("jumpBtn").hidden = false;
     $("talkBtn").hidden = false;
-    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk, wave or fish · drag the world to look · 📷 for photos";
+    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk, wave or fish · drag the world to look · 📷 for photos · 🗺 for the map";
   }
   $("jumpBtn").addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -908,7 +921,7 @@ fishing = createFishing({
   player: { get ch() { return player.ch; } },
   me: () => localPos(), ahead: () => ahead(), state: () => netState(),
   // (Only once the Courier Fish contract is deployed: until then E on the pier talks and waves as it always has.)
-  canAct: () => !!chainRef?.fishMint && mode === "play" && !dialog && !away && !photo && !flying,
+  canAct: () => !!chainRef?.fishMint && mode === "play" && !dialog && !away && !photo && !flying && !map,
   signedIn: () => signedIn(),
   async signIn() {
     const chain = chainRef;
@@ -1128,6 +1141,89 @@ function steerCamera(dt) {
   camPitch += (p - camPitch) * (1 - Math.exp(-dt * (own ? 14 : p > camPitch ? 5 : back)));
   camDist += (d - camDist) * (1 - Math.exp(-dt * (own ? 14 : d < camDist ? 5 : back)));
 }
+
+// ---------------------------------------------------------------- the map
+
+// G or the 🗺 button: the camera pulls back to the whole world (the planet, or the moon or Mars on a trip) as a globe:
+// drag to spin it, scroll or pinch to zoom. The world turns so where you are faces the camera, the way you face at the
+// top; closing glides back to your courier. web/map.js names the places and marks you and everyone else.
+let map = null; // { k, closing, dist, from, to, camFrom, lookFrom } while the map is open
+const mapUi = createMapOverlay($("map"));
+const MAP_DIR = new THREE.Vector3(0, 0.3, 1).normalize(); // where the camera sits, from the world's middle
+const MAP_SECS = 0.9;
+/// How far back the whole globe fits the screen.
+function mapFit() {
+  const vf = (camera.fov * Math.PI) / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
+  return (G.R + 12) / Math.sin(Math.min(vf, hf) / 2); // (with room for the buildings round the edge)
+}
+function mapMode(on, now = false) {
+  if (on) {
+    if (map || mode !== "play" || dialog || flying) return;
+    if (photo) photoMode(false);
+    chatUI.close();
+    office?.show(false);
+    hideAd();
+    fishing?.cancel();
+    map = { k: 0, closing: false, dist: mapFit(), from: world.quaternion.clone(), camFrom: camPos.clone(), lookFrom: camLook.clone() };
+    map.to = new THREE.Quaternion().setFromUnitVectors(UP, MAP_DIR).multiply(world.quaternion);
+    mapUi.setPlaces(away ? (away.key === "mars" ? marsPlaces() : moonPlaces()) : planetPlaces(W, { board, account: chainRef?.account }));
+    const me = localPos(), here = W.square && arc(me, W.square.d) < W.square.r ? W.square : W.terrain.zoneAt(me);
+    $("mapWhere").textContent = away ? (away.key === "mars" ? "Mars" : "The moon") : `You're in ${here.name}`;
+    $("mapHint").textContent = matchMedia("(pointer: coarse)").matches ? "Drag to spin the world · pinch or +/− to zoom" : "Drag to spin the world · scroll or +/− to zoom · G or Esc to close";
+    $("mapHint").style.animation = "none";
+    void $("mapHint").offsetWidth; // (restart its fade)
+    $("mapHint").style.animation = "";
+    document.body.classList.add("map-on");
+    $("map").hidden = false;
+  } else if (map && (now || !map.closing)) {
+    if (now) return mapDone();
+    Object.assign(map, { closing: true, k: 0, from: world.quaternion.clone(), camFrom: camPos.clone(), lookFrom: camLook.clone() });
+  }
+}
+function mapDone() {
+  map = null;
+  document.body.classList.remove("map-on");
+  $("map").hidden = true;
+}
+/// The map's camera each frame: gliding out from your courier, spinning, or gliding back.
+function mapCam(dt) {
+  const at = () => G.center.clone().addScaledVector(MAP_DIR, map.dist);
+  if (map.closing) {
+    map.k = Math.min(1, map.k + dt / MAP_SECS);
+    const e = ease(map.k), f = followCam();
+    world.quaternion.slerpQuaternions(map.from, playerQ, e);
+    camPos.lerpVectors(map.camFrom, f.pos, e);
+    camLook.lerpVectors(map.lookFrom, f.look, e);
+    if (map.k >= 1) mapDone();
+    return;
+  }
+  if (map.k < 1) {
+    map.k = Math.min(1, map.k + dt / MAP_SECS);
+    const e = ease(map.k);
+    world.quaternion.slerpQuaternions(map.from, map.to, e);
+    camPos.lerpVectors(map.camFrom, at(), e);
+    camLook.lerpVectors(map.lookFrom, G.center, e);
+    return;
+  }
+  camPos.lerp(at(), 1 - Math.exp(-dt * 10));
+  camLook.copy(G.center);
+}
+/// Drag on the map: turn the globe about the screen's axes (it follows your finger).
+function mapSpin(dx, dy) {
+  if (!map || map.k < 1 || map.closing) return;
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const k = 0.006 * (map.dist / mapFit());
+  world.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(up, dx * k)).premultiply(new THREE.Quaternion().setFromAxisAngle(right, dy * k));
+}
+function mapZoom(f) {
+  if (!map) return;
+  const fit = mapFit();
+  map.dist = Math.min(fit * 1.15, Math.max(fit * 0.55, map.dist * f));
+}
+$("mapBtn").addEventListener("click", () => mapMode(true));
+$("mapClose").addEventListener("click", () => mapMode(false));
+$("mapIn").addEventListener("click", () => mapZoom(0.85));
+$("mapOut").addEventListener("click", () => mapZoom(1.18));
 
 // ---------------------------------------------------------------- photo mode
 
@@ -1473,7 +1569,7 @@ function frame() {
     }
   } else {
     let ix = 0, iy = 0;
-    if (!dialog && !flying) {
+    if (!dialog && !flying && !map) {
       if (keys.has("w") || keys.has("arrowup")) iy += 1;
       if (keys.has("s") || keys.has("arrowdown")) iy -= 1;
       if (keys.has("a") || keys.has("arrowleft")) ix -= 1;
@@ -1561,7 +1657,7 @@ function frame() {
     const stretch = 1 + (jumpY > 0 ? 0.1 * Math.min(1, Math.abs(jumpV) / JUMP_V) : 0) - 0.24 * landSquash;
     player.group.scale.set(1 / Math.sqrt(stretch), stretch, 1 / Math.sqrt(stretch));
     // The view eases after the courier; faster rides pull it along a little quicker.
-    world.quaternion.slerp(playerQ, 1 - Math.exp(-dt * 7 * Math.sqrt(player.speed)));
+    if (!map) world.quaternion.slerp(playerQ, 1 - Math.exp(-dt * 7 * Math.sqrt(player.speed)));
     placePlayer(dt, v, turnRate);
     // Dust: a burst on landing, and a trail when skidding round to face the other way.
     if (landed && !wading) kick({ n: 8, size: 0.4, spread: 1.4, life: 0.55 });
@@ -1580,14 +1676,17 @@ function frame() {
     }
 
     let f;
-    if (photo) f = photoCam();
+    if (map) mapCam(dt);
     else {
-      steerCamera(dt);
-      f = followCam();
+      if (photo) f = photoCam();
+      else {
+        steerCamera(dt);
+        f = followCam();
+      }
+      const k = 1 - Math.exp(-dt * 12);
+      camPos.lerp(f.pos, k);
+      camLook.lerp(f.look, k);
     }
-    const k = 1 - Math.exp(-dt * 12);
-    camPos.lerp(f.pos, k);
-    camLook.lerp(f.look, k);
     if (photo) player.group.visible = !photo.hide && photo.dist > 0;
   }
 
@@ -1608,14 +1707,15 @@ function frame() {
   splash.update(dt, 1 - 0.5 * W.night);
   const got = stamps.update(dt, t, { me: localPos(), chest: bodyY + 0.85, active: mode === "play" && !dialog && !away });
   if (got) collected(got);
-  if (!away) life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" });
+  // (On the map, everyone's out, not only those near you.)
+  if (!away) life.update(dt, t, { me: localPos(), speed: mode === "play" ? moveSpeed : 0, night: W.night, rain: weather.rain, active: mode === "play" && !map });
   orbAds?.update(dt);
   // Times Square's big screens show the Orb's ad too.
   if (W.square && orbAds && orbAds.current() !== squareAd) {
     squareAd = orbAds.current();
     W.square.showAd(squareAd, orbAds.pictureOf(squareAd));
   }
-  net.update(dt, t, mode === "play" ? netState() : null, localPos(), mode !== "play");
+  net.update(dt, t, mode === "play" ? netState() : null, localPos(), mode !== "play" || !!map);
   waveT = Math.max(0, waveT - dt);
   player.ch.setWave(waveT > 0 ? Math.min(1, waveT * 3, (1.6 - waveT) * 6) : 0);
   if (mode !== "title") {
@@ -1623,7 +1723,7 @@ function frame() {
     stepWeather(dt);
   }
   // (On the moon and Mars there's no rain, and the sun is always out.)
-  W.setRain(away ? 0 : weather.rain);
+  W.setRain(away || map ? 0 : weather.rain);
   W.setTimeOfDay(photo ? photo.time : away ? 0.45 : timeOfDay);
   sounds.update(dt, {
     speed: mode === "play" ? moveSpeed : 0, ride: player.kind, night: W.night, rain: away ? 0 : weather.rain, step: stepped && mode === "play" && !wading,
@@ -1639,8 +1739,9 @@ function frame() {
 
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  W.setCutaway(mode === "play" && !photo ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
+  W.setCutaway(mode === "play" && !photo && !map ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
   W.render(t);
+  if (map) mapUi.update({ camera, ground: G, group: world }, { d: localPos(), h: bodyY }, net.others());
   if (photo?.shoot && --photo.shoot === 0) capture();
   requestAnimationFrame(tick);
 }
@@ -1835,6 +1936,7 @@ function standAt(d, tangent) {
   vel.set(0, 0);
 }
 function flyTo(k) {
+  if (map) mapMode(false, true);
   if (away || flying) return;
   if (photo) photoMode(false);
   flight(k === "mars" ? "🚀 Lift-off! Next stop, Mars" : "🚀 Lift-off!", () => {
@@ -1852,6 +1954,7 @@ function flyTo(k) {
   });
 }
 function flyHome(why = null) {
+  if (map) mapMode(false, true);
   if (!away || flying) return;
   if (photo) photoMode(false);
   const trip = away;
