@@ -622,7 +622,9 @@ owner, and that `planetsOf` lists only a wallet's own planets.
 
 ## 15. New: Courier Fish (CourierFish)
 
-`contracts/src/CourierFish.sol`, not deployed yet. Fishing in the bay is free: the multiplayer room checks each catch
+`contracts/src/CourierFish.sol`, live since 2026-10-15 at `0xacF37fE6FdB848a4182d5A3646C2C0Ec11E09c90` (source
+verified on Sourcify; owner and treasury `0x7221…D566`; signer `0x1ce8…8fDe`, the room's FISH_KEY). Deployed without an
+independent audit, the owner's choice: our own review is below. Fishing in the bay is free: the multiplayer room checks each catch
 and signs vouchers; players mint their fish as ERC-1155 tokens (one token id per species), paying only gas.
 
 - **Species:** `setSpecies(id, maxSupply, dailyCap)` (owner). `maxSupply` 0 never runs out; once capped, a species'

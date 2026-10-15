@@ -31,3 +31,6 @@ DROPS_ADDRESS = "0xD0e785276840F7175DF12678991605042e89771C"
 # Courier Companions (contracts/src/CourierCompanions.sol, an ERC-1155 bought with $STAMP): a player's companion is
 # shown to the others only if this contract says the wallet on their name tag owns one of that kind.
 COMPANIONS_ADDRESS = "0x4254cEac6B7C9F8911Ce908A910DD1874C5B49B7"
+# Courier Fish (contracts/src/CourierFish.sol, an ERC-1155): the room checks each catch in the bay and signs vouchers
+# with FISH_KEY (a secret, set with `npx wrangler secret put FISH_KEY`; its address is the contract's signer).
+FISH_ADDRESS = "0xacF37fE6FdB848a4182d5A3646C2C0Ec11E09c90"

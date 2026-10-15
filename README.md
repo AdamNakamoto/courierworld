@@ -359,7 +359,8 @@ within 3 m of the cast and was at a fishing spot (`web/fish-rules.js`, shared by
 has room for the day and in all) and keeps the catch: at most the contract's `maxPerDay` (10) a wallet a day, with an
 open post office and the treasure hunt's sign-in. Two messages a fish, plus a position sent with each.
 
-`CourierFish.sol` (not deployed yet) mints them as ERC-1155 fish, one token id per species, free (gas only) from the
+`CourierFish.sol` (live since 2026-10-15 at `0xacF37fE6FdB848a4182d5A3646C2C0Ec11E09c90`, owned by the treasury, source
+verified on Sourcify) mints them as ERC-1155 fish, one token id per species, free (gas only) from the
 room's vouchers (`FISH_KEY`), within 7 days of the catch; rare, epic and legendary species are capped for good (the
 Golden Stampfish: 21 ever) and per day; the 5% royalty is fixed and enforced (ERC1155-C). See AUDIT.md section 15.
 
