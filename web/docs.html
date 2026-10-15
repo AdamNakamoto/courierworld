@@ -82,7 +82,7 @@
   </header>
 
   <nav class="toc card" aria-label="Contents">
-    <a href="#play">Playing</a><a href="#couriers">Couriers</a><a href="#skins">Skins</a><a href="#companions">Companions</a><a href="#offices">Post offices</a><a href="#levels">Levels</a>
+    <a href="#play">Playing</a><a href="#couriers">Couriers</a><a href="#skins">Skins</a><a href="#companions">Companions</a><a href="#planets">Planets</a><a href="#offices">Post offices</a><a href="#levels">Levels</a>
     <a href="#stamp">$STAMP</a><a href="#trading">Trading</a><a href="#launchpad">Launchpad</a><a href="#treasure">Treasure hunt</a><a href="#safety">Safety</a><a href="#contracts">Contracts</a>
   </nav>
 
@@ -109,7 +109,9 @@
     </table></div>
     <h3>What earns $STAMP</h3>
     <p>Nothing you do on the planet earns $STAMP by itself: it comes only from couriers on duty at a post office (see
-       <a href="#offices">Post offices</a>). When the treasury runs a drop, the <a href="#treasure">treasure hunt</a>'s coins pay that token.</p>
+       <a href="#offices">Post offices</a>). When the treasury runs a drop, the <a href="#treasure">treasure hunt</a>'s coins pay that token.
+       (Once the planet worlds are in the game, a <a href="#planets">planet</a>'s owner can also charge visitors a ticket: that's other
+       players' $STAMP changing hands, not new $STAMP.)</p>
     <h3>Places</h3>
     <div class="grid">
       <div class="tile"><b>Main Street</b><br>The post office, houses and shops, and a footbridge over the road.</div>
@@ -235,6 +237,38 @@
     </ul>
     <p class="note">The contract: <a href="https://robinhoodchain.blockscout.com/address/0x4254cEac6B7C9F8911Ce908A910DD1874C5B49B7" target="_blank" rel="noopener">0x4254…49B7</a>.
        Reviewed by IMD Swarm (<a href="https://explorer.imd.fun/jobs/145af84f-02c5-4db7-8dc3-3ec3a300b8f1" target="_blank" rel="noopener">audit report</a>); its findings were fixed afterwards.</p>
+  </section>
+
+  <section class="card" id="planets">
+    <h2>Planets<small>333 worlds of your own.</small></h2>
+    <p>Each Courier Planet will be a world of its own inside Courier World: its owner will explore it and build on it, and
+       can open it to other players for a ticket in <b>$STAMP</b>. A daily treasure on your planet is planned too. Buy one in
+       the Post office panel, with <b>$STAMP</b> only: every bit of it goes to the Courier World treasury.</p>
+    <p><b>The planet worlds aren't in the game yet: they come next.</b> Buy a planet now and its world is waiting for you
+       when they land. Until then a planet is yours to hold, see in the panel and trade.</p>
+    <div class="scroll"><table>
+      <tr><th>Planets</th><th class="num">Price</th><th class="num">Per buy</th><th class="num">Per wallet</th></tr>
+      <tr><td>333, numbered 1 to 333</td><td class="num">10,000 $STAMP</td><td class="num">1 to 3</td><td class="num">3</td></tr>
+    </table></div>
+    <ul>
+      <li><b>Tickets</b> (once the worlds are in the game). You decide who visits your planet: keep it closed, let everyone
+          in free, or set a ticket of up to 1,000 $STAMP. 80% of every ticket goes straight to you and 20% to the treasury
+          (the treasury can change its share, but never above half). A planet that changes hands starts closed, so a new
+          owner always sets their own ticket.</li>
+      <li><b>Every planet has the same rights.</b> Each one's look (its type, rings, moons and sky) comes from its number;
+          the rarest kinds are just for show.</li>
+      <li>One signature buys up to 3 (no separate approval), never for more than the price you saw. The wallet limit counts
+          what you've bought, so passing a planet on doesn't free up another buy.</li>
+      <li><b>The 5% royalty is enforced and fixed.</b> The contract checks every transfer: marketplaces can only sell planets
+          in trades that pay it, to the treasury. You can always move your own planets between your wallets.</li>
+      <li>The owner (the treasury) sets the price, the wallet limit and the treasury's share of tickets, opens or closes the
+          sale, and chooses where the pictures and details live and which transfer checker enforces the royalty (OpenSea's,
+          today; a bad one could hold transfers up). It can't move your planets, set your ticket or touch your $STAMP, and
+          ownership can be handed on but never thrown away.</li>
+    </ul>
+    <p class="note">The contract: <a href="https://robinhoodchain.blockscout.com/address/0xE7F9fc69Cb0471EDDcb62e8FC3e4D0256306e7e3" target="_blank" rel="noopener">0xE7F9…e7e3</a>,
+       source verified on Sourcify. Not audited by an outside firm: our own review and tests are in the
+       <a href="https://github.com/AdamNakamoto/courierworld/blob/main/AUDIT.md" target="_blank" rel="noopener">audit brief</a> (section 14).</p>
   </section>
 
   <section class="card" id="offices">

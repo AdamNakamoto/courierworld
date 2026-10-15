@@ -313,7 +313,8 @@ The deploy writes `deployments/robinhood-companions.json` and runs `export-web.s
 ## Courier Planets
 
 `CourierPlanets.sol` (live since 2026-10-15 at `0xE7F9fc69Cb0471EDDcb62e8FC3e4D0256306e7e3`, owned by the treasury,
-source verified on Sourcify; the sale is closed until the game's planets are up) is 333 planets (ERC-721), each a
+source verified on Sourcify; the treasury opens the sale from the Post Office panel, as a presale before the planet
+worlds are in the game) is 333 planets (ERC-721), each a
 world of its own in the game. A planet costs 10,000 $STAMP, all of it straight to the treasury (`buy` or
 `buyWithPermit`, 1 to 3 at a time, 3 a wallet; buyers name the most they'll pay). Each planet's owner sets its
 ticket (`setTicket`: free, up to 1,000 $STAMP, or closed); a visitor pays it with `visit`, 80% to the planet's owner
@@ -323,9 +324,23 @@ A planet that changes hands starts closed. Resales pay a fixed 5% royalty to the
 is two-step and can't be renounced; the owner can't touch anyone's planets or $STAMP, set a ticket, or change the
 royalty rate. Deployed without an independent audit (our own review and tests: AUDIT.md section 14).
 
-Still to come in the game: the planet worlds (drawn from each planet's number), the portal, visitor passes, the
-ticket and planet list in the Post Office panel, building on your planet, and a daily treasure there (a TokenDrops
-drop funded by the treasury). The metadata (`web/planets/<id>.json` and `collection.json`) comes with them.
+The Post Office panel sells them (one signature, a permit, as for companions: `chain.buyPlanets`), lists your
+planets, and gives the contract's owner (the treasury) the sale's switch and price (`chain.planetsAdmin`). Without a
+planets address in the deployment (`chain.planets` null) the section hides itself. While the sale is on, "Buy a Courier
+Planet" on the title screen and in the corner of the screen opens it (`office.showPlanets()`), as the skins' mint
+buttons do.
+
+- `web/planet-looks.js`: each planet's look from its number alone (type, surface, rings, moons, sky, tilt and the
+  picture as SVG), shared by the panel, the metadata and, later, the planet worlds. Cosmetic only.
+- `web/planets/make.mjs` writes the metadata the contract points at (`base` https://courierworld.fun/planets/):
+  `<id>.json` and `<id>.svg` for all 333, and `collection.json` / `collection.svg` (`contractURI`). Run it again
+  (`node web/planets/make.mjs`) after changing the looks; if planets are already out, call `setBase` with the same
+  base so marketplaces refresh (it emits ERC-4906).
+- `./dev.sh` deploys local planets with the sale open at 1,000 $STAMP (the dev players hold 20,000 each), owned by
+  the Owner account.
+
+Still to come in the game: the planet worlds (drawn from each planet's look), the portal, visitor passes, tickets
+in the panel, building on your planet, and a daily treasure there (a TokenDrops drop funded by the treasury).
 
 ```bash
 cd contracts

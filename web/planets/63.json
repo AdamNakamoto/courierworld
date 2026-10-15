@@ -1,0 +1,28 @@
+{
+  "name": "Planet #63",
+  "description": "An ocean world in Courier World, one of 333 Courier Planets. The planet worlds are coming to the game: each planet will be a world of its own that its owner explores and builds on, and can open to other players for a ticket in $STAMP. Every planet has the same rights in the game; its look comes from its number.",
+  "image": "https://courierworld.fun/planets/63.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Type",
+      "value": "Ocean"
+    },
+    {
+      "trait_type": "Surface",
+      "value": "Islands"
+    },
+    {
+      "trait_type": "Rings",
+      "value": "None"
+    },
+    {
+      "trait_type": "Moons",
+      "value": "1"
+    },
+    {
+      "trait_type": "Sky",
+      "value": "Violet nebula"
+    }
+  ]
+}

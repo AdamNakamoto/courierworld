@@ -146,6 +146,16 @@ deploy_companions() { # Courier Companions with the whole lineup on sale for $ST
 }
 deploy_companions
 
+deploy_planets() { # Courier Planets with the sale open at 1,000 $STAMP (the dev players hold 20,000 each, from
+  # deploy_companions), owned by the deployer (account 0, "Owner" in the panel), paid to the treasury (account 1)
+  [ -n "$STAMP_ADDR" ] || return 0
+  local prev="$OUT"
+  STAMP=$STAMP_ADDR PLANETS_PRICE=1000 PLANETS_OPEN=true PLANETS_BASE="http://localhost:$WEB_PORT/planets/" deploy script/DeployPlanets.s.sol
+  PLANETS=$(addr CourierPlanets)
+  OUT="$prev"
+}
+deploy_planets
+
 deploy_pad() { # the launchpad, on a fork only (it needs the real Uniswap v4 PoolManager and IMD)
   [ "$FORK" = 1 ] && [ -n "$(addr StampToken)" ] || return 0
   local prev="$OUT"
@@ -202,6 +212,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
     contracts=$(echo "$contracts" | jq --arg companions "$COMPANIONS" '. + {companions: $companions}')
     abis=$(echo "$abis" | jq --argjson companions "$(abi CourierCompanions)" '. + {companions: $companions}')
   fi
+  if [ -n "${PLANETS:-}" ]; then
+    contracts=$(echo "$contracts" | jq --arg planets "$PLANETS" '. + {planets: $planets}')
+    abis=$(echo "$abis" | jq --argjson planets "$(abi CourierPlanets)" '. + {planets: $planets}')
+  fi
   if [ -n "${PAD:-}" ]; then
     contracts=$(echo "$contracts" | jq --arg pad "$PAD" --arg r "$PAD_ROUTER" --arg er "$PAD_ETH_ROUTER" '. + {pad: $pad, padRouter: $r, padEthRouter: $er}')
     abis=$(echo "$abis" | jq --argjson pad "$(abi CourierPad)" --argjson padToken "$(abi PadToken)" '. + {pad: $pad, padToken: $padToken}')
@@ -218,6 +232,7 @@ write_chain_json
 echo "CourierNFT $NFT"
 echo "Skins      $SKINS"
 [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
+[ -n "${PLANETS:-}" ] && echo "Planets    $PLANETS"
 echo "Chain      $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Game       http://localhost:$WEB_PORT"
 if [ "$WALLET" = 1 ]; then
@@ -238,10 +253,12 @@ if [ "$STAGED" = 1 ]; then
   deploy script/DeployFork.s.sol --sig "runGame()"
   STAMP_ADDR=$(addr StampToken) OFFICE_ADDR=$(addr PostOffice)
   deploy_companions
+  deploy_planets
   deploy_drops
   write_dev_vars
   write_chain_json
   [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
+  [ -n "${PLANETS:-}" ] && echo "Planets    $PLANETS"
   echo "Stage 2: the game is live. Reload the page."
   wait "$WEB_PID"
 else

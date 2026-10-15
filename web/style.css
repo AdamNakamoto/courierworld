@@ -342,6 +342,10 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 /* Courier Skins */
 .skin-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 10px; }
 .skin-strip img { width: 100%; aspect-ratio: 1; display: block; }
+.planet-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 10px; }
+.planet-strip img { width: 100%; aspect-ratio: 1; display: block; border-radius: 4px; }
+.ccard.planet-card img { border-radius: 4px; }
+.office .planets .admin-hunt { margin-top: 10px; padding-top: 8px; border-top: 1.5px dashed #d8d2c2; }
 .skins h4 { margin-top: 12px; }
 
 /* "Mint Limited Courier Skin": on the title and in the corner while the skins sale is on */
@@ -360,10 +364,20 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .skin-mint-hud .short { display: none; }
 .skin-mint .em, .skin-mint-hud .em { margin-right: .45em; }
 .skin-mint[hidden], .skin-mint-hud[hidden] { display: none; }
+/* "Buy a Courier Planet": the same, while the planet sale is on; under the skins button when both show */
+.planet-buy { margin-top: 8px; background: #9fd3f2; transform: rotate(-1deg); }
+.planet-buy:hover { transform: rotate(-1deg) translateY(-2px); }
+.planet-buy:active { transform: rotate(-1deg) translateY(2px); }
+.skin-mint[hidden] + .planet-buy { margin-top: -14px; }
+.planet-buy-hud { top: 104px; background: #9fd3f2; transform: rotate(1deg); }
+.skin-mint-hud[hidden] + .planet-buy-hud { top: 62px; }
 @media (max-width: 640px) {
   .skin-mint-hud { top: 150px; right: auto; left: 14px; }
   .skin-mint-hud .long { display: none; }
   .skin-mint-hud .short { display: inline; }
+  /* (beside the skins button: below it sits the chat pill) */
+  .planet-buy-hud { top: 150px; left: 150px; }
+  .skin-mint-hud[hidden] + .planet-buy-hud { top: 150px; left: 14px; }
 }
 
 /* Chat: lines from everyone, above the emote bar (top left on touch screens, where the joystick is) */

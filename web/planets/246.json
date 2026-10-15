@@ -1,0 +1,28 @@
+{
+  "name": "Planet #246",
+  "description": "An ice world in Courier World, one of 333 Courier Planets. The planet worlds are coming to the game: each planet will be a world of its own that its owner explores and builds on, and can open to other players for a ticket in $STAMP. Every planet has the same rights in the game; its look comes from its number.",
+  "image": "https://courierworld.fun/planets/246.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Type",
+      "value": "Ice"
+    },
+    {
+      "trait_type": "Surface",
+      "value": "Cracks"
+    },
+    {
+      "trait_type": "Rings",
+      "value": "Single"
+    },
+    {
+      "trait_type": "Moons",
+      "value": "1"
+    },
+    {
+      "trait_type": "Sky",
+      "value": "Rose nebula"
+    }
+  ]
+}

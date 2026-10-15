@@ -69,6 +69,14 @@ const ERROR_TEXT = {
   SupplyCanOnlyShrink: "A companion's supply can only shrink, and never below how many have been bought.",
   RoyaltyTooHigh: "That royalty is above the contract's 10% limit.",
 };
+/// What the planets contract means by the error names it shares with the others.
+const PLANET_ERROR_TEXT = {
+  SaleClosed: "The planet sale isn't open right now.",
+  SoldOut: "There aren't that many planets left: buy fewer, or they're all gone.",
+  BadQuantity: "Buy 1 to 3 planets at a time.",
+  WalletLimit: "That's more planets than one wallet can buy.",
+  PriceChanged: "The planet price just went up. Check the new price and try again.",
+};
 /// What the companions contract means by the error names it shares with the skins.
 const COMPANION_ERROR_TEXT = {
   Closed: "That companion isn't on sale right now.",
@@ -149,7 +157,7 @@ export async function connectChain() {
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
     ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []),
-    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...V4_ABI,
+    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...(dep.abis.planets ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -162,6 +170,8 @@ export async function connectChain() {
     skinsStamp: dep.contracts.skinsStamp ? { address: dep.contracts.skinsStamp, abi: withErrors(dep.abis.skinsStamp) } : null,
     // Courier Companions: none until the contract is deployed, and every companion feature hides till then.
     companions: dep.contracts.companions ? { address: dep.contracts.companions, abi: withErrors(dep.abis.companions) } : null,
+    // Courier Planets: likewise, none until it's deployed.
+    planets: dep.contracts.planets ? { address: dep.contracts.planets, abi: withErrors(dep.abis.planets) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -262,10 +272,45 @@ export async function connectChain() {
     return out;
   }
 
+  const PLANETS_EVERY_MS = 15_000;
+  let planetsLast = null; // { who, at, value }: the planet sale as last read, for that wallet
+
+  /// Courier Planets: the sale (open, price, how many bought of how many, the wallet limit) and, for `who`, the planets
+  /// they hold and how many they've bought (the limit counts buys). Read afresh every PLANETS_EVERY_MS (and straight
+  /// after a buy or an owner's change); if a read fails, the last answer for the same wallet stands.
+  async function planetsOf(who) {
+    const last = planetsLast;
+    if (last && last.who === who && Date.now() - last.at < PLANETS_EVERY_MS) return last.value;
+    try {
+      const value = await readPlanets(who);
+      planetsLast = { who, at: Date.now(), value };
+      return value;
+    } catch {
+      return last?.who === who ? last.value : null;
+    }
+  }
+  async function readPlanets(who) {
+    const [saleOpen, price, minted, supply, perWallet, owner] = await Promise.all([
+      read(C.planets, "saleOpen"), read(C.planets, "price"), read(C.planets, "totalMinted"), read(C.planets, "MAX_SUPPLY"),
+      read(C.planets, "perWallet"), read(C.planets, "owner"),
+    ]);
+    const out = {
+      address: C.planets.address, saleOpen, price, minted: Number(minted), supply: Number(supply), perWallet: Number(perWallet),
+      bought: 0, mine: [], isOwner: !!who && same(owner, who),
+    };
+    if (who) {
+      const [bought, ids] = await Promise.all([read(C.planets, "bought", [who]), read(C.planets, "planetsOf", [who])]);
+      out.bought = Number(bought);
+      out.mine = ids.map(Number);
+    }
+    return out;
+  }
+
   const skinDesigns = new Map(); // skin id -> design, after the reveal
   async function snapshot() {
     // Started first so that, when it's time to read the shop again, those reads overlap the ones below.
     const companions = C.companions ? companionsOf(account) : null;
+    const planets = C.planets ? planetsOf(account) : null;
     const [block, minted, price, saleOpen, seed] = await Promise.all([
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
     ]);
@@ -294,6 +339,7 @@ export async function connectChain() {
       }
     }
     s.companions = companions ? await companions : null;
+    s.planets = planets ? await planets : null;
     if (game) {
       const [totalPower, rewardPerBlock, officePrice, cooldown, levelBase] = await Promise.all([
         read(C.office, "totalPower"), read(C.office, "rewardPerBlock"), read(C.office, "officePrice"),
@@ -807,6 +853,50 @@ export async function connectChain() {
         companionsLast = null; // (bought or not, the next snapshot reads the shop afresh)
       }
     },
+    /// Buy `qty` planets (1 to 3) with $STAMP, all of it to the treasury: one signature (a permit) and one transaction,
+    /// or an approval first for wallets that can't sign typed data. Pays `price` (what the panel showed) a planet at
+    /// most: if the price has gone up since, the contract refuses (PriceChanged).
+    async buyPlanets(s, qty, price = s.planets?.price) {
+      const sale = C.planets, info = s.planets;
+      if (!sale || !C.stamp || !info || price == null) throw new Error("Planets aren't on sale here.");
+      if (!account) throw new Error("Log in first.");
+      const n = BigInt(qty), cost = price * n, args = [n, cost];
+      try {
+        if ((await read(C.stamp, "allowance", [account, sale.address])) >= cost) return await send(sale, "buy", args);
+        const deadline = (await pub.getBlock()).timestamp + 600n;
+        let sig = null;
+        try {
+          sig = await signPermit(sale.address, cost, deadline);
+        } catch (e) {
+          if (rejected(e)) throw e;
+        }
+        if (sig) return await send(sale, "buyWithPermit", [...args, deadline, sig.v, sig.r, sig.s]);
+        await send(C.stamp, "approve", [sale.address, cost]);
+        return await send(sale, "buy", args);
+      } catch (e) {
+        const text = PLANET_ERROR_TEXT[revertName(e)];
+        throw text ? new Error(text) : e;
+      } finally {
+        planetsLast = null; // (bought or not, the next snapshot reads the sale afresh)
+      }
+    },
+    /// The planets contract's owner (the treasury): open or close the sale, and change the price.
+    planetsAdmin: C.planets ? {
+      async setSaleOpen(open) {
+        try {
+          await send(C.planets, "setSaleOpen", [open]);
+        } finally {
+          planetsLast = null;
+        }
+      },
+      async setPrice(wei) {
+        try {
+          await send(C.planets, "setPrice", [wei]);
+        } finally {
+          planetsLast = null;
+        }
+      },
+    } : null,
     /// The skins contract's owner: open or close the sale, and reveal once it has been closed for a block.
     skinsAdmin: C.skins ? {
       setSaleOpen: (open) => send(C.skins, "setSaleOpen", [open]),

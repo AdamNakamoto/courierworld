@@ -1257,6 +1257,17 @@ function skinButtons(s) {
   $("skinMint").hidden = !on;
   $("skinMintHud").hidden = !on;
 }
+// The planet sale, the same way: from the title (into the game, then the sale) or the corner of the screen.
+$("planetBuy").addEventListener("click", async () => {
+  if (await begin()) office?.showPlanets();
+});
+$("planetBuyHud").addEventListener("click", () => office?.showPlanets());
+/// Show the planet buttons only while the planet sale is on.
+function planetButtons(s) {
+  const on = !!s?.planets?.saleOpen && s.planets.minted < s.planets.supply;
+  $("planetBuy").hidden = !on;
+  $("planetBuyHud").hidden = !on;
+}
 
 // ---------------------------------------------------------------- loop
 
@@ -1916,6 +1927,7 @@ const chainReady = connectChain()
       onSnapshot(s) {
         autoAvatar(s);
         skinButtons(s);
+        planetButtons(s);
         checkCompanion(s);
       },
       wearing: () => skinWorn?.id ?? null,

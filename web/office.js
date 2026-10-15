@@ -7,6 +7,7 @@ import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_POOL_FORM, bonusCap, isBonusDrop } from "./bonus-rules.js";
 import { renderStamp } from "./portrait.js";
+import { planetLook } from "./planet-looks.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
 import { displayName } from "./names.js";
@@ -32,6 +33,8 @@ function duration(secs) {
 
 /// How many skins of each rarity are in the deck.
 const SKIN_RARITY = SKINS.reduce((m, k) => ((m[k.rarity] = (m[k.rarity] ?? 0) + k.supply), m), {});
+/// The planets shown across the top of the planet sale.
+const PLANET_STRIP = [3, 1, 27, 8];
 /// The companion tiers' headings in the shop (the rest read fine as they are).
 const TIER_TITLE = { Pet: "Pets", "Space buddy": "Space buddies" };
 /// A companion's blurb, down to its first sentence, for the shop's one line.
@@ -73,6 +76,8 @@ export function createOffice(chain, {
   let snap = null, busy = null, qty = 1, skinQty = 1, refreshing = false;
   let skinSecret = ""; // the reveal secret while the owner types it; never stored
   let stampPriceIn = ""; // a new $STAMP price for skins, while the owner types it
+  let planetQty = 1, planetPriceIn = ""; // planets to buy; a new planet price, while the owner types it
+  let planetPriceShown = null; // the price on the buy button as last drawn
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0; // the TokenDrops contract (today's drops, what you'd be paid, the owner), every few seconds
@@ -618,6 +623,53 @@ export function createOffice(chain, {
         <p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${c.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
     }
 
+    // ---- Courier Planets: 333 worlds of your own, bought with $STAMP (the worlds themselves come to the game next)
+    if (s.planets) {
+      const p = s.planets, left = Math.max(0, p.supply - p.minted);
+      const room = p.perWallet ? Math.max(0, p.perWallet - p.bought) : 3; // (the limit counts what you've bought)
+      planetQty = Math.max(1, Math.min(planetQty, 3, left || 1, room || 1));
+      const cost = p.price * BigInt(planetQty), poor = !!s.account && s.stamp != null && s.stamp < cost;
+      planetPriceShown = p.price; // (a buy pays at most this: a newer snapshot may land before the next draw)
+      html += `<section class="planets"><h3>Planets <span class="muted">333 worlds of your own</span></h3>
+        <div class="planet-strip">${PLANET_STRIP.map((id) => `<img src="./planets/${id}.svg" alt="">`).join("")}</div>
+        <p class="note">Each planet will be a world of its own in Courier World: you'll explore it and build on it, and you can open it to other players for a ticket in $STAMP, with 80% of every ticket going to you (the treasury's share can never pass half). A daily treasure on your planet is planned too. ${fmt(p.price, 0)} $STAMP a planet, all of it to the treasury.</p>
+        <p class="note"><b>The planet worlds aren't in the game yet: they come next.</b> Buy now and yours is waiting for you when they land.</p>
+        <div class="meter"><span>Bought</span><div class="bar"><div style="width:${(p.minted / p.supply) * 100}%"></div></div><span>${p.minted}/${p.supply}</span></div>`;
+      if (p.saleOpen && left) {
+        if (room) {
+          html += `<div class="mintrow"><button class="pbtn" data-act="planetQty" data-d="-1">−</button><b>${planetQty}</b><button class="pbtn" data-act="planetQty" data-d="1">+</button>
+            <button class="pbtn primary" data-act="buyPlanets" ${!s.account || busy || poor ? "disabled" : ""}>Buy ${planetQty} · ${fmt(cost, 0)} $STAMP</button></div>`;
+          if (!s.account) html += `<p class="note">Log in to buy a planet.</p>`;
+          else if (poor) html += `<p class="note">You have ${fmt(s.stamp, 0)} $STAMP: not quite enough for ${planetQty > 1 ? `${planetQty} planets` : "a planet"}.${chain.trade ? " Get more in the trade box above." : ""}</p>`;
+        } else html += `<p class="note">You've bought ${p.bought} planets, the most one wallet can.</p>`;
+      } else {
+        html += `<p class="note">${left ? "The planet sale isn't open right now." : "All 333 planets have been bought. Find one on OpenSea."}</p>`;
+      }
+      html += `<p class="note">Up to 3 at a time${p.perWallet ? ` and ${p.perWallet} a wallet (counting what you've bought)` : ""}, with one signature, never for more than the price you saw. Each planet's look comes from its number; every planet has the same rights in the game. Resales pay a 5% royalty to the game, enforced by the contract.</p>`;
+      if (p.mine.length) {
+        html += `<h4>Your planets <span class="muted">${p.mine.length}</span></h4><div class="couriers">`;
+        for (const id of p.mine) {
+          const L = planetLook(id);
+          html += `<div class="ccard planet-card"><img src="./planets/${id}.svg" alt="">
+            <div class="cinfo"><b>Planet #${id}</b> <span>${esc(L.typeName)}</span>
+              <span class="muted">${L.rings === "None" ? "No rings" : `${L.rings} rings`} · ${L.moons === 1 ? "1 moon" : `${L.moons} moons`} · ${esc(L.sky)}</span></div>
+            <div class="cact"><span class="muted">Its world arrives with the planet worlds.</span></div></div>`;
+        }
+        html += `</div>`;
+      }
+      // The owner (the treasury): open or close the sale, change the price.
+      if (p.isOwner) {
+        html += `<div class="admin-hunt"><h4>Planet sale <span class="muted">you own the planets contract</span></h4>
+          <div class="kv"><span>Sale</span><b>${p.saleOpen ? "Open" : "Closed"}</b></div>
+          <div class="kv"><span>Price</span><b>${fmt(p.price, 0)} $STAMP a planet</b></div>
+          <button class="pbtn wide ${p.saleOpen ? "" : "primary"}" data-act="planetSale" ${busy ? "disabled" : ""}>${p.saleOpen ? "Close the planet sale" : "Open the planet sale"}</button>
+          <label class="field">New price a planet ($STAMP)<input id="planetPriceIn" data-act="planetPriceIn" inputmode="decimal" placeholder="${fmt(p.price, 0)}"></label>
+          <button class="pbtn wide" data-act="planetSetPrice" ${busy ? "disabled" : ""}>Change the price</button>
+          <p class="note">Every planet's $STAMP goes straight from the buyer to the treasury. Buyers name the most they'll pay, so a price raise never charges anyone more than they saw.</p></div>`;
+      }
+      html += `<p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${p.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
+    }
+
     // ---- mint
     html += `<section><h3>Mint couriers</h3>
       <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(s.minted / SUPPLY) * 100}%"></div></div><span>${s.minted.toLocaleString()}/${SUPPLY.toLocaleString()}</span></div>`;
@@ -664,6 +716,8 @@ export function createOffice(chain, {
       if (sec) sec.value = skinSecret;
       const sp = $("stampPriceIn");
       if (sp && document.activeElement !== sp) sp.value = stampPriceIn;
+      const pp = $("planetPriceIn");
+      if (pp && document.activeElement !== pp) pp.value = planetPriceIn;
     }
     trade?.update(s);
   }
@@ -845,6 +899,30 @@ export function createOffice(chain, {
           followNext = id;
         });
       }
+      case "planetQty": {
+        const p = snap.planets, room = p.perWallet ? Math.max(1, p.perWallet - p.bought) : 3;
+        planetQty = Math.max(1, Math.min(3, room, Math.max(1, p.supply - p.minted), planetQty + Number(b.dataset.d)));
+        return draw(true);
+      }
+      case "buyPlanets": {
+        const n = planetQty, price = planetPriceShown;
+        return run(`Buying ${n > 1 ? `${n} planets` : "a planet"}`, () => chain.buyPlanets(snap, n, price));
+      }
+      case "planetSale": {
+        const open = !snap.planets.saleOpen;
+        if (!confirm(open ? `Open the planet sale? Anyone can then buy planets at ${fmt(snap.planets.price, 0)} $STAMP each, up to 3 a wallet.` : "Close the planet sale? Nobody can buy a planet until you open it again.")) return;
+        return run(open ? "Opening the planet sale" : "Closing the planet sale", () => chain.planetsAdmin.setSaleOpen(open));
+      }
+      case "planetSetPrice": {
+        let wei;
+        try { wei = parseEther(planetPriceIn.trim().replace(/,/g, "")); } catch { wei = 0n; }
+        if (wei <= 0n) return toast("Type the new price for one planet in $STAMP, like 10000.", "error");
+        if (!confirm(`Change the price to ${fmt(wei, 0)} $STAMP a planet?`)) return;
+        return run("Changing the planet price", async () => {
+          await chain.planetsAdmin.setPrice(wei);
+          planetPriceIn = "";
+        });
+      }
       case "companionFollow":
         onCompanion(id, true);
         return draw(true);
@@ -894,6 +972,7 @@ export function createOffice(chain, {
     if (bonusField) bonusForm[bonusField] = e.target.value.trim();
     if (e.target.dataset.act === "skinSecret") skinSecret = e.target.value;
     if (e.target.dataset.act === "stampPriceIn") stampPriceIn = e.target.value;
+    if (e.target.dataset.act === "planetPriceIn") planetPriceIn = e.target.value;
   });
 
   refresh();
@@ -918,6 +997,13 @@ export function createOffice(chain, {
       lastHtml = lastMore = "";
       draw(true);
       panel.querySelector("section.companions")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
+    /// Open the panel at the planet sale (when the contract is deployed).
+    showPlanets() {
+      panel.hidden = false;
+      lastHtml = lastMore = "";
+      draw(true);
+      panel.querySelector("section.planets")?.scrollIntoView({ block: "start", behavior: "smooth" });
     },
     get snap() { return snap; },
     /// The hunt changed (signed in, a find, a new day): redraw.
