@@ -82,7 +82,7 @@
   </header>
 
   <nav class="toc card" aria-label="Contents">
-    <a href="#play">Playing</a><a href="#couriers">Couriers</a><a href="#skins">Skins</a><a href="#companions">Companions</a><a href="#planets">Planets</a><a href="#offices">Post offices</a><a href="#levels">Levels</a>
+    <a href="#play">Playing</a><a href="#couriers">Couriers</a><a href="#skins">Skins</a><a href="#companions">Companions</a><a href="#planets">Planets</a><a href="#fishing">Fishing</a><a href="#offices">Post offices</a><a href="#levels">Levels</a>
     <a href="#stamp">$STAMP</a><a href="#trading">Trading</a><a href="#launchpad">Launchpad</a><a href="#treasure">Treasure hunt</a><a href="#safety">Safety</a><a href="#contracts">Contracts</a>
   </nav>
 
@@ -103,6 +103,7 @@
       <tr><td>Walk / run</td><td><kbd>W A S D</kbd> or arrows, hold <kbd>Shift</kbd> to run</td><td>The stick (push it all the way to run)</td></tr>
       <tr><td>Jump</td><td><kbd>Space</kbd></td><td>Jump button</td></tr>
       <tr><td>Talk or wave</td><td><kbd>E</kbd></td><td>Hi button</td></tr>
+      <tr><td>Fish (at the bay, facing the water)</td><td><kbd>E</kbd> to cast and hook, hold <kbd>E</kbd> to reel</td><td>Hi button (hold to reel)</td></tr>
       <tr><td>Look around</td><td>Drag (from overhead down to the ground, looking up); scroll to zoom</td><td>Drag the world; pinch to zoom</td></tr>
       <tr><td>Post office panel</td><td><kbd>P</kbd></td><td>Post office button</td></tr>
       <tr><td>Music / sounds</td><td><kbd>M</kbd> / <kbd>N</kbd></td><td>♪ and speaker buttons</td></tr>
@@ -270,6 +271,36 @@
     <p class="note">The contract: <a href="https://robinhoodchain.blockscout.com/address/0xE7F9fc69Cb0471EDDcb62e8FC3e4D0256306e7e3" target="_blank" rel="noopener">0xE7F9…e7e3</a>,
        source verified on Sourcify. Not audited by an outside firm: our own review and tests are in the
        <a href="https://github.com/AdamNakamoto/courierworld/blob/main/AUDIT.md" target="_blank" rel="noopener">audit brief</a> (section 14).</p>
+  </section>
+
+  <section class="card" id="fishing">
+    <h2>Fishing<small>Free for post office owners: keep what you catch as NFTs.</small></h2>
+    <p>Stand on the pier, on a bridge over the bay, or at the water's edge, face the water and press <b>E</b> (tap <b>Hi</b> on a
+       phone). When the float dips, press E again to hook the fish, then hold E to reel and let go to give it line: keep the marker
+       in the green until it's in. Walk off and you reel in. The game's server picks when a fish bites, checks you really stood at
+       the water, didn't land it before the bite and stayed put, and picks the species only once it's landed, so letting fish go
+       never helps.</p>
+    <div class="scroll"><table>
+      <tr><th>Rarity</th><th>Species</th><th class="num">Chance</th><th class="num">How many ever</th></tr>
+      <tr><td>Common</td><td>Sardine, Mackerel, Anchovy, Sea Bream, Mullet, Herring, Goby, Old Boot</td><td class="num">60%</td><td class="num">Never runs out</td></tr>
+      <tr><td>Uncommon</td><td>Pufferfish, Clownfish, Flounder, Red Snapper, Parrotfish, Seahorse, Message in a Bottle</td><td class="num">28%</td><td class="num">Never runs out</td></tr>
+      <tr><td>Rare</td><td>Lionfish, Swordfish, Octopus, Manta Ray, Moonfish</td><td class="num">9.2%</td><td class="num">500 each (20 a day, across everyone)</td></tr>
+      <tr><td>Epic</td><td>Coelacanth, Giant Squid, Anglerfish</td><td class="num">2.4%</td><td class="num">100 each (5 a day, across everyone)</td></tr>
+      <tr><td>Legendary</td><td>Golden Stampfish</td><td class="num">0.4%</td><td class="num">21 (1 a day, across everyone)</td></tr>
+    </table></div>
+    <ul>
+      <li><b>Free, with a daily limit.</b> Up to 10 fish a wallet a day (UTC) at launch. You need an open post office (0.005 ETH)
+          to fish, and the treasure hunt's sign-in: one signature, free.</li>
+      <li><b>Mint them as Courier Fish NFTs</b> in the Post office panel: every day's catch in one transaction, paying only gas,
+          on the day of the catch or the 6 days after (UTC). Each species is its own token: 24 to collect.</li>
+      <li>When a rare species is out for the day (or for good), you catch another of the same rarity; only once every species of
+          that rarity is out does the catch drop to a commoner one. Fish never change what you earn.</li>
+      <li><b>The 5% royalty is enforced and fixed</b>, like the planets': marketplaces can only sell fish in trades that pay it.</li>
+      <li>The owner (the treasury) can pause minting, replace the server's key, add species, change any species' daily cap and the
+          daily limit (up to 50), cap a species or lower its total (never raise it), and choose where the pictures and details live
+          and which transfer checker enforces the royalty (OpenSea's today; a bad one could hold transfers up). Lowering the limit,
+          or a pause longer than the mint window, can cost fish caught but not yet minted. It can't move or take your fish.</li>
+    </ul>
   </section>
 
   <section class="card" id="offices">

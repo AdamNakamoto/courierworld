@@ -619,3 +619,72 @@ an empty sale, and from 325 sold) of random buys, permits, transfers, marketplac
 tickets set by owners and strangers, visits and owner changes, every call's outcome predicted, checking supply,
 that every $STAMP went to the treasury or a planet's owner exactly, that tickets always belong to the current
 owner, and that `planetsOf` lists only a wallet's own planets.
+
+## 15. New: Courier Fish (CourierFish)
+
+`contracts/src/CourierFish.sol`, not deployed yet. Fishing in the bay is free: the multiplayer room checks each catch
+and signs vouchers; players mint their fish as ERC-1155 tokens (one token id per species), paying only gas.
+
+- **Species:** `setSpecies(id, maxSupply, dailyCap)` (owner). `maxSupply` 0 never runs out; once capped, a species'
+  total can only shrink (never below what's minted, never back to uncapped). `dailyCap`: the most minted of it for
+  one day's catch across everyone (0: none). The deploy sets 24 (`web/fish-kinds.js`): ids 1-15 uncapped, 16-20
+  500 each (20 a day), 21-23 100 each (5 a day), 24 the Golden Stampfish, 21 ever (1 a day).
+- **Minting:** `mint(Voucher)` / `mintMany(Voucher[])`, `nonReentrant`: not paused, an open post office
+  (`PostOffice.offices(msg.sender).open`), and an EIP-712 voucher `Catch(player, day, ids[], counts[], deadline)`
+  (domain "Courier World Fish" v1; arrays hashed as `keccak256(abi.encodePacked(...))`) signed by `signer` for
+  `msg.sender`, with `ids` strictly increasing. `counts` are each species' totals for that day so far: a later
+  voucher mints only what's new. The day must be today or within `CLAIM_DAYS` (7) before; `mintMany` skips expired or
+  out-of-window vouchers, a forged or malformed one reverts the lot. Each wallet's day mints at most `maxPerDay`
+  (10 at deploy, at most 50): new catches beyond what's left of it are spent, not owed, as are those a capped species
+  has no room for (its day's `dailyCap`, its `maxSupply`). A call that mints nothing reverts `NothingToMint`.
+  `mintable(player, day, ids, counts)` quotes exactly what a mint would give.
+- **Royalty, enforced:** a fixed 5% (`ROYALTY_BPS`) to the treasury, following `setTreasury`; ERC1155-C exactly as
+  Courier Companions (`validateTransfer(msg.sender, from, to, id, amount)` on every transfer between wallets, not a
+  view; mints skip it). OpenSea's registry at launch; `setTransferValidator` takes only a contract.
+- **Owner** (Ownable2Step, `renounceOwnership` reverts): `setSigner`, `setPaused`, `setSpecies` (and `setSpeciesMany`,
+  the same rules for several at once, which the deploy uses), `setMaxPerDay`,
+  `setTreasury`, `setBase` (re-emits every species' `URI`), `setTransferValidator`, `rescue` (ERC-20s sent by
+  mistake). It can't move or burn anyone's fish.
+- **The room** (`multiplayer/src/index.js`, out of scope): `fcast` needs the hunt's sign-in, the planet, a fresh
+  position at a fishing spot (`web/fish-rules.js`: over the bay standing above the water, or at its edge, not
+  swimming), an open post office and room in the wallet's day; it picks the bite time. `fland` needs the same cast,
+  the time (no sooner than 2.2 s after the bite, no later than a minute), and the player within 3 m of where they
+  cast; only then is the species picked (tiers 600/280/92/24/4 per 1000, a capped species only with room left), and
+  the catch is kept in storage with no other wait in between, so two landings can't both take a cap's last one.
+
+### Scope
+
+| File | Role |
+| --- | --- |
+| `contracts/src/CourierFish.sol` | Fish: vouchers, the day's limit, caps, enforced royalty, admin |
+| `contracts/script/DeployFish.s.sol`, `contracts/script/deploy-fish.sh` | Deploy settings and the 24 species |
+
+```bash
+cd contracts && forge test --match-contract "CourierFish"
+forge test --match-contract CourierFishForkTest --fork-url https://robinhood.drpc.org   # OpenSea's real registry
+```
+
+### Guarantees to check
+
+1. Nothing is minted except by a voucher from `signer` for the caller; a voucher mints each count at most once.
+2. A wallet's day never mints more than `maxPerDay`; a capped species never passes its `dailyCap` for a day or its
+   `maxSupply`; a capped species can't grow or become uncapped.
+3. No path moves fish between two non-zero addresses without the validator; the royalty stays 5%.
+4. The owner can't move, burn or mint fish (except by installing its own signer, which is the trust below).
+
+### Known and accepted
+
+- **The room's key decides catches.** A leaked key can mint, for wallets with an open post office (0.005 ETH each),
+  at most `maxPerDay` a wallet for each day of the 7-day window, and never past a capped species' daily cap or total,
+  until the owner pauses or replaces the key. The owner could install its own key.
+- Catches past a limit are spent, not owed: if the owner lowers `maxPerDay`, or a capped species fills up, the rest
+  of that day's catch can't be minted (in a single `mint`, a voucher that would mint nothing reverts instead).
+- A pause doesn't stop the 7-day window. Holders moving their own fish pay no royalty.
+
+Tests: `test/CourierFish.t.sol`, 27 tests (vouchers and their rules, the window to the second, the day's limit
+including a leaked key mixing species and a lowered limit, caps forever and per day, batches, reentrancy, owner
+powers, the deploy script) plus 4 against OpenSea's live registry; `test/CourierFish.invariant.t.sol`: honest and
+leaked-key vouchers, batches, transfers, pauses, limit and cap changes and time, every outcome predicted by a model,
+checking supplies, holdings and settings. Our own review (vouchers, limits, access, deploy; each finding checked by a
+skeptic) found no critical or high issues; fixed: a lowered limit reverted a day's vouchers (now clamped), the
+export missed the fish contract, the invariant harness couldn't tell success from an empty revert.

@@ -1,0 +1,16 @@
+{
+  "name": "Red Snapper",
+  "description": "Bright red and proud of it. Caught in the bay of Courier World and kept as a Courier Fish. This species never runs out.",
+  "image": "https://courierworld.fun/fish/12.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Uncommon"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Red Snapper"
+    }
+  ]
+}

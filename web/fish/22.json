@@ -1,0 +1,20 @@
+{
+  "name": "Giant Squid",
+  "description": "Its eyes are as big as dinner plates. Caught in the bay of Courier World and kept as a Courier Fish. Only 100 will ever be minted.",
+  "image": "https://courierworld.fun/fish/22.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Epic"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Giant Squid"
+    },
+    {
+      "trait_type": "Supply",
+      "value": "100"
+    }
+  ]
+}

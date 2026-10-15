@@ -8,6 +8,7 @@ import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_POOL_FORM, bonusCap, isBonusDrop } from "./bonus-rules.js";
 import { renderStamp } from "./portrait.js";
 import { planetLook } from "./planet-looks.js";
+import { FISH, FISH_PER_DAY, FISH_MINT_DAYS, tierOf } from "./fish-kinds.js";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
 import { displayName } from "./names.js";
@@ -69,7 +70,7 @@ const listOf = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} 
 /// following you (as many as you like, one of each kind you own). (Only once the Courier Companions contract is deployed.)
 export function createOffice(chain, {
   onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null, onLaunchpad = null,
-  onCompanion = () => {}, companionsShown = () => [],
+  onCompanion = () => {}, companionsShown = () => [], fish = null,
 }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
@@ -81,6 +82,7 @@ export function createOffice(chain, {
   let admin = null, adminAt = 0, adminFor = null, newFeeWallet = ""; // the admin view, for the wallet the contracts pay
   let board = null; // every office, strongest first (from main.js, every 20 s)
   let huntInfo = null, huntAt = 0; // the TokenDrops contract (today's drops, what you'd be paid, the owner), every few seconds
+  let fishToMint = null, fishAt = 0; // how many of your fish would mint now (asked of the contract every few seconds)
   // The treasury's "start a drop" form, while it's typed.
   const dropForm = { token: "", perCoin: "", spots: "10", maxPerWallet: "5", dailyCoins: "100", days: "7", amount: "", topUp: "" };
   // The treasury's "companion bonus pool" form, and the drop number of the pool last started (to add to BONUS_DROPS;
@@ -132,6 +134,15 @@ export function createOffice(chain, {
           admin = (await chain.admin.isAdmin(snap.account)) ? await chain.admin.stats() : null;
         }
       } else if (!snap.account) admin = adminFor = null;
+      // Your catch still to mint: what the contract says the room's counts would mint now.
+      const fs = fish?.state();
+      if (chain.fishMint && fs?.wallet && snap.account && fs.wallet.toLowerCase() === snap.account.toLowerCase() && !panel.hidden && Date.now() - fishAt > 8000) {
+        fishAt = Date.now();
+        fishToMint = await chain.fishMint.mintable(fs.days.map((d) => {
+          const ids = Object.keys(d.c).map(Number).sort((x, y) => x - y);
+          return { day: d.day, ids, counts: ids.map((id) => d.c[id]) };
+        })).catch(() => fishToMint);
+      }
       if (chain.drops && hunt && !panel.hidden && Date.now() - huntAt > 5000) {
         huntAt = Date.now();
         huntInfo = await treasure();
@@ -670,6 +681,35 @@ export function createOffice(chain, {
       html += `<p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${p.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
     }
 
+    // ---- Courier Fish: caught in the bay, minted free (gas only) from the room's vouchers (once deployed)
+    if (s.fish) {
+      const f = s.fish, fs = fish?.state(), mine = fs?.wallet && s.account && fs.wallet.toLowerCase() === s.account.toLowerCase() ? fs : null;
+      const kinds = new Map(f.species.map((k) => [k.id, k]));
+      const owned = FISH.filter((k) => (f.owned[k.id] ?? 0) > 0).length;
+      html += `<section class="fish"><h3>Fish <span class="muted">caught in the bay</span></h3>
+        <p class="note">Stand on the pier, a bridge over the bay or the water's edge, face the water and ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"}. Hook it when the float dips, then keep the line in the green. Up to ${fs?.max ?? FISH_PER_DAY} fish a day, free for post office owners: each one is yours to mint as a Courier Fish NFT, paying only gas.</p>`;
+      if (!s.account) html += `<p class="note">Log in to keep what you catch.</p>`;
+      else if (!mine) html += `<p class="note">Fishing uses the treasure hunt's sign-in: one signature, free. You'll be asked when you first cast.</p>`;
+      else {
+        html += `<div class="kv"><span>Caught today</span><b>${mine.today}/${mine.max ?? FISH_PER_DAY}</b></div>`;
+        if (fishToMint && !f.paused) html += `<button class="pbtn primary wide" data-act="fishMint" ${busy ? "disabled" : ""}>Mint ${fishToMint} fish · free, just gas</button>`;
+        const status = f.paused ? "Minting is paused right now; a pause doesn't stretch the time to mint. "
+          : !mine.days.length ? "Catch a fish and it's ready to mint here. "
+          : fishToMint === null ? "Checking your catch… " : fishToMint ? "" : "Everything you've caught is minted. ";
+        html += `<p class="note">${status}Mint each day's catch within ${FISH_MINT_DAYS} days (that day and the ${FISH_MINT_DAYS - 1} after, UTC); you need an open post office.</p>`;
+      }
+      html += `<h4>Your collection <span class="muted">${owned}/${FISH.length} species</span></h4><div class="fish-grid">`;
+      for (const k of FISH) {
+        // (Capped kinds: what's left to catch, by the room's count of catches still mintable, or what's minted.)
+        const n = f.owned[k.id] ?? 0, c = kinds.get(k.id), left = c?.supply ? Math.max(0, c.supply - Math.max(c.minted, fs?.caught?.[k.id] ?? 0)) : null;
+        html += `<div class="fish-tile ${n ? "" : "none"}" title="${esc(k.name)} · ${k.tier}${left != null ? ` · ${left} of ${c.supply} left` : ""}">
+          <img src="./fish/${k.id}.svg" alt="" loading="lazy"><span>${esc(k.name)}</span>
+          <i style="color:${tierOf(k.tier).ink}">${k.tier}${left != null ? ` · ${left} left` : ""}</i>${n ? `<b>×${n}</b>` : ""}</div>`;
+      }
+      html += `</div><p class="note">Rare, epic and legendary fish are limited for good (the Golden Stampfish: 21 ever). Resales pay a 5% royalty to the game, enforced by the contract.</p>
+        <p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${f.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
+    }
+
     // ---- mint
     html += `<section><h3>Mint couriers</h3>
       <div class="meter"><span>Minted</span><div class="bar"><div style="width:${(s.minted / SUPPLY) * 100}%"></div></div><span>${s.minted.toLocaleString()}/${SUPPLY.toLocaleString()}</span></div>`;
@@ -923,6 +963,12 @@ export function createOffice(chain, {
           planetPriceIn = "";
         });
       }
+      case "fishMint": return run("Minting your fish", async () => {
+        const vouchers = await fish.vouchers();
+        if (!(await chain.fishMint.mintable(vouchers))) throw new Error("Nothing new to mint: everything you've caught is already yours.");
+        await chain.fishMint.mintAll(vouchers);
+        fishAt = 0;
+      });
       case "companionFollow":
         onCompanion(id, true);
         return draw(true);
@@ -997,6 +1043,18 @@ export function createOffice(chain, {
       lastHtml = lastMore = "";
       draw(true);
       panel.querySelector("section.companions")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
+    /// The room's word on your fish changed (a catch, a new connection): redraw.
+    fishChanged() {
+      [fishAt, fishToMint] = [0, null];
+      draw(true);
+    },
+    /// Open the panel at the fish (when the contract is deployed).
+    showFish() {
+      panel.hidden = false;
+      lastHtml = lastMore = "";
+      draw(true);
+      panel.querySelector("section.fish")?.scrollIntoView({ block: "start", behavior: "smooth" });
     },
     /// Open the panel at the planet sale (when the contract is deployed).
     showPlanets() {

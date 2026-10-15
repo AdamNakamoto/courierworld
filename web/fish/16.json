@@ -1,0 +1,20 @@
+{
+  "name": "Lionfish",
+  "description": "All frills and stripes. Look, don't touch. Caught in the bay of Courier World and kept as a Courier Fish. Only 500 will ever be minted.",
+  "image": "https://courierworld.fun/fish/16.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Rare"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Lionfish"
+    },
+    {
+      "trait_type": "Supply",
+      "value": "500"
+    }
+  ]
+}

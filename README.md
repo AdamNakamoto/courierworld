@@ -349,6 +349,38 @@ cd contracts
 echo DEPLOY | RPC_URL=… ./script/deploy-planets.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet
 ```
 
+## Fishing and Courier Fish
+
+Players fish in the bay: on the pier, a bridge over the bay or at the water's edge, facing the water, E (or Hi)
+casts. The room picks when a fish bites; the game hooks it if E comes within 1.1 s, then plays the fight (hold E to
+reel, keep the tension marker in the green) and sends one landing. The room checks the timing, that the player stayed
+within 3 m of the cast and was at a fishing spot (`web/fish-rules.js`, shared by both), picks the species only then
+(`web/fish-kinds.js`: common 60%, uncommon 28%, rare 9.2%, epic 2.4%, legendary 0.4%; a capped species only while it
+has room for the day and in all) and keeps the catch: at most the contract's `maxPerDay` (10) a wallet a day, with an
+open post office and the treasure hunt's sign-in. Two messages a fish, plus a position sent with each.
+
+`CourierFish.sol` (not deployed yet) mints them as ERC-1155 fish, one token id per species, free (gas only) from the
+room's vouchers (`FISH_KEY`), within 7 days of the catch; rare, epic and legendary species are capped for good (the
+Golden Stampfish: 21 ever) and per day; the 5% royalty is fixed and enforced (ERC1155-C). See AUDIT.md section 15.
+
+- `web/fishing.js`: the cast, bobber and line, the bite, the hook window, the fight, the catch card;
+  `web/character.js` holds the rod (`setFish`); others see your rod and a bubble for your catch (`["fishing"]`), and
+  everyone hears about an epic or legendary one (`["fishnews"]`).
+- `web/fish-art.js` draws every species (Courier World's own designs); `web/fish/make.mjs` writes the metadata
+  (`<id>.json`, `<id>.svg`, `collection.json`, `collection.svg`) the contract points at.
+- The Post Office panel's Fish section: today's count, "Mint N fish" (the contract's `mintable` says how many), and
+  the collection of 24. Fishing stays switched off in the game until the site knows the contract (`chain.fishMint`),
+  and in the room until `FISH_KEY` and `FISH_ADDRESS` are set.
+- `./dev.sh` deploys local fish with a throwaway `FISH_KEY` in `multiplayer/.dev.vars`.
+
+```bash
+cd contracts
+FISH_SIGNER=0x… ./script/deploy-fish.sh                                  # dry run on a fork
+echo DEPLOY | FISH_SIGNER=0x… RPC_URL=… ./script/deploy-fish.sh --broadcast --browser --browser-disable-open
+cd ../multiplayer   # FISH_ADDRESS in wrangler.toml's [vars]; the key: npx wrangler secret put FISH_KEY
+npx wrangler deploy
+```
+
 ## The launchpad
 
 Any player with a post office can launch their own token, inside the game (`CourierPad.sol`, live since

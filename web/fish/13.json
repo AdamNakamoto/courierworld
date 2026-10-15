@@ -1,0 +1,16 @@
+{
+  "name": "Parrotfish",
+  "description": "Every colour of the reef in one fish. Caught in the bay of Courier World and kept as a Courier Fish. This species never runs out.",
+  "image": "https://courierworld.fun/fish/13.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Uncommon"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Parrotfish"
+    }
+  ]
+}

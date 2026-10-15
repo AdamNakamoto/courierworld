@@ -665,7 +665,7 @@ export function createCharacter(p) {
 
   // ---- poses and animation
   let pose = "walk"; // walk | sit (bike, moped) | stand (skateboard, plane)
-  let phase = 0, blink = 2 + Math.random() * 3, wave = 0, swim = 0;
+  let phase = 0, blink = 2 + Math.random() * 3, wave = 0, swim = 0, fish = 0, fishPull = 0;
   function setPose(next) {
     pose = next;
   }
@@ -676,6 +676,11 @@ export function createCharacter(p) {
   /// 0..1: treading water.
   function setSwim(k) {
     swim = k;
+  }
+  /// 0..1: holding a fishing rod out over the water; `pull` 0..1: how hard the fish is fighting.
+  function setFish(k, pull = 0) {
+    fish = k;
+    fishPull = pull;
   }
   /// speed: 0 idle, 0.62 walking, 1 running (or how hard she's pedalling). air: 0 on the ground … 1 mid-jump.
   /// dist: ground covered this frame; when given, the stride follows it so the feet don't skate.
@@ -774,6 +779,17 @@ export function createCharacter(p) {
       arms[0].rotation.z += (-2.55 + osc * 0.28 - arms[0].rotation.z) * wave;
       elbows[0].rotation.x += (-0.5 + osc * 0.3 - elbows[0].rotation.x) * wave;
     }
+    // Fishing: both hands forward on the rod, which shakes when a fish fights (standing, or sitting on a parked ride).
+    if (rod) rod.visible = fish > 0.05;
+    if (fish > 0) {
+      const shake = Math.sin(t * (fishPull > 0 ? 17 : 1.3)) * (0.03 + fishPull * 0.1);
+      arms[0].rotation.x += (-0.95 + shake - arms[0].rotation.x) * fish;
+      arms[0].rotation.z += (0.15 - arms[0].rotation.z) * fish;
+      elbows[0].rotation.x += (-0.55 - fishPull * 0.35 - elbows[0].rotation.x) * fish;
+      arms[1].rotation.x += (-0.75 - arms[1].rotation.x) * fish;
+      arms[1].rotation.z += (-0.35 - arms[1].rotation.z) * fish;
+      elbows[1].rotation.x += (-1.0 - elbows[1].rotation.x) * fish;
+    }
     head.rotation.x = -0.05 * k + Math.sin(t * 1.1) * 0.025 * (1 - k);
     for (const tl of tails) tl.rotation.x = tl.userData.rest + Math.sin(phase * 2) * 0.14 * speed + Math.sin(t * 1.7) * 0.03;
     if (bag) bag.rotation.x = Math.sin(phase) * 0.1 * speed;
@@ -796,5 +812,22 @@ export function createCharacter(p) {
       }
     });
   }
-  return { root, body, head, update, setPose, setWave, setSwim };
+  // A fishing rod in the right hand (after `compact`, so it can be shown and hidden): a long, thin pole up and out ahead,
+  // with a reel; `rodTip` is where the line starts.
+  const rod = new THREE.Group();
+  rod.position.set(0, -0.27, 0.02);
+  rod.rotation.x = 1.15;
+  elbows[0].add(rod);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.02, 1.5, 6), new THREE.MeshToonMaterial({ color: 0x6b4a2f }));
+  pole.position.y = 0.62;
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.22, 8), new THREE.MeshToonMaterial({ color: 0x2b2f33 }));
+  grip.position.y = -0.04;
+  const reelMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 10), new THREE.MeshToonMaterial({ color: 0xc9ced3 }));
+  reelMesh.rotation.z = Math.PI / 2;
+  reelMesh.position.set(0.05, 0.06, 0);
+  const rodTip = new THREE.Object3D();
+  rodTip.position.y = 1.37;
+  rod.add(pole, grip, reelMesh, rodTip);
+  rod.visible = false;
+  return { root, body, head, update, setPose, setWave, setSwim, setFish, rodTip };
 }

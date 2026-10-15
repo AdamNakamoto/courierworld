@@ -1,0 +1,16 @@
+{
+  "name": "Mackerel",
+  "description": "Striped like waves, quick as a gust. Caught in the bay of Courier World and kept as a Courier Fish. This species never runs out.",
+  "image": "https://courierworld.fun/fish/2.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Common"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Mackerel"
+    }
+  ]
+}

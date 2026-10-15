@@ -1,0 +1,20 @@
+{
+  "name": "Coelacanth",
+  "description": "Older than the dinosaurs, and still here. Caught in the bay of Courier World and kept as a Courier Fish. Only 100 will ever be minted.",
+  "image": "https://courierworld.fun/fish/21.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Epic"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Coelacanth"
+    },
+    {
+      "trait_type": "Supply",
+      "value": "100"
+    }
+  ]
+}

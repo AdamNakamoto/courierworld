@@ -102,6 +102,7 @@ write_dev_vars() {
     [ -n "${DROPS:-}" ] && printf 'DROPS_KEY=%s\nDROPS_ADDRESS=%s\nDROPS_CHAIN_ID=%s\n' "$DROPS_KEY" "$DROPS" "$(cast chain-id --rpc-url "$RPC")"
     [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
     [ -n "${COMPANIONS:-}" ] && printf 'COMPANIONS_ADDRESS=%s\n' "$COMPANIONS"
+    [ -n "${FISH:-}" ] && printf 'FISH_KEY=%s\nFISH_ADDRESS=%s\nFISH_CHAIN_ID=%s\n' "$FISH_KEY" "$FISH" "$(cast chain-id --rpc-url "$RPC")"
     [ -n "$(addr PostOffice)" ] && printf 'POST_OFFICE=%s\nPAD_RPC=%s\n' "$(addr PostOffice)" "$RPC"
   } > multiplayer/.dev.vars || true
 }
@@ -155,6 +156,19 @@ deploy_planets() { # Courier Planets with the sale open at 1,000 $STAMP (the dev
   OUT="$prev"
 }
 deploy_planets
+
+deploy_fish() { # Courier Fish, with a throwaway voucher key for the local multiplayer server (FISH_KEY in
+  # multiplayer/.dev.vars); owned by the deployer (account 0)
+  [ -n "$OFFICE_ADDR" ] || return 0
+  local prev="$OUT" key signer
+  key=$(cast wallet new --json | jq -r '(.data? // .) | if type == "array" then .[0] else . end | .private_key')
+  signer=$(cast wallet address "$key")
+  POST_OFFICE=$OFFICE_ADDR FISH_SIGNER=$signer FISH_BASE="http://localhost:$WEB_PORT/fish/" deploy script/DeployFish.s.sol
+  FISH=$(addr CourierFish)
+  FISH_KEY=$key
+  OUT="$prev"
+}
+deploy_fish
 
 deploy_pad() { # the launchpad, on a fork only (it needs the real Uniswap v4 PoolManager and IMD)
   [ "$FORK" = 1 ] && [ -n "$(addr StampToken)" ] || return 0
@@ -216,6 +230,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
     contracts=$(echo "$contracts" | jq --arg planets "$PLANETS" '. + {planets: $planets}')
     abis=$(echo "$abis" | jq --argjson planets "$(abi CourierPlanets)" '. + {planets: $planets}')
   fi
+  if [ -n "${FISH:-}" ]; then
+    contracts=$(echo "$contracts" | jq --arg fish "$FISH" '. + {fish: $fish}')
+    abis=$(echo "$abis" | jq --argjson fish "$(abi CourierFish)" '. + {fish: $fish}')
+  fi
   if [ -n "${PAD:-}" ]; then
     contracts=$(echo "$contracts" | jq --arg pad "$PAD" --arg r "$PAD_ROUTER" --arg er "$PAD_ETH_ROUTER" '. + {pad: $pad, padRouter: $r, padEthRouter: $er}')
     abis=$(echo "$abis" | jq --argjson pad "$(abi CourierPad)" --argjson padToken "$(abi PadToken)" '. + {pad: $pad, padToken: $padToken}')
@@ -233,6 +251,7 @@ echo "CourierNFT $NFT"
 echo "Skins      $SKINS"
 [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
 [ -n "${PLANETS:-}" ] && echo "Planets    $PLANETS"
+[ -n "${FISH:-}" ] && echo "Fish       $FISH"
 echo "Chain      $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Game       http://localhost:$WEB_PORT"
 if [ "$WALLET" = 1 ]; then
@@ -254,6 +273,7 @@ if [ "$STAGED" = 1 ]; then
   STAMP_ADDR=$(addr StampToken) OFFICE_ADDR=$(addr PostOffice)
   deploy_companions
   deploy_planets
+  deploy_fish
   deploy_drops
   write_dev_vars
   write_chain_json

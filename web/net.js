@@ -6,6 +6,8 @@ import * as THREE from "https://esm.sh/three@0.160.0";
 import { R, arc, texFromCanvas } from "./world.js";
 import { STEP } from "./terrain.js";
 import { authMessage } from "./hunt-pick.js";
+import { fishOf } from "./fish-kinds.js";
+import { CAST_MS } from "./fish-rules.js";
 import { WORLDS } from "./trips.js";
 import { nameMessage, nameShown } from "./name-rules.js";
 import { SKINS } from "./skins.js";
@@ -291,6 +293,7 @@ function along(p) {
 export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {}, onBonus = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
+  onFish = () => {}, onFishNews = () => {},
   world = (w) => (w === "planet" ? { group: W.world, r: R, terrain: W.terrain } : null),
 }) {
   const players = new Map(); // id -> { hello, root, rider, tag, follower, pos, fwd, target, h, air, spd, swim, wave }
@@ -313,6 +316,9 @@ export function createNet(W, {
   let nameWait = null, checkWait = null; // a name being set, and a name being checked, waiting for the room
   let myId = null; // the room's name for you on this connection
   const grabs = []; // coins picked up this frame: sent right after where you are, so the room checks the spot
+  // Fishing (web/fishing.js): a cast or a landing waiting for the room, and what's to send right after where you are.
+  let castWait = null, landWait = null, fishVoucherWait = null;
+  const fishOut = [];
 
   const count = () => onCount(ws?.readyState === 1 && me ? players.size + 1 : null);
   const send = (m) => {
@@ -339,6 +345,8 @@ export function createNet(W, {
       }
     };
     ws.onclose = () => {
+      for (const w of [castWait, landWait, fishVoucherWait]) w?.reject(new Error("Lost the connection to the other players. Try again in a moment."));
+      castWait = landWait = fishVoucherWait = null;
       for (const id of [...players.keys()]) remove(id);
       count();
       later();
@@ -414,6 +422,12 @@ export function createNet(W, {
     const moving = spd > 0.05 && v.lengthSq() > 0 && v.length() * R < 30;
     p.target = { p: new THREE.Vector3(x, y, z).normalize(), f: new THREE.Vector3(fx, fy, fz), h, air, spd, swim, t: performance.now() / 1000,
       vel: moving ? v : null, turn: moving ? turn : 0 };
+    if (p.fishing && (spd > 0.05 || performance.now() > p.fishUntil)) rodDown(p); // (walked off, or the cast ran out)
+  }
+  /// Someone's rod goes away.
+  function rodDown(p) {
+    p.fishing = false;
+    p.rider?.ch.setFish?.(0, 0);
   }
   /// Where an update ({ p, f, vel, turn }) puts someone `secs` after it, and which way they face: carried on
   /// along the curve its velocity and turn make (for at most AHEAD).
@@ -465,6 +479,7 @@ export function createNet(W, {
         myId = m[1];
         onChatHistory((m[4] ?? []).map(chatLine));
         onHunt(null); // a new connection: sign in again to hunt (or pick up where you were, below)
+        onFish(null); // (and to fish)
         onBonus(null); // (and the room says again how the bonus is going once you're back in)
         resumeHunt();
         sendName();
@@ -525,6 +540,37 @@ export function createNet(W, {
         voucherWait?.resolve(m[1]);
         voucherWait = null;
         return;
+      case "fcast":
+        castWait?.resolve({ id: m[1], biteIn: Number(m[2]) });
+        castWait = null;
+        return;
+      case "fcaught":
+        landWait?.resolve({ species: Number(m[1]), day: Number(m[2]), today: Number(m[3]), max: Number(m[4]) });
+        landWait = null;
+        return;
+      case "fstate":
+        onFish(m[1] ?? null);
+        return;
+      case "fvouchers":
+        fishVoucherWait?.resolve(m[1]);
+        fishVoucherWait = null;
+        return;
+      case "fishing": {
+        // Someone near you casting (1), or done (0; with the species if they caught one).
+        const p = players.get(m[1]);
+        if (!p) return;
+        if (m[2] === 1) {
+          [p.fishing, p.fishUntil] = [true, performance.now() + CAST_MS + 5000];
+          p.rider.ch.setFish?.(1, 0);
+        } else rodDown(p);
+        const k = m[3] != null ? fishOf(m[3])?.name : null;
+        if (k && p.root.visible) emotes.say(p.rider.group, `🐟 ${k}!`, p.rider.ride ? 3.2 : 2.85);
+        return;
+      }
+      case "fishnews":
+        // (The wallet that caught it, as the room checked it.)
+        onFishNews(/^0x[0-9a-fA-F]{40}$/.test(m[3] ?? "") ? m[3] : null, Number(m[2]));
+        return;
       case "nope":
         if (m[1] === -1 && voucherWait) {
           voucherWait.reject(new Error(m[2]));
@@ -532,7 +578,12 @@ export function createNet(W, {
         } else if (m[1] === -2) {
           ticketWait?.reject(new Error(m[2]));
           ticketWait = null;
-
+        } else if (m[1] === -4 && (castWait || landWait)) {
+          (castWait ?? landWait).reject(new Error(m[2]));
+          castWait = landWait = null;
+        } else if (m[1] === -5 && fishVoucherWait) {
+          fishVoucherWait.reject(new Error(m[2]));
+          fishVoucherWait = null;
         } else onNope(m[1], m[2]);
         return;
       case "join":
@@ -566,6 +617,20 @@ export function createNet(W, {
       }
     }
     count();
+  }
+
+  /// A request to the room that a reply (or a ["nope"]) settles; it gives up after 15 s.
+  function fishAsk(start, waiting, clear) {
+    if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));
+    return new Promise((resolve, reject) => {
+      start(resolve, reject);
+      setTimeout(() => {
+        if (waiting()?.resolve === resolve) {
+          clear();
+          reject(new Error("The server didn't answer. Try again."));
+        }
+      }, 15_000);
+    });
   }
 
   /// On a new connection, pick the hunt up again with the token the room gave this browser when you signed in.
@@ -665,15 +730,16 @@ export function createNet(W, {
         }
         // Send where you are when your movement changes, or now and then while it keeps on (see HEARTBEAT).
         since += dt;
-        if (state && (since >= MIN_GAP || grabs.length)) {
+        if (state && (since >= MIN_GAP || grabs.length || fishOut.length)) {
           const moving = state.spd > 0.05;
           // Where the others' games put you now: your last update, carried on along the curve it gave.
           const seen = last && carried(last, since);
           const changed = !last || moving !== last.spd > 0.05 || (state.air > 0) !== (last.air > 0) || state.f.dot(seen.f) < 0.94 ||
             Math.abs(state.spd - last.spd) > 0.25 || Math.abs(state.h - last.h) > 0.25 || Math.abs(state.swim - last.swim) > 0.3 ||
             arc(state.p, seen.p) > DRIFT;
-          if (changed || (moving && since >= HEARTBEAT) || grabs.length) sendState(state);
+          if (changed || (moving && since >= HEARTBEAT) || grabs.length || fishOut.length) sendState(state);
           while (grabs.length) send(["grab", grabs.shift()]);
+          while (fishOut.length) send(fishOut.shift());
         }
       }
       // Everyone else eases toward where they should be by now: their last update, carried on along the curve
@@ -779,6 +845,28 @@ export function createNet(W, {
       send(["world", w]);
     },
     get world() { return mine; },
+    /// Fishing: cast (resolves with { id, biteIn }: when the bite comes, in ms), land the fish on cast `id` (resolves
+    /// with { species, day, today, max }). Both go right after where you are, so the room checks the spot.
+    fishCast() {
+      return fishAsk((resolve, reject) => {
+        castWait = { resolve, reject };
+        fishOut.push(["fcast"]);
+      }, () => castWait, () => (castWait = null));
+    },
+    fishLand(id) {
+      return fishAsk((resolve, reject) => {
+        landWait = { resolve, reject };
+        fishOut.push(["fland", id]);
+      }, () => landWait, () => (landWait = null));
+    },
+    fishState: () => send(["fstate"]),
+    /// Signed vouchers for each day's catch still in the mint window, for CourierFish.mintMany.
+    fishVouchers() {
+      return fishAsk((resolve, reject) => {
+        fishVoucherWait = { resolve, reject };
+        send(["fvouchers"]);
+      }, () => fishVoucherWait, () => (fishVoucherWait = null));
+    },
     /// Signed vouchers for each drop's finds (today's and yesterday's), to claim with TokenDrops.claimMany.
     vouchers() {
       if (ws?.readyState !== 1) return Promise.reject(new Error("Not connected to the other players. Try again in a moment."));

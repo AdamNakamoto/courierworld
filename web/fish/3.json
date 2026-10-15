@@ -1,0 +1,16 @@
+{
+  "name": "Anchovy",
+  "description": "Tiny, but it never travels alone. Caught in the bay of Courier World and kept as a Courier Fish. This species never runs out.",
+  "image": "https://courierworld.fun/fish/3.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Common"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Anchovy"
+    }
+  ]
+}

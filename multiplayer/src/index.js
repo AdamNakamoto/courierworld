@@ -23,6 +23,8 @@ import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name
 import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
 import { COMPANION_IDS } from "../../web/companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_MOVE_M, BONUS_WARMUP_MS, bonusCoins, bonusShare, bonusPayDay } from "../../web/bonus-rules.js";
+import { FISH, FISH_PER_DAY, FISH_MINT_DAYS, fishOf } from "../../web/fish-kinds.js";
+import { fishingSpot, pickFish, BITE_MIN_MS, BITE_MAX_MS, FIGHT_MIN_MS, CAST_MS, CAST_GAP_MS } from "../../web/fish-rules.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -56,6 +58,15 @@ const COMPANIONS_ABI = parseAbi([
   "function balanceOf(address account, uint256 id) view returns (uint256)",
   "function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])",
 ]);
+// Courier Fish (an ERC-1155: each species is a token id), at FISH_ADDRESS once it's deployed; FISH_KEY signs its vouchers.
+const FISH_ABI = parseAbi([
+  "function allSpecies() view returns (uint256[] ids, (uint32 maxSupply, uint32 minted, uint32 dailyCap, bool exists)[] list)",
+  "function maxPerDay() view returns (uint32)",
+  "function mintedOn(uint256 id, uint32 day) view returns (uint256)",
+]);
+const FISH_CAPS_MS = 10 * 60_000; // how long the species' caps (and what's been minted) are trusted before they're read again
+/// A random number in [0, 1) the players can't predict.
+const rand01 = () => crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
 const COMPANION_CHECK_MS = 3 * 60_000; // how long a wallet's companions are trusted before they're read again
 const COMPANION_MISS_MS = 15_000; // ...and how long "not theirs" is, so a companion just bought shows soon
 const COMPANION_RECHECK_MS = 16_000; // one more look this long after a miss (a buy the RPC hadn't seen; a hiccup)
@@ -240,6 +251,7 @@ export class Planet extends DurableObject {
     if (m[0] === "chat") return this.chat(ws, a, m[1], now);
     if (m[0] === "namecheck" || m[0] === "setname" || m[0] === "name" || m[0] === "unname") return this.naming(ws, a, m);
     if (m[0] === "auth" || m[0] === "resume" || m[0] === "hunt" || m[0] === "grab" || m[0] === "vouchers" || m[0] === "wgrab" || m[0] === "mgrab") return this.hunt(ws, a, m, now);
+    if (m[0] === "fcast" || m[0] === "fland" || m[0] === "fstate" || m[0] === "fvouchers") return this.fishing(ws, a, m, now);
     if (m[0] === "ticket") return this.ticket(ws, a, m[1], m[2], now);
     if (m[0] === "moon") return this.ticket(ws, a, "moon", m[1], now, true); // (from a game loaded before Mars)
     if (m[0] === "world") return this.goTo(ws, a, m[1], now);
@@ -579,6 +591,7 @@ export class Planet extends DurableObject {
       await this.ctx.storage.put(`htok:${a.wallet}`, { token, at: now });
       send(ws, ["hunttoken", token]);
       send(ws, await state());
+      this.sendFish(ws, a, now).catch(() => {});
       return this.sendBonus(ws, a).catch(() => {});
     }
     if (m[0] === "resume") {
@@ -591,6 +604,7 @@ export class Planet extends DurableObject {
       await this.tickets(a);
       ws.serializeAttachment(a);
       send(ws, await state());
+      this.sendFish(ws, a, now).catch(() => {});
       return this.sendBonus(ws, a).catch(() => {});
     }
     if (m[0] === "hunt") return send(ws, await state());
@@ -668,6 +682,199 @@ export class Planet extends DurableObject {
       }
     }
     return out.length ? ["vouchers", out] : ["nope", -1, "Find a coin first."];
+  }
+
+  // ---------------------------------------------------------------- fishing
+
+  /// Fishing in the bay (web/fish-rules.js). ["fcast"]: a player standing where they can fish casts (the room picks
+  /// when the bite comes); ["fland", castId]: they hooked it and won the fight in the game, and the room checks the
+  /// timing (not before the bite, a fight of at least FIGHT_MIN_MS) and that they stayed put, then picks the species
+  /// (only now, so letting fish go never helps) and keeps the catch: at most FISH_PER_DAY a wallet a day, and never past
+  /// a capped species' daily cap or total. ["fstate"]: the catches still to mint; ["fvouchers"]: signed notes of them
+  /// for CourierFish.mintMany. Wrong-way answers are ["nope", -4, why] (-5 for vouchers).
+  async fishing(ws, a, m, now) {
+    const on = !!(this.env.FISH_KEY && this.env.FISH_ADDRESS);
+    const nope = (why) => send(ws, ["nope", m[0] === "fvouchers" ? -5 : -4, why]);
+    if (m[0] === "fstate") return this.sendFish(ws, a, now);
+    if (!on) return nope("Fishing opens soon.");
+    if (!a.wallet) return nope("Sign in with your wallet to fish (the same signature as the treasure hunt).");
+    const day = huntDay(now), w = a.wallet; // (a cast and its landing are this wallet's, whatever happens meanwhile)
+    if (m[0] === "fvouchers") {
+      // (The same answer again for a few seconds, so asking over and over can't keep the room signing.)
+      this.fishSent ??= new WeakMap();
+      const sent = this.fishSent.get(ws);
+      if (sent && sent.wallet === w && now - sent.at < 5000) return send(ws, await sent.reply);
+      const reply = this.fishVouchers(a, now);
+      this.fishSent.set(ws, { at: now, wallet: w, reply });
+      reply.catch(() => this.fishSent.get(ws)?.reply === reply && this.fishSent.delete(ws));
+      return send(ws, await reply);
+    }
+    if (m[0] !== "fcast" && m[0] !== "fland") return;
+    const quit = (why) => {
+      if (m[0] === "fland" || a.fcast?.id) this.broadcast(ws, ["fishing", a.id, 0], a.s); // (others see the rod go)
+      return nope(why);
+    };
+    if (worldOf(a) !== "planet") return quit("The bay is on the planet: fish there.");
+    if ((a.strikes ?? 0) >= 3) return quit("Something looked off with your movement, so fishing isn't counting this session. Reload to try again.");
+    if (!a.s || now - a.sAt > 4000 || now - a.firstAt < 5000 || now < (a.cleanAt ?? 0)) return quit("Hold still a moment, then try again.");
+    if (!fishingSpot(a.s)) return quit("Fish from the pier, a bridge over the bay, or the water's edge.");
+
+    if (m[0] === "fcast") {
+      // (A little slack on the game's own wait, so clocks that differ a little don't turn a cast away.)
+      if (now - (a.fcast?.at ?? 0) < CAST_GAP_MS - 500) return nope("Give the line a moment, then cast again.");
+      const open = await this.officeOpenNow(w, day);
+      if (open === null) return nope("Couldn't check your post office just now. Try again in a moment.");
+      if (!open) return nope("You need an open post office to keep the fish you catch.");
+      const caps = await this.fishCaps();
+      if (!caps) return nope("Couldn't check the bay just now. Try again in a moment.");
+      if (((await this.ctx.storage.get(`fish:${w}:${day}`))?.n ?? 0) >= caps.max) return nope(`That's today's ${caps.max} fish. More bite from 00:00 UTC.`);
+      if (a.wallet !== w) return nope("Cast again.");
+      const biteIn = BITE_MIN_MS + Math.floor(rand01() * (BITE_MAX_MS - BITE_MIN_MS));
+      a.fcast = { id: randomHex(4), at: now, biteAt: now + biteIn, d: a.s.slice(0, 3), w };
+      ws.serializeAttachment(a);
+      this.broadcast(ws, ["fishing", a.id, 1], a.s);
+      return send(ws, ["fcast", a.fcast.id, biteIn]);
+    }
+
+    // ["fland", castId]: one landing per cast, for the wallet that cast.
+    const c = a.fcast;
+    if (!c?.id || c.id !== m[1]) return quit("That fish got away: cast again.");
+    a.fcast = { at: c.at };
+    ws.serializeAttachment(a);
+    const away = () => quit("That fish got away: cast again.");
+    if (c.w !== w || now < c.biteAt + FIGHT_MIN_MS - 300 || now > c.biteAt + CAST_MS) return away();
+    if (arcBetween(a.s, c.d) > 3) return away();
+    // (Still a post office: the cast checked it, so only a "no" counts here; a room that slept through the wait has
+    // forgotten the answer, and that mustn't cost the fish.)
+    if (this.officeOpen(w, day) === false) return away();
+    // The caps first (a read from the chain, kept a while); then only storage, so nothing else runs in between and two
+    // landings can't both take a capped species' last one.
+    const caps = await this.fishCaps();
+    if (!caps || a.wallet !== w) return away();
+    const S = this.ctx.storage, dayKey = `fish:${w}:${day}`;
+    const got = await S.get([dayKey, "fishAll", `fishDay:${day}`]);
+    const mine = got.get(dayKey) ?? { c: {}, n: 0 }, all = got.get("fishAll") ?? {}, today = got.get(`fishDay:${day}`) ?? {};
+    if (mine.n >= caps.max) return quit(`That's today's ${caps.max} fish. More bite from 00:00 UTC.`);
+    const room = (id) => {
+      const k = caps.species[id];
+      if (!k) return false;
+      if (k.daily && (today[id] ?? 0) >= k.daily) return false;
+      return !k.supply || Math.max(all[id] ?? 0, k.minted) < k.supply;
+    };
+    const id = pickFish(rand01, room);
+    if (id == null) return away();
+    mine.c[id] = (mine.c[id] ?? 0) + 1;
+    mine.n++;
+    const put = { [dayKey]: mine };
+    if (caps.species[id].supply || caps.species[id].daily) {
+      // (fishAll: every capped catch not known to have gone unminted; see fishReconcile.)
+      all[id] = (all[id] ?? 0) + 1;
+      today[id] = (today[id] ?? 0) + 1;
+      [put.fishAll, put[`fishDay:${day}`]] = [all, today];
+    }
+    await S.put(put);
+    this.fishSent?.delete(ws);
+    send(ws, ["fcaught", id, day, mine.n, caps.max]);
+    this.sendFish(ws, a, now).catch(() => {}); // (the catch to mint, for the Post Office panel)
+    this.broadcast(ws, ["fishing", a.id, 0, id], a.s);
+    // Something rare: everyone hears, with the wallet that caught it.
+    const tier = fishOf(id)?.tier;
+    if (tier === "Epic" || tier === "Legendary") this.broadcast(ws, ["fishnews", a.id, id, w]);
+  }
+
+  /// The species' caps and what's been minted ({ species: { [id]: { supply, daily, minted } }, max: fish a wallet a
+  /// day }), read from the contract every FISH_CAPS_MS and kept in storage too (for a room that wakes while the chain
+  /// can't be reached). null if it has never been read: then nobody fishes, rather than catch a species the contract
+  /// doesn't have.
+  async fishCaps() {
+    const c = this.fishCapsCache;
+    if (c && Date.now() - c.at < FISH_CAPS_MS) return c.caps;
+    try {
+      const read = (functionName) => this.cosmeticChain().readContract({ address: this.env.FISH_ADDRESS, abi: FISH_ABI, functionName });
+      const [[ids, list], max] = await Promise.all([read("allSpecies"), read("maxPerDay")]);
+      const species = {};
+      ids.forEach((id, i) => {
+        if (fishOf(Number(id))) species[Number(id)] = { supply: list[i].maxSupply, daily: list[i].dailyCap, minted: list[i].minted };
+      });
+      const caps = { species, max: Number(max) };
+      this.fishCapsCache = { at: Date.now(), caps };
+      if (JSON.stringify(caps) !== JSON.stringify(c?.caps)) await this.ctx.storage.put("fishCaps", caps);
+      this.fishReconcile().catch(() => {});
+      return caps;
+    } catch {
+      const kept = c?.caps ?? (await this.ctx.storage.get("fishCaps")) ?? null;
+      if (kept) this.fishCapsCache = { at: Date.now() - FISH_CAPS_MS + 60_000, caps: kept }; // (again in a minute)
+      return kept;
+    }
+  }
+  /// Fish a wallet can keep a day: the contract's limit as last read (FISH_PER_DAY until then).
+  fishMax() {
+    return this.fishCapsCache?.caps?.max ?? FISH_PER_DAY;
+  }
+  /// Give back the capped catches nobody minted: once a day's mint window has closed, what the contract minted for
+  /// that day is final, so the rest of that day's catches leave fishAll (and those species can be caught again).
+  async fishReconcile() {
+    const S = this.ctx.storage, today = huntDay(Date.now());
+    for (let d = today - FISH_MINT_DAYS - 7; d < today - FISH_MINT_DAYS + 1; d++) {
+      const caught = await S.get(`fishDay:${d}`);
+      if (!caught || caught.done) continue;
+      const all = (await S.get("fishAll")) ?? {};
+      for (const [id, n] of Object.entries(caught)) {
+        const minted = Number(await this.cosmeticChain().readContract({ address: this.env.FISH_ADDRESS, abi: FISH_ABI, functionName: "mintedOn", args: [BigInt(id), d] }));
+        if (n > minted) all[id] = Math.max(0, (all[id] ?? 0) - (n - minted));
+      }
+      await S.put({ fishAll: all, [`fishDay:${d}`]: { ...caught, done: true } });
+    }
+  }
+
+  /// A wallet's catches still in the mint window: [{ day, c: { [id]: n } }], oldest first.
+  async fishDays(wallet, now) {
+    const today = huntDay(now), keys = [];
+    for (let d = today - FISH_MINT_DAYS + 1; d <= today; d++) keys.push(`fish:${wallet}:${d}`);
+    const got = await this.ctx.storage.get(keys);
+    return keys.map((k, i) => ({ day: today - FISH_MINT_DAYS + 1 + i, c: got.get(k)?.c })).filter((x) => x.c && Object.keys(x.c).length);
+  }
+
+  /// ["fstate", { on, day, today, max, days }]: whether fishing is on, and this wallet's catches still to mint.
+  async sendFish(ws, a, now = Date.now()) {
+    const on = !!(this.env.FISH_KEY && this.env.FISH_ADDRESS), day = huntDay(now);
+    if (!a.wallet) return send(ws, ["fstate", { on, day, wallet: null, today: 0, max: this.fishMax(), days: [] }]);
+    const days = await this.fishDays(a.wallet, now);
+    const today = days.find((x) => x.day === day);
+    const caught = (await this.ctx.storage.get("fishAll")) ?? {}; // (each capped species' catches, for "left to catch")
+    send(ws, ["fstate", { on, day, wallet: a.wallet, today: today ? Object.values(today.c).reduce((n, v) => n + v, 0) : 0, max: this.fishMax(), days, caught }]);
+  }
+
+  /// The ["fvouchers"] answer: a signed note of each day's catch in the mint window (each species' total that day),
+  /// for CourierFish.mintMany.
+  async fishVouchers(a, now) {
+    const signer = (this.fishSigner ??= privateKeyToAccount(this.env.FISH_KEY));
+    const deadline = Math.floor(now / 1000) + VOUCHER_SECS;
+    const out = [];
+    for (const { day, c } of await this.fishDays(a.wallet, now)) {
+      const ids = Object.keys(c).map(Number).sort((x, y) => x - y), counts = ids.map((id) => c[id]);
+      const signature = await signer.signTypedData({
+        domain: { name: "Courier World Fish", version: "1", chainId: Number(this.env.FISH_CHAIN_ID ?? 4663), verifyingContract: this.env.FISH_ADDRESS },
+        types: { Catch: [{ name: "player", type: "address" }, { name: "day", type: "uint32" }, { name: "ids", type: "uint256[]" }, { name: "counts", type: "uint256[]" }, { name: "deadline", type: "uint64" }] },
+        primaryType: "Catch",
+        message: { player: a.wallet, day, ids: ids.map(BigInt), counts: counts.map(BigInt), deadline: BigInt(deadline) },
+      });
+      out.push({ day, ids, counts, deadline, signature });
+    }
+    return out.length ? ["fvouchers", out] : ["nope", -5, "Catch a fish first."];
+  }
+
+  /// officeOpen, waiting up to two seconds for the answer when it isn't known yet; a "no" is asked again after 30 s
+  /// (they may have just opened one, and a fisher shouldn't wait the ten minutes a "no" is kept for the bonus).
+  async officeOpenNow(wallet, day) {
+    const c = this.offices?.get(wallet);
+    if (c && c.ok === false && !c.reading && Date.now() - c.at > 30_000) this.offices.delete(wallet);
+    let open = this.officeOpen(wallet, day);
+    for (let i = 0; open === null && i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      open = this.officeOpen(wallet, day);
+    }
+    return open;
   }
 
   // ---------------------------------------------------------------- the companion bonus
@@ -769,6 +976,7 @@ export class Planet extends DurableObject {
   async switchWallet(a, wallet) {
     if (a.bonusMem && a.bonusMem.wallet !== wallet) await this.flushMem(a.bonusMem).catch(() => {});
     if (a.wallet !== wallet) a.bonusMem = undefined;
+    if (a.wallet !== wallet && a.fcast?.id) a.fcast = { at: a.fcast.at }; // (a cast belongs to the wallet that made it)
     a.wallet = wallet;
   }
 

@@ -1,0 +1,20 @@
+{
+  "name": "Octopus",
+  "description": "Eight arms, and every one of them is curious. Caught in the bay of Courier World and kept as a Courier Fish. Only 500 will ever be minted.",
+  "image": "https://courierworld.fun/fish/18.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Rare"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Octopus"
+    },
+    {
+      "trait_type": "Supply",
+      "value": "500"
+    }
+  ]
+}

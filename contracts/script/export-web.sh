@@ -19,6 +19,7 @@ abi() { jq '.abi' "out/$1.sol/$1.json"; }
 # Checked before anything is written: if the RPC can't say, nothing is written (rather than guess either way).
 COMPANIONS=deployments/robinhood-companions.json
 PLANETS=deployments/robinhood-planets.json
+FISH=deployments/robinhood-fish.json
 onchain() {
   local code
   code=$(cast code "$(jq -r ".$2" "$1")" --rpc-url "${RPC_URL:-robinhood}") \
@@ -27,9 +28,11 @@ onchain() {
 }
 COMPANIONS_LIVE=0
 PLANETS_LIVE=0
+FISH_LIVE=0
 if [ -f "$GAME" ]; then
   if [ -f "$COMPANIONS" ] && onchain "$COMPANIONS" companions; then COMPANIONS_LIVE=1; fi
   if [ -f "$PLANETS" ] && onchain "$PLANETS" planets; then PLANETS_LIVE=1; fi
+  if [ -f "$FISH" ] && onchain "$FISH" fish; then FISH_LIVE=1; fi
 fi
 CHAIN='{
   local: false,
@@ -103,6 +106,12 @@ if [ -f "$GAME" ]; then
     tmp=$(mktemp)
     jq --slurpfile p "$PLANETS" --argjson planetsAbi "$(abi CourierPlanets)" \
       '.contracts.planets = $p[0].planets | .planetsBlock = $p[0].block | .abis.planets = $planetsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
+  # Courier Fish, once deployed (script/deploy-fish.sh writes deployments/robinhood-fish.json).
+  if [ "$FISH_LIVE" = 1 ]; then
+    tmp=$(mktemp)
+    jq --slurpfile f "$FISH" --argjson fishAbi "$(abi CourierFish)" \
+      '.contracts.fish = $f[0].fish | .fishBlock = $f[0].block | .abis.fish = $fishAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else

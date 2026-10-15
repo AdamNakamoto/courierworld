@@ -1,0 +1,16 @@
+{
+  "name": "Message in a Bottle",
+  "description": "A letter that never reached the post, still sealed. Caught in the bay of Courier World and kept as a Courier Fish. This species never runs out.",
+  "image": "https://courierworld.fun/fish/15.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Uncommon"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Message in a Bottle"
+    }
+  ]
+}

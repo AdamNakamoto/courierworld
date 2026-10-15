@@ -1,0 +1,16 @@
+{
+  "name": "Sardine",
+  "description": "Small, silver and always in a crowd. Caught in the bay of Courier World and kept as a Courier Fish. This species never runs out.",
+  "image": "https://courierworld.fun/fish/1.svg",
+  "external_url": "https://courierworld.fun/",
+  "attributes": [
+    {
+      "trait_type": "Rarity",
+      "value": "Common"
+    },
+    {
+      "trait_type": "Species",
+      "value": "Sardine"
+    }
+  ]
+}

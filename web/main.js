@@ -27,6 +27,9 @@ import { createUsername } from "./username.js";
 import { createFollower } from "./companions.js";
 import { COMPANION_IDS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, bonusCap } from "./bonus-rules.js";
+import { createFishing } from "./fishing.js";
+import { fishOf } from "./fish-kinds.js";
+import { displayName } from "./names.js";
 
 const $ = (id) => document.getElementById(id);
 // Treasure hunt spots (fixed, see stamps.js): loaded first, so the Orb keeps clear of every one.
@@ -55,7 +58,7 @@ const NAMES = [
 ];
 const INTRO = [
   { name: "You", text: "Morning, Courier World! Time to have a look round." },
-  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave, drag to look around and scroll (or pinch) to zoom." },
+  { name: "Tip", text: "WASD or arrow keys to walk, Shift to run, Space to jump, E to talk or wave (or fish, at the bay), drag to look around and scroll (or pinch) to zoom." },
 ];
 
 // ---------------------------------------------------------------- characters
@@ -324,6 +327,7 @@ const PICTURE_HOSTS = [...new Set([`${MP_HTTP}/pad/image/`, "https://courier-wor
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 let nopeSyncAt = 0, nopeSync = null; // when a refused find may next be brought back, and the look that will (net's onNope)
+let fishing = null, fishState = null; // fishing in the bay (made once the courier is), and the room's word on your catch
 const net = createNet(W, {
   url: MP_URL, makeRider: rider, dispose,
   // Where each world's couriers are drawn (the moon's and Mars's only once they're built).
@@ -365,6 +369,16 @@ const net = createNet(W, {
   },
   // The companion bonus: how today's minutes with your companion are going (null on a new connection).
   onBonus: (status) => setBonus(status),
+  // Fishing: your catch still to mint (null on a new connection); someone landing something rare.
+  onFish(state) {
+    fishState = state;
+    fishing?.setState(state);
+    office?.fishChanged?.();
+  },
+  onFishNews(addr, id) {
+    const k = fishOf(id);
+    if (k) toast(`🎣 ${addr ? displayName(addr) : "Someone"} just caught ${k.tier === "Legendary" ? "the legendary" : "an epic"} ${k.name}!`);
+  },
   onCount(n) {
     $("online").hidden = n === null;
     if (n !== null) $("onlineN").textContent = n.toLocaleString();
@@ -774,8 +788,14 @@ addEventListener("keydown", (e) => {
   keys.add(e.key.toLowerCase());
   if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault();
 });
-addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
-addEventListener("blur", () => keys.clear());
+addEventListener("keyup", (e) => {
+  keys.delete(e.key.toLowerCase());
+  if (e.key.toLowerCase() === "e") fishing?.release();
+});
+addEventListener("blur", () => {
+  keys.clear();
+  fishing?.release(); // (a held reel lets go)
+});
 
 // The camera you steer: how high it looks down from (pitch, radians; below 0 it's low, looking up past the courier)
 // and how far back it is (metres). Wide, like photo mode's, but always behind and above the ground.
@@ -863,7 +883,7 @@ const joy = { x: 0, y: 0, id: null };
     pad.hidden = false;
     $("jumpBtn").hidden = false;
     $("talkBtn").hidden = false;
-    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk or wave · drag the world to look · 📷 for photos";
+    $("help").textContent = "Drag the stick to walk · Jump to hop · Hi to talk, wave or fish · drag the world to look · 📷 for photos";
   }
   $("jumpBtn").addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -873,6 +893,7 @@ const joy = { x: 0, y: 0, id: null };
     e.preventDefault();
     if (mode === "play" && !dialog) interact();
   });
+  for (const up of ["pointerup", "pointercancel", "pointerleave"]) $("talkBtn").addEventListener(up, () => fishing?.release());
 }
 
 // ---------------------------------------------------------------- movement
@@ -882,6 +903,26 @@ const SPEED = 3.1, RUN = 5.8, BODY_R = 0.3;
 // really are. The view (world.quaternion) eases after it, so the camera follows with a little give
 // instead of being bolted to the courier.
 const playerQ = new THREE.Quaternion();
+fishing = createFishing({
+  W, R, net, toast, sounds,
+  player: { get ch() { return player.ch; } },
+  me: () => localPos(), ahead: () => ahead(), state: () => netState(),
+  // (Only once the Courier Fish contract is deployed: until then E on the pier talks and waves as it always has.)
+  canAct: () => !!chainRef?.fishMint && mode === "play" && !dialog && !away && !photo && !flying,
+  signedIn: () => signedIn(),
+  async signIn() {
+    const chain = chainRef;
+    if (!chain?.drops) throw new Error("Fishing needs the game's contracts: try again in a moment.");
+    if (!chain.account) throw new Error("Log in with your wallet to fish: open the Post Office panel (P).");
+    if (!signedIn()) {
+      await net.huntSignIn(chain.account, (message) => chain.drops.sign(message));
+      await waitFor(signedIn, 10_000, "The room didn't answer. Try again.");
+    }
+  },
+  needs: () => (office?.snap?.office && !office.snap.office.open ? "You need an open post office to keep the fish you catch: open one in the Post Office panel (P)." : null),
+  onCaught: () => office?.fishChanged?.(),
+});
+if (fishState) fishing.setState(fishState);
 const vel = new THREE.Vector2(); // x: to the camera's right, y: away from it; units per second
 let facing = 0; // where the courier faces, relative to the camera; 0 = away from it
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -964,7 +1005,9 @@ function interact() {
     return;
   }
   if (W.rocket && arc(me, W.rocket.d) < W.rocket.reach) return showTripCard();
+  // At the bay's water, facing it: fish (mid-cast, E always goes to the line; idle, someone right there comes first).
   const who = life.nearest(me, 2.4, bodyY);
+  if (fishing?.busy() ? fishing.press() : !who && fishing?.press()) return;
   if (!who && W.orb && arc(me, W.orb.d) < W.orb.reach) {
     showAd();
     return;
@@ -1440,6 +1483,7 @@ function frame() {
     const mag = Math.min(1, Math.hypot(ix, iy));
     const run = keys.has("shift") || mag > 0.95 && joy.id !== null;
     const steering = mag > 0.05;
+    if (steering && fishing?.busy()) fishing.cancel(); // (walking off reels the line in)
     const want = new THREE.Vector2();
     if (steering) {
       facingCamera = false;
@@ -1532,6 +1576,7 @@ function frame() {
       placeTitle(p, dt);
       padHint(p);
       rocketHint(p);
+      fishing?.tick(dt, t);
     }
 
     let f;
@@ -1924,6 +1969,7 @@ const chainReady = connectChain()
         vouchers: () => net.vouchers(),
         bonus: () => bonus,
       } : null,
+      fish: { state: () => fishState, vouchers: () => net.fishVouchers() },
       onSnapshot(s) {
         autoAvatar(s);
         skinButtons(s);

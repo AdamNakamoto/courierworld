@@ -69,6 +69,15 @@ const ERROR_TEXT = {
   SupplyCanOnlyShrink: "A companion's supply can only shrink, and never below how many have been bought.",
   RoyaltyTooHigh: "That royalty is above the contract's 10% limit.",
 };
+/// What the fish contract means by the error names it shares with the others.
+const FISH_ERROR_TEXT = {
+  NoOffice: "Open a post office first: only post office owners can keep fish.",
+  NothingToMint: "Nothing new to mint: catch some fish first.",
+  IsPaused: "Minting fish is paused right now. Each day's catch can be minted that day and the 6 after (UTC); a pause doesn't stretch that.",
+  TooLate: "Those fish are too old to mint: mint each day's catch that day or within the 6 after (UTC).",
+  Expired: "The server's note expired. Try again.",
+  BadSignature: "The server's note didn't check out. Try again.",
+};
 /// What the planets contract means by the error names it shares with the others.
 const PLANET_ERROR_TEXT = {
   SaleClosed: "The planet sale isn't open right now.",
@@ -157,7 +166,7 @@ export async function connectChain() {
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
     ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []),
-    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...(dep.abis.planets ?? []), ...V4_ABI,
+    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...(dep.abis.planets ?? []), ...(dep.abis.fish ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -172,6 +181,8 @@ export async function connectChain() {
     companions: dep.contracts.companions ? { address: dep.contracts.companions, abi: withErrors(dep.abis.companions) } : null,
     // Courier Planets: likewise, none until it's deployed.
     planets: dep.contracts.planets ? { address: dep.contracts.planets, abi: withErrors(dep.abis.planets) } : null,
+    // Courier Fish: likewise.
+    fish: dep.contracts.fish ? { address: dep.contracts.fish, abi: withErrors(dep.abis.fish) } : null,
   };
   const read = (c, fn, args = []) => pub.readContract({ ...c, functionName: fn, args });
   // The $STAMP pool and its routers: on mainnet and on a fork (./dev.sh --fork), not on a bare local chain.
@@ -317,11 +328,39 @@ export async function connectChain() {
     return out;
   }
 
+  const FISH_EVERY_MS = 15_000;
+  let fishLast = null, fishGen = 0, fishFresh = 0; // (as for planets: the collection as last read, for that wallet)
+  /// Courier Fish: every species (its total and how many are out) and, for `who`, how many of each they hold. Read
+  /// afresh every FISH_EVERY_MS and straight after a mint.
+  async function fishOf(who) {
+    const last = fishLast;
+    if (last && last.who === who && Date.now() - last.at < FISH_EVERY_MS && Date.now() > fishFresh) return last.value;
+    try {
+      const gen = fishGen, at = Date.now();
+      const value = await readFish(who);
+      if (gen === fishGen) fishLast = { who, at, value };
+      return value;
+    } catch {
+      return last?.who === who ? last.value : null;
+    }
+  }
+  async function readFish(who) {
+    const [[ids, list], paused] = await Promise.all([read(C.fish, "allSpecies"), read(C.fish, "paused")]);
+    const species = list.map((k, i) => ({ id: Number(ids[i]), supply: Number(k.maxSupply), minted: Number(k.minted), daily: Number(k.dailyCap) }));
+    const out = { address: C.fish.address, species, owned: {}, paused };
+    if (who && ids.length) {
+      const held = await read(C.fish, "balanceOfBatch", [ids.map(() => who), ids]);
+      species.forEach((k, i) => (out.owned[k.id] = Number(held[i])));
+    }
+    return out;
+  }
+
   const skinDesigns = new Map(); // skin id -> design, after the reveal
   async function snapshot() {
     // Started first so that, when it's time to read the shop again, those reads overlap the ones below.
     const companions = C.companions ? companionsOf(account) : null;
     const planets = C.planets ? planetsOf(account) : null;
+    const fish = C.fish ? fishOf(account) : null;
     const [block, minted, price, saleOpen, seed] = await Promise.all([
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
     ]);
@@ -351,6 +390,7 @@ export async function connectChain() {
     }
     s.companions = companions ? await companions : null;
     s.planets = planets ? await planets : null;
+    s.fish = fish ? await fish : null;
     if (game) {
       const [totalPower, rewardPerBlock, officePrice, cooldown, levelBase] = await Promise.all([
         read(C.office, "totalPower"), read(C.office, "rewardPerBlock"), read(C.office, "officePrice"),
@@ -894,6 +934,28 @@ export async function connectChain() {
         planetsChanged(); // (bought or not, the next snapshots read the sale afresh)
       }
     },
+    /// Courier Fish: what the room's vouchers would mint now (in all), and minting them (one transaction for every
+    /// day's catch). `vouchers`: [{ day, ids, counts, deadline, signature }] from the room.
+    fishMint: C.fish ? {
+      async mintable(vouchers) {
+        // (Together, so they go out as one multicall.)
+        const all = await Promise.all(vouchers.map((v) => read(C.fish, "mintable", [account, v.day, v.ids.map(BigInt), v.counts.map(BigInt)])));
+        return all.flat().reduce((t, x) => t + Number(x), 0);
+      },
+      async mintAll(vouchers) {
+        const list = vouchers.map((v) => ({ day: v.day, ids: v.ids.map(BigInt), counts: v.counts.map(BigInt), deadline: BigInt(v.deadline), signature: v.signature }));
+        try {
+          return await send(C.fish, "mintMany", [list]);
+        } catch (e) {
+          const text = FISH_ERROR_TEXT[revertName(e)];
+          throw text ? new Error(text) : e;
+        } finally {
+          fishLast = null;
+          fishGen++;
+          fishFresh = Date.now() + 6000;
+        }
+      },
+    } : null,
     /// The planets contract's owner (the treasury): open or close the sale, and change the price.
     planetsAdmin: C.planets ? {
       async setSaleOpen(open) {

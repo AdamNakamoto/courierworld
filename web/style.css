@@ -564,3 +564,32 @@ body.photo-on #hud > :not(#joy), body.photo-on .office, body.photo-on .orb-card 
 .office .padlink { padding: 4px 14px 8px; }
 .office .padlink .pbtn { background: #e7dcff; }
 .office .padlink .note { margin: 2px 0 0; font-size: 15px; }
+
+/* Fishing (web/fishing.js): what's happening, the line's tension and the reel, above the emote bar; the catch card */
+.fish-ui { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%) rotate(-.3deg); width: min(420px, calc(100vw - 32px));
+  padding: 8px 12px; pointer-events: none !important; text-align: center; }
+.fish-say { font-size: 18px; line-height: 1.25; }
+.fish-say b { font: 400 15px/1 Bungee, Impact, sans-serif; letter-spacing: .03em; }
+.fish-bars { margin-top: 6px; }
+.fish-tension, .fish-reel { position: relative; height: 18px; margin: 4px 0; border: 2px solid var(--ink); border-radius: 3px; background: #ece4cc; overflow: hidden; }
+.fish-tension .zone { position: absolute; top: 0; bottom: 0; background: #9fd98f; }
+.fish-bars.ok .fish-tension .zone { background: #5ec24a; }
+.fish-tension .mark { position: absolute; top: -2px; bottom: -2px; width: 6px; margin-left: -3px; background: var(--ink); border-radius: 2px; }
+.fish-reel { height: 12px; }
+.fish-reel i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--yellow); }
+.fish-card { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(.4deg); z-index: 12; width: min(320px, calc(100vw - 32px));
+  padding: 14px 16px 12px; text-align: center; }
+.fish-card[hidden] { display: none; }
+.fish-card .fish-pic svg { display: block; width: min(200px, 70%); height: auto; margin: 0 auto; border: 2.5px solid var(--ink); border-radius: 6px; }
+.fish-card h3 { margin: 10px 0 2px; font: 400 20px/1.15 Bungee, Impact, sans-serif; }
+.fish-card .fish-tier { margin: 0 0 6px; font: 400 12px/1 Bungee, Impact, sans-serif; letter-spacing: .05em; }
+@media (max-width: 640px) { .fish-ui { bottom: 150px; } }
+
+.fish-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0; }
+.fish-tile { position: relative; display: flex; flex-direction: column; align-items: center; padding: 4px; border: 2px solid #d8d2c2; background: #fff; text-align: center; }
+.fish-tile img { width: 100%; aspect-ratio: 1; display: block; border-radius: 3px; }
+.fish-tile span { font-size: 13px; line-height: 1.05; margin-top: 3px; }
+.fish-tile i { font: 400 9px/1.2 Bungee, Impact, sans-serif; letter-spacing: .02em; font-style: normal; }
+.fish-tile b { position: absolute; top: 6px; right: 6px; padding: 1px 5px; background: var(--yellow); border: 2px solid var(--ink); border-radius: 3px; font: 400 11px/1.1 Bungee, Impact, sans-serif; }
+.fish-tile.none img { filter: grayscale(1) brightness(.55); opacity: .55; }
+.fish-tile.none span { color: var(--muted); }
