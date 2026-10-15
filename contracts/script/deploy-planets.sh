@@ -40,6 +40,12 @@ if [ "$BROADCAST" = 1 ]; then
     git checkout -- "$F" 2>/dev/null || rm -f "$F"
     exit 1
   fi
+  # (A script's block.number on Robinhood Chain is the parent chain's: record the deploy's own block, where log
+  #  scans for the planets start.)
+  TX=$(jq -r '.transactions[0].hash' broadcast/DeployPlanets.s.sol/4663/run-latest.json)
+  if B=$(cast receipt "$TX" blockNumber --rpc-url "${RPC_URL:-robinhood}"); then
+    jq --argjson b "$B" '.block = $b' "$F" > "$F.tmp" && mv "$F.tmp" "$F"
+  fi
   ./script/export-web.sh
   exit "$rc"
 else

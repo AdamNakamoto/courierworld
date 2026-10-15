@@ -310,6 +310,29 @@ npx wrangler deploy
 The deploy writes `deployments/robinhood-companions.json` and runs `export-web.sh`, which adds the companions to
 `web/deployments/robinhood.json`; commit it and the shop opens.
 
+## Courier Planets
+
+`CourierPlanets.sol` (live since 2026-10-15 at `0xE7F9fc69Cb0471EDDcb62e8FC3e4D0256306e7e3`, owned by the treasury,
+source verified on Sourcify; the sale is closed until the game's planets are up) is 333 planets (ERC-721), each a
+world of its own in the game. A planet costs 10,000 $STAMP, all of it straight to the treasury (`buy` or
+`buyWithPermit`, 1 to 3 at a time, 3 a wallet; buyers name the most they'll pay). Each planet's owner sets its
+ticket (`setTicket`: free, up to 1,000 $STAMP, or closed); a visitor pays it with `visit`, 80% to the planet's owner
+and 20% to the treasury (the owner can set the treasury's share, at most 50%), and the game lets them in for an hour.
+A planet that changes hands starts closed. Resales pay a fixed 5% royalty to the treasury, enforced like the skins'
+(ERC721-C with OpenSea's registry: holders move their own freely, marketplaces only in sales that pay it). Ownership
+is two-step and can't be renounced; the owner can't touch anyone's planets or $STAMP, set a ticket, or change the
+royalty rate. Deployed without an independent audit (our own review and tests: AUDIT.md section 14).
+
+Still to come in the game: the planet worlds (drawn from each planet's number), the portal, visitor passes, the
+ticket and planet list in the Post Office panel, building on your planet, and a daily treasure there (a TokenDrops
+drop funded by the treasury). The metadata (`web/planets/<id>.json` and `collection.json`) comes with them.
+
+```bash
+cd contracts
+./script/deploy-planets.sh                                                # dry run on a fork
+echo DEPLOY | RPC_URL=… ./script/deploy-planets.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet
+```
+
 ## The launchpad
 
 Any player with a post office can launch their own token, inside the game (`CourierPad.sol`, live since

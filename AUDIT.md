@@ -511,7 +511,9 @@ token's `held` is exactly its drops' tokens, the contract holds it, and no day e
 
 ## 14. New: Courier Planets (CourierPlanets)
 
-`contracts/src/CourierPlanets.sol`, not deployed yet. 333 planets (ERC-721, "Courier Planets", PLANET), each a
+`contracts/src/CourierPlanets.sol`, live since 2026-10-15 at `0xE7F9fc69Cb0471EDDcb62e8FC3e4D0256306e7e3` (deployed
+from `0ee4d24`; source verified on Sourcify; owner and treasury `0x7221…D566`; the sale stays closed until the
+game's planets are up). Deployed without an independent audit, the owner's choice: our own review is below. 333 planets (ERC-721, "Courier Planets", PLANET), each a
 world of its own in the game: its owner explores it, builds on it and finds a daily treasure there, and can open it
 to other players for a ticket in $STAMP. The game side (the planet worlds, building, the treasure and the
 Worker's visitor passes) comes later and is out of scope; the treasure will be a TokenDrops drop funded by the
