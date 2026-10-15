@@ -237,6 +237,9 @@ export async function connectChain() {
   let onAccount = null;
   const COMPANIONS_EVERY_MS = 15_000;
   let companionsLast = null; // { who, at, value }: the shop as last read, for that wallet
+  // After a buy: reads already under way can't refill the cache (companionsGen), and for a few seconds every
+  // snapshot reads afresh (companionsFresh), in case the RPC node it reaches hasn't seen the new block yet.
+  let companionsGen = 0, companionsFresh = 0;
 
   /// Courier Companions: every kind (its price, supply, wallet limit and whether it's on sale) and, for `who`, how
   /// many of each they hold and have bought (wallet limits count what's been bought, not what's held). Read afresh
@@ -244,10 +247,11 @@ export async function connectChain() {
   /// for the same wallet stands (none if there isn't one), so the rest of the snapshot never waits on the shop.
   async function companionsOf(who) {
     const last = companionsLast;
-    if (last && last.who === who && Date.now() - last.at < COMPANIONS_EVERY_MS) return last.value;
+    if (last && last.who === who && Date.now() - last.at < COMPANIONS_EVERY_MS && Date.now() > companionsFresh) return last.value;
     try {
+      const gen = companionsGen, at = Date.now();
       const value = await readCompanions(who);
-      companionsLast = { who, at: Date.now(), value };
+      if (gen === companionsGen) companionsLast = { who, at, value };
       return value;
     } catch {
       return last?.who === who ? last.value : null;
@@ -274,16 +278,23 @@ export async function connectChain() {
 
   const PLANETS_EVERY_MS = 15_000;
   let planetsLast = null; // { who, at, value }: the planet sale as last read, for that wallet
+  let planetsGen = 0, planetsFresh = 0; // (as for companions, after a buy or the owner's change)
+  const planetsChanged = () => {
+    planetsLast = null;
+    planetsGen++;
+    planetsFresh = Date.now() + 6000;
+  };
 
   /// Courier Planets: the sale (open, price, how many bought of how many, the wallet limit) and, for `who`, the planets
   /// they hold and how many they've bought (the limit counts buys). Read afresh every PLANETS_EVERY_MS (and straight
   /// after a buy or an owner's change); if a read fails, the last answer for the same wallet stands.
   async function planetsOf(who) {
     const last = planetsLast;
-    if (last && last.who === who && Date.now() - last.at < PLANETS_EVERY_MS) return last.value;
+    if (last && last.who === who && Date.now() - last.at < PLANETS_EVERY_MS && Date.now() > planetsFresh) return last.value;
     try {
+      const gen = planetsGen, at = Date.now();
       const value = await readPlanets(who);
-      planetsLast = { who, at: Date.now(), value };
+      if (gen === planetsGen) planetsLast = { who, at, value };
       return value;
     } catch {
       return last?.who === who ? last.value : null;
@@ -850,7 +861,10 @@ export async function connectChain() {
         const text = COMPANION_ERROR_TEXT[revertName(e)];
         throw text ? new Error(text) : e;
       } finally {
-        companionsLast = null; // (bought or not, the next snapshot reads the shop afresh)
+        // (bought or not, the next snapshots read the shop afresh)
+        companionsLast = null;
+        companionsGen++;
+        companionsFresh = Date.now() + 6000;
       }
     },
     /// Buy `qty` planets (1 to 3) with $STAMP, all of it to the treasury: one signature (a permit) and one transaction,
@@ -877,7 +891,7 @@ export async function connectChain() {
         const text = PLANET_ERROR_TEXT[revertName(e)];
         throw text ? new Error(text) : e;
       } finally {
-        planetsLast = null; // (bought or not, the next snapshot reads the sale afresh)
+        planetsChanged(); // (bought or not, the next snapshots read the sale afresh)
       }
     },
     /// The planets contract's owner (the treasury): open or close the sale, and change the price.
@@ -886,14 +900,14 @@ export async function connectChain() {
         try {
           await send(C.planets, "setSaleOpen", [open]);
         } finally {
-          planetsLast = null;
+          planetsChanged();
         }
       },
       async setPrice(wei) {
         try {
           await send(C.planets, "setPrice", [wei]);
         } finally {
-          planetsLast = null;
+          planetsChanged();
         }
       },
     } : null,

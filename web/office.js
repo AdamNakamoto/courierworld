@@ -641,11 +641,11 @@ export function createOffice(chain, {
             <button class="pbtn primary" data-act="buyPlanets" ${!s.account || busy || poor ? "disabled" : ""}>Buy ${planetQty} · ${fmt(cost, 0)} $STAMP</button></div>`;
           if (!s.account) html += `<p class="note">Log in to buy a planet.</p>`;
           else if (poor) html += `<p class="note">You have ${fmt(s.stamp, 0)} $STAMP: not quite enough for ${planetQty > 1 ? `${planetQty} planets` : "a planet"}.${chain.trade ? " Get more in the trade box above." : ""}</p>`;
-        } else html += `<p class="note">You've bought ${p.bought} planets, the most one wallet can.</p>`;
+        } else html += `<p class="note">You've bought ${p.bought} planet${p.bought === 1 ? "" : "s"}${p.bought > p.perWallet ? `: the limit is now ${p.perWallet} a wallet` : ", the most one wallet can"}.</p>`;
       } else {
         html += `<p class="note">${left ? "The planet sale isn't open right now." : "All 333 planets have been bought. Find one on OpenSea."}</p>`;
       }
-      html += `<p class="note">Up to 3 at a time${p.perWallet ? ` and ${p.perWallet} a wallet (counting what you've bought)` : ""}, with one signature, never for more than the price you saw. Each planet's look comes from its number; every planet has the same rights in the game. Resales pay a 5% royalty to the game, enforced by the contract.</p>`;
+      html += `<p class="note">Up to 3 at a time${p.perWallet ? ` and ${p.perWallet} a wallet (counting what you've bought)` : ""}, with one signature, never for more than the price you saw. Each planet's look comes from its number and is public: planets sell in number order (the next numbers in line), and every planet has the same rights in the game. Resales pay a 5% royalty to the game, enforced by the contract.</p>`;
       if (p.mine.length) {
         html += `<h4>Your planets <span class="muted">${p.mine.length}</span></h4><div class="couriers">`;
         for (const id of p.mine) {

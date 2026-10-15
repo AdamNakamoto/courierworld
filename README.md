@@ -318,7 +318,8 @@ worlds are in the game) is 333 planets (ERC-721), each a
 world of its own in the game. A planet costs 10,000 $STAMP, all of it straight to the treasury (`buy` or
 `buyWithPermit`, 1 to 3 at a time, 3 a wallet; buyers name the most they'll pay). Each planet's owner sets its
 ticket (`setTicket`: free, up to 1,000 $STAMP, or closed); a visitor pays it with `visit`, 80% to the planet's owner
-and 20% to the treasury (the owner can set the treasury's share, at most 50%), and the game lets them in for an hour.
+and 20% to the treasury (the owner can set the treasury's share, at most 50%), and the game will let them in for an
+hour (once visitor passes land).
 A planet that changes hands starts closed. Resales pay a fixed 5% royalty to the treasury, enforced like the skins'
 (ERC721-C with OpenSea's registry: holders move their own freely, marketplaces only in sales that pay it). Ownership
 is two-step and can't be renounced; the owner can't touch anyone's planets or $STAMP, set a ticket, or change the
