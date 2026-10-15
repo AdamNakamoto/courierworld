@@ -15,6 +15,22 @@ forge build >/dev/null
 mkdir -p "$(dirname "$OUT")"
 
 abi() { jq '.abi' "out/$1.sol/$1.json"; }
+# forge writes a deployment file even when sending fails, so a contract only counts once the chain has its code.
+# Checked before anything is written: if the RPC can't say, nothing is written (rather than guess either way).
+COMPANIONS=deployments/robinhood-companions.json
+PLANETS=deployments/robinhood-planets.json
+onchain() {
+  local code
+  code=$(cast code "$(jq -r ".$2" "$1")" --rpc-url "${RPC_URL:-robinhood}") \
+    || { echo "Can't reach the RPC to check $1: nothing written. Run this again." >&2; exit 1; }
+  [ "$code" != "0x" ] || { echo "skipped $1: no contract at $(jq -r ".$2" "$1")" >&2; return 1; }
+}
+COMPANIONS_LIVE=0
+PLANETS_LIVE=0
+if [ -f "$GAME" ]; then
+  if [ -f "$COMPANIONS" ] && onchain "$COMPANIONS" companions; then COMPANIONS_LIVE=1; fi
+  if [ -f "$PLANETS" ] && onchain "$PLANETS" planets; then PLANETS_LIVE=1; fi
+fi
 CHAIN='{
   local: false,
   chainId: 4663,
@@ -77,14 +93,16 @@ if [ -f "$GAME" ]; then
        | .padBlock = $p[0].block | .abis.pad = $padAbi | .abis.padToken = $padTokenAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
   # Courier Companions, once deployed (script/deploy-companions.sh writes deployments/robinhood-companions.json).
-  COMPANIONS=deployments/robinhood-companions.json
-  # (forge writes that file even when sending fails: skip it if the chain says there's no contract there.)
-  if [ -f "$COMPANIONS" ] && [ "$(cast code "$(jq -r .companions "$COMPANIONS")" --rpc-url "${RPC_URL:-robinhood}" 2>/dev/null)" = "0x" ]; then
-    echo "skipped the companions: no contract at $(jq -r .companions "$COMPANIONS")" >&2
-  elif [ -f "$COMPANIONS" ]; then
+  if [ "$COMPANIONS_LIVE" = 1 ]; then
     tmp=$(mktemp)
     jq --slurpfile c "$COMPANIONS" --argjson companionsAbi "$(abi CourierCompanions)" \
       '.contracts.companions = $c[0].companions | .companionsBlock = $c[0].block | .abis.companions = $companionsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
+  # Courier Planets, once deployed (script/deploy-planets.sh writes deployments/robinhood-planets.json).
+  if [ "$PLANETS_LIVE" = 1 ]; then
+    tmp=$(mktemp)
+    jq --slurpfile p "$PLANETS" --argjson planetsAbi "$(abi CourierPlanets)" \
+      '.contracts.planets = $p[0].planets | .planetsBlock = $p[0].block | .abis.planets = $planetsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else

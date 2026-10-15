@@ -508,3 +508,111 @@ midnight, which takes exactly three days' caps and nothing else), a fuzz that no
 `test/TokenDrops.invariant.t.sol`: random creates, top-ups, claims (today's and yesterday's, single and batched,
 several wallets), ends, paused withdrawals, stray transfers, sweeps and time across midnights, checking that each
 token's `held` is exactly its drops' tokens, the contract holds it, and no day ever pays more than its cap.
+
+## 14. New: Courier Planets (CourierPlanets)
+
+`contracts/src/CourierPlanets.sol`, not deployed yet. 333 planets (ERC-721, "Courier Planets", PLANET), each a
+world of its own in the game: its owner explores it, builds on it and finds a daily treasure there, and can open it
+to other players for a ticket in $STAMP. The game side (the planet worlds, building, the treasure and the
+Worker's visitor passes) comes later and is out of scope; the treasure will be a TokenDrops drop funded by the
+treasury, not this contract.
+
+- **Buying:** `buy(quantity, maxCost)` / `buyWithPermit(..., deadline, v, r, s)`, `nonReentrant`: needs the sale
+  open (closed at deploy), 1 to 3 per buy (`MAX_PER_BUY`), numbers 1 to 333 in order (`SoldOut` past 333), and
+  `bought[buyer] + quantity ≤ perWallet` (3 at launch, 0 = no limit; it counts what a wallet bought, not what it
+  holds). It reverts `PriceChanged(price)` if `price × quantity` is more than `maxCost`, and on the permit path
+  `PermitFailed` if the allowance is still short after the permit (a permit someone else already used still
+  works). Then it sends `price × quantity` $STAMP straight from the buyer to the treasury (10,000 a planet at
+  launch, never 0) and `_safeMint`s each planet to the buyer, after all state is written. The contract never
+  holds $STAMP.
+- **Tickets:** `setTicket(id, price, open)`, the planet's owner only (`NotPlanetOwner`; operators can't), at most
+  1,000 $STAMP (`MAX_TICKET`), 0 for free. `visit(id, maxPrice)` / `visitWithPermit(...)`, `nonReentrant`: reverts
+  `Closed` unless open, `PriceChanged(price)` if the ticket is now more than `maxPrice` (an owner can't raise it on
+  a visitor in flight), `PermitFailed` as above. It pays `price × treasuryBps / 10,000` (rounded down; 20% at
+  launch, at most 50%, `MAX_TREASURY_BPS`) to the treasury and the rest to the planet's owner, both straight from
+  the visitor, and emits `Visited(id, visitor, planetOwner, price, toOwner, toTreasury)` (all three addresses
+  indexed). A free planet's visit moves nothing and still emits it.
+- **A planet that changes hands starts closed:** `_update` deletes its ticket on every transfer between wallets
+  (`TicketSet(id, 0, false)`), so a new owner never inherits a price set by someone else. No planet can be sent to
+  the contract itself (`BadReceiver`: `transferFrom` doesn't ask the receiver, and nothing could move it out).
+- **Royalty, enforced:** ERC-2981 at a fixed 5% (`ROYALTY_BPS`) to the treasury, moving with `setTreasury`; the
+  rate can't change. ERC721-C exactly as Courier Skins: `_update` calls the validator's
+  `validateTransfer(msg.sender, from, to, tokenId)` (a view, selector `0xcaee23ea`) on every transfer between two
+  non-zero addresses; mints skip it and there is no burn. The validator at launch is OpenSea's
+  `StrictAuthorizedTransferSecurityRegistry` (`0xA000027A9B2802E1ddf7000061001e5c005A0000`); `setTransferValidator`
+  only takes a contract. `supportsInterface` reports ICreatorToken (`0xad0d7f6c`), ERC-721, ERC-2981 and ERC-4906.
+- **Metadata:** `tokenURI(id) = base + id + ".json"` (existing planets only), `contractURI() = base +
+  "collection.json"` (ERC-7572). `setBase` emits `ContractURIUpdated` and `BatchMetadataUpdate(1, totalMinted)`. A
+  planet's look comes from its number (the game and the metadata draw it), so every planet has the same rights.
+- **Reads for the game:** `planetsOf(owner)` and `allPlanets()` (every planet's owner and ticket) loop over at most
+  333 planets.
+- **Owner** (Ownable2Step; `renounceOwnership` always reverts `CannotRenounce`): `setSaleOpen`, `setPrice` (never
+  0), `setPerWallet`, `setTreasury` (never 0 or the contract; the royalty follows), `setTreasuryShare` (at most
+  50%), `setBase`, `setTransferValidator`, `rescue` (ERC-20s sent by mistake), and, as the collection's owner, its
+  rules at OpenSea's registry. The owner can't touch anyone's planets or $STAMP, set a ticket, or change the
+  royalty rate.
+
+### Scope
+
+| File | Role |
+| --- | --- |
+| `contracts/src/CourierPlanets.sol` | Planets: the sale, tickets and visits, enforced royalty, admin |
+| `contracts/script/DeployPlanets.s.sol`, `contracts/script/deploy-planets.sh` | Deploy settings and the deploy (sale closed, owner = the signing wallet, the treasury) |
+
+Out of scope: `contracts/script/DevTransferValidator.sol` (local chains only), `contracts/script/export-web.sh`,
+`web/`, `multiplayer/`.
+
+```bash
+cd contracts && git submodule update --init --recursive && forge test --match-contract "CourierPlanets"
+forge test --match-contract CourierPlanetsForkTest --fork-url https://robinhood.drpc.org   # OpenSea's real registry
+```
+
+### Guarantees to check
+
+1. **Supply and payment:** at most 333 planets, numbered 1 to 333, only through a buy at the current price,
+   never more than the buyer's `maxCost`; all of it reaches the treasury in the same call; the contract never
+   holds $STAMP; the wallet limit holds across buys; a reentrant buy from `onERC721Received` is refused.
+2. **Tickets:** only a planet's current owner sets its ticket; a ticket never exceeds 1,000 $STAMP; a visit pays
+   exactly the ticket (never more than `maxPrice`), split exactly between the planet's owner and the treasury,
+   with the treasury's part never above half; a closed planet can't be visited; no planet keeps a ticket across a
+   change of hands, by any transfer path.
+3. **Royalty can't be skipped by an operator:** no path moves a planet between two non-zero addresses without
+   calling the validator; the rate stays 5%; a holder can always move its own planet with the launch registry.
+4. **The owner's reach:** nothing the owner can call moves a planet, takes or holds anyone's $STAMP, or sets a
+   ticket; ownership can only be handed over (two steps), never renounced.
+
+### Known and accepted
+
+- **The validator is trusted**, as for Skins and Companions: the owner (or OpenSea, which controls the registry)
+  could stop enforcing the royalty, which only costs the treasury, or hold every transfer up. A validator can only
+  refuse a transfer, never make one.
+- A holder (a wallet or a contract) moving its own planet pays no royalty, so a private deal or a venue that takes
+  planets into its own custody can skip it. Closing that would stop holders moving their own planets; OpenSea's
+  default policy (level 3, OTC allowed) is kept.
+- The owner sets the price and can buy like anyone; when the owner is the treasury (as deployed) its own buys pay
+  itself. Wallet limits are per address, not per person.
+- Visiting your own planet pays only the treasury's share (the rest comes back to you). A free planet's `Visited`
+  costs only gas; the game won't need one to let visitors into a free open planet.
+- A `Visited` is proof of payment only. The game (not written yet) will let a visitor in for an hour per `Visited`
+  log (tx hash + log index, single use, shared with the other ticket checks), only while the planet still belongs
+  to the `planetOwner` that was paid.
+- `allPlanets` and `planetsOf` loop over every planet; they are meant for off-chain reads.
+
+### Our own review (before the audit)
+
+Four reviewers (money, access, royalty, integration), each finding checked by a separate skeptic who tried to
+refute it, with proofs on a Robinhood Chain fork. No critical, high or medium findings. Fixed: a planet sent with
+`transferFrom` to the contract was stuck for good (`BadReceiver`); the royalty rate could be raised to 10% (now
+fixed at 5%, like Skins); the NatSpec overstated the enforcement (it now states the holder and custody case and
+the owner's registry power); a failed deploy or an RPC error could export a stale address (`deploy-planets.sh`
+and `export-web.sh` now check the chain first and write nothing if it can't answer); the fork tests passed
+without a fork (they now skip); test gaps (a new treasury's ticket share, `planetsOf` after transfers, the reset's
+event, the deploy script on the fork).
+
+Tests: `test/CourierPlanets.t.sol`, 31 tests (buying, permits, limits, the sell-out, reentrancy, tickets, visits
+and their split, a fuzzed split, resets, enforcement with a strict validator, owner powers, metadata, the deploy
+script) plus 4 against OpenSea's live registry on a fork; `test/CourierPlanets.invariant.t.sol`, two suites (from
+an empty sale, and from 325 sold) of random buys, permits, transfers, marketplace moves without the fee check,
+tickets set by owners and strangers, visits and owner changes, every call's outcome predicted, checking supply,
+that every $STAMP went to the treasury or a planet's owner exactly, that tickets always belong to the current
+owner, and that `planetsOf` lists only a wallet's own planets.
