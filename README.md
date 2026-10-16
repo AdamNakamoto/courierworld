@@ -124,7 +124,8 @@ npx wrangler deploy --var DROPS_ADDRESS:0x…
 ```
 
 **Partner drops.** Tokens that aren't the Launchpad's (a partner project's, such as $MINE) drop from a second
-TokenDrops, the same contract, which asks a `DropsTokenList` (`contracts/src/DropsTokenList.sol`) instead of the
+TokenDrops, the same contract (live since 2026-10-16 at `0x35E75cbE2EACb407D2dEB068AF0665E7858BE75F`, its list at
+`0x11e8AbeD2a6B5933a7aB13C88Db5D851f9ed7FA1`, both source verified on Sourcify; owner the treasury), which asks a `DropsTokenList` (`contracts/src/DropsTokenList.sol`) instead of the
 Launchpad whether it can drop a token: the tokens the treasury approved, plus the Launchpad's. The room signs for
 both with the same `DROPS_KEY` (`DROPS2_ADDRESS` in `wrangler.toml`), each voucher with its own contract's domain.
 So that neither contract's drops can ever move the other's coins, each has its own block of the day's shuffle

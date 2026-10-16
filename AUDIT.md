@@ -693,6 +693,10 @@ export missed the fish contract, the invariant harness couldn't tell success fro
 
 ## 16. New: partner drops (a second TokenDrops, DropsTokenList)
 
+Live since 2026-10-16 (deployed from `5e4efae`, L2 block 89850616; both source verified on Sourcify): TokenDrops
+`0x35E75cbE2EACb407D2dEB068AF0665E7858BE75F`, DropsTokenList `0x11e8AbeD2a6B5933a7aB13C88Db5D851f9ed7FA1`; owner the
+treasury, signer `0xac7e…55Ca` (the first contract's).
+
 A second `TokenDrops`, the same audited contract, unchanged, drops tokens that aren't the Launchpad's (first, $MINE,
 `0x1583948760169672C2AF7198026F1AEDE048657F`: a plain OpenZeppelin ERC-20 with no transfer fee or hook, ownership
 renounced). TokenDrops asks its `pad` whether a token can be dropped, only in `createDrop`; this one's `pad` is

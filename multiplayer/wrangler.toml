@@ -28,6 +28,9 @@ POST_OFFICE = "0x26D80804D0FA2F4598369E0062bFC9536d115D82"
 # The treasure hunt's payouts (TokenDrops): the room reads the running drops from it and signs vouchers for
 # finds with DROPS_KEY (a secret, set with `npx wrangler secret put DROPS_KEY`; its address is the contract's signer).
 DROPS_ADDRESS = "0xD0e785276840F7175DF12678991605042e89771C"
+# The partner drops (a second TokenDrops, for tokens that aren't the Launchpad's, such as $MINE): signed for with the
+# same DROPS_KEY; its drops are numbered from 1000 and have their own block of spots (web/drop-pick.js).
+DROPS2_ADDRESS = "0x35E75cbE2EACb407D2dEB068AF0665E7858BE75F"
 # Courier Companions (contracts/src/CourierCompanions.sol, an ERC-1155 bought with $STAMP): a player's companion is
 # shown to the others only if this contract says the wallet on their name tag owns one of that kind.
 COMPANIONS_ADDRESS = "0x4254cEac6B7C9F8911Ce908A910DD1874C5B49B7"
