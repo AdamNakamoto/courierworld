@@ -20,6 +20,7 @@ abi() { jq '.abi' "out/$1.sol/$1.json"; }
 COMPANIONS=deployments/robinhood-companions.json
 PLANETS=deployments/robinhood-planets.json
 FISH=deployments/robinhood-fish.json
+DROPS2=deployments/robinhood-drops2.json
 onchain() {
   local code
   code=$(cast code "$(jq -r ".$2" "$1")" --rpc-url "${RPC_URL:-robinhood}") \
@@ -29,10 +30,12 @@ onchain() {
 COMPANIONS_LIVE=0
 PLANETS_LIVE=0
 FISH_LIVE=0
+DROPS2_LIVE=0
 if [ -f "$GAME" ]; then
   if [ -f "$COMPANIONS" ] && onchain "$COMPANIONS" companions; then COMPANIONS_LIVE=1; fi
   if [ -f "$PLANETS" ] && onchain "$PLANETS" planets; then PLANETS_LIVE=1; fi
   if [ -f "$FISH" ] && onchain "$FISH" fish; then FISH_LIVE=1; fi
+  if [ -f "$DROPS2" ] && onchain "$DROPS2" drops2; then DROPS2_LIVE=1; fi
 fi
 CHAIN='{
   local: false,
@@ -72,6 +75,12 @@ if [ -f "$GAME" ]; then
   if [ -f "$DROPS" ]; then
     tmp=$(mktemp)
     jq --slurpfile d "$DROPS" --argjson dropsAbi "$(abi TokenDrops)" '.contracts.drops = $d[0].drops | .abis.drops = $dropsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+    # The partner drops (a second TokenDrops, the same ABI), once deployed (script/deploy-partner-drops.sh writes
+    # deployments/robinhood-drops2.json): the game numbers its drops from 1000 (web/drop-pick.js).
+    if [ "$DROPS2_LIVE" = 1 ]; then
+      tmp=$(mktemp)
+      jq --slurpfile d "$DROPS2" '.contracts.drops2 = $d[0].drops2 | .contracts.drops2List = $d[0].list | .drops2Tokens = $d[0].tokens' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+    fi
   fi
   # Courier Skins, once deployed (script/deploy-skins.sh writes deployments/robinhood-skins.json).
   SKINS=deployments/robinhood-skins.json

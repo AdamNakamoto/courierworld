@@ -690,3 +690,54 @@ leaked-key vouchers, batches, transfers, pauses, limit and cap changes and time,
 checking supplies, holdings and settings. Our own review (vouchers, limits, access, deploy; each finding checked by a
 skeptic) found no critical or high issues; fixed: a lowered limit reverted a day's vouchers (now clamped), the
 export missed the fish contract, the invariant harness couldn't tell success from an empty revert.
+
+## 16. New: partner drops (a second TokenDrops, DropsTokenList)
+
+A second `TokenDrops`, the same audited contract, unchanged, drops tokens that aren't the Launchpad's (first, $MINE,
+`0x1583948760169672C2AF7198026F1AEDE048657F`: a plain OpenZeppelin ERC-20 with no transfer fee or hook, ownership
+renounced). TokenDrops asks its `pad` whether a token can be dropped, only in `createDrop`; this one's `pad` is
+`contracts/src/DropsTokenList.sol`:
+
+- `launches(token)`: for a token the owner approved, a record with `createdAt` 1 (all TokenDrops reads); for any
+  other, the real Launchpad's record, forwarded (a view call). So the partner contract takes approved tokens,
+  Launchpad tokens and $STAMP, and nothing else.
+- `setApproved(token, ok)`, owner only (the treasury, `Ownable2Step`, never renounceable: the list would freeze).
+  Approving a token moves nothing: drops are still funded only by the drops' owner, from its own tokens. Removing a
+  token stops new drops of it; running ones carry on (TokenDrops never asks again).
+- Deployed by `script/DeployPartnerDrops.s.sol` (`deploy-partner-drops.sh`): the list (owner the treasury, $MINE
+  approved) and the TokenDrops (the real $STAMP and post office, owner the treasury, signer the first contract's,
+  `0xac7e…55Ca`). `CreatePartnerDrop` (`deploy-partner-drops.sh drop`) approves the token and starts the drop today,
+  signed by the owner, checking the amount covers every day's coins.
+
+Trust: unchanged from §13, per contract. Both contracts trust the same room key: if it leaked, each could lose at
+most its drops' daily caps, and the treasury pauses both (the panel has a pause for each). A voucher is bound to its
+contract by the EIP-712 domain, so one contract's voucher fails on the other (`BadSignature`), even with the same
+drop number.
+
+The game and the room: each contract has its own block of each day's shuffled spots (`web/drop-pick.js`): the
+first 24 stay empty, the next 60 are the first contract's, the rest the partner contract's; the partner contract's
+drop k is drop 1000 + k in the game and the room (its finds, its coins in the hunt state, `["found"]`). So a drop
+started on either contract mid-day, or one contract's read failing, can't move the other's coins; the first
+contract's layout is exactly as before while its drops use 60 spots or fewer (today's PEPE drops use 58). The room
+signs partner vouchers with the partner contract's domain and its own drop number and sends them apart
+(`["vouchers", first, partner]`, each with `contract` and `id`): games loaded before only read the first list, and
+the first contract quotes nothing for drop numbers it doesn't have (`claimable` returns 0 past `dropCount`).
+
+Tests: `test/PartnerDrops.t.sol`, 11 tests (the list's answers and owner rules, partner tokens only on the partner
+contract, removing a token, the $MINE drop's 30 full days paying exactly 495,000 and leaving 5,000 to withdraw, a
+voucher working only on its own contract, pausing one contract, no post office) and a fork test against the live
+chain (the real Launchpad, post office, $STAMP and $MINE, with the treasury's own $MINE: the drop receives the full
+amount and pays a hunter, and the live drops contract never pays drop 1000). End to end on a local chain and room:
+both contracts' coins laid out with no shared spot, grabs credited to the right drop, vouchers split by contract,
+a partner voucher refused by the first contract, and one click in the panel claiming from both.
+
+Our own review (two independent passes over the room, the game, the scripts and the contracts) found nothing that
+moves the PEPE coins or misroutes a voucher, and these smaller things, fixed: a partner contract that doesn't
+answer (or a page without it) no longer holds up claiming from the first (each contract's claim is tried on its
+own, and the panel says if only part went through); the room's drop cache is keyed by contract and number base
+and never reads the same contract twice; the drop script counts the coins already out on the partner contract
+(36 a day in all) and checks its inputs; the deploy script refuses to run again once the partner drops exist,
+takes the contracts' addresses from their receipts, and checks the voucher key and Launchpad against the first
+contract's on chain; admin controls show only for the contracts the wallet owns. Not fixed, by design: the first
+contract's coins are capped at 60 a day (it was 96), so until the PEPE drops end (day 20745) a new Launchpad drop
+can have 2 coins; drops should be started from a freshly loaded page (an old one doesn't know the cap).

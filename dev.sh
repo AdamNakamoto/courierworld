@@ -94,12 +94,19 @@ deploy_drops() { # the treasure hunt's payouts (golden stamps and token drops), 
   STAMP=$STAMP_ADDR OFFICE=$OFFICE_ADDR PAD=${PAD:-} DROPS_SIGNER=$signer DROPS_OWNER=${ACCOUNTS[1]} deploy script/DeployTokenDrops.s.sol --tc DeployTokenDrops
   DROPS=$(addr TokenDrops)
   DROPS_KEY=$key
+  # The partner drops (a second TokenDrops, signed for with the same key), with a stand-in partner token for the
+  # treasury (on a fork, PARTNER_TOKENS can name real ones the treasury holds).
+  STAMP=$STAMP_ADDR OFFICE=$OFFICE_ADDR PAD=${PAD:-} DROPS_SIGNER=$signer DROPS_OWNER=${ACCOUNTS[1]} \
+    deploy script/DeployPartnerDrops.s.sol --tc DeployPartnerDrops
+  DROPS2=$(echo "$OUT" | awk '$1 == "TokenDrops" && $2 == "(partner)" {print $3; exit}')
+  DROPS2_TOKENS=${PARTNER_TOKENS:-$(addr DevPartnerToken)}
   OUT="$prev"
 }
 # `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this local hunt, and checks skins on this chain.
 write_dev_vars() {
   {
     [ -n "${DROPS:-}" ] && printf 'DROPS_KEY=%s\nDROPS_ADDRESS=%s\nDROPS_CHAIN_ID=%s\n' "$DROPS_KEY" "$DROPS" "$(cast chain-id --rpc-url "$RPC")"
+    [ -n "${DROPS2:-}" ] && printf 'DROPS2_ADDRESS=%s\n' "$DROPS2"
     [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
     [ -n "${COMPANIONS:-}" ] && printf 'COMPANIONS_ADDRESS=%s\n' "$COMPANIONS"
     [ -n "${FISH:-}" ] && printf 'FISH_KEY=%s\nFISH_ADDRESS=%s\nFISH_CHAIN_ID=%s\n' "$FISH_KEY" "$FISH" "$(cast chain-id --rpc-url "$RPC")"
@@ -204,6 +211,7 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
       contracts=$(echo "$contracts" | jq --arg drops "$DROPS" '. + {drops: $drops}')
       abis=$(echo "$abis" | jq --argjson drops "$(abi TokenDrops)" '. + {drops: $drops}')
     fi
+    [ -n "${DROPS2:-}" ] && contracts=$(echo "$contracts" | jq --arg d "$DROPS2" '. + {drops2: $d}')
     if [ "$FORK" = 1 ]; then
       # Robinhood Chain addresses, as in contracts/script/export-web.sh.
       contracts=$(echo "$contracts" | jq --arg hook "$(addr StampHook)" --arg router "$(addr Router)" --arg ethRouter "$(addr EthRouter)" \
@@ -241,8 +249,9 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
   [ "$FORK" = 1 ] && contracts=$(echo "$contracts" | jq '. + {multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11"}')
   jq -n --arg rpc "$RPC" --argjson chainId "$CHAIN_ID" --arg name "$NAME" --arg secret "$SECRET" --arg stage "$stage" \
     --argjson wallet "$([ "$WALLET" = 1 ] && echo true || echo false)" --argjson contracts "$contracts" --argjson abis "$abis" \
+    --argjson drops2Tokens "$(jq -nc --arg t "${DROPS2_TOKENS:-}" '$t | split(",") | map(select(length > 0))')" \
     '{local: true, wallet: $wallet, stage: $stage, chainId: $chainId, chainName: $name, rpcUrl: $rpc, devSecret: $secret,
-      contracts: $contracts, abis: $abis}' \
+      contracts: $contracts, abis: $abis, drops2Tokens: $drops2Tokens}' \
     > web/chain.json
 }
 write_chain_json
@@ -252,6 +261,7 @@ echo "Skins      $SKINS"
 [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
 [ -n "${PLANETS:-}" ] && echo "Planets    $PLANETS"
 [ -n "${FISH:-}" ] && echo "Fish       $FISH"
+[ -n "${DROPS2:-}" ] && echo "Drops 2    $DROPS2 (partner token ${DROPS2_TOKENS:-})"
 echo "Chain      $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Game       http://localhost:$WEB_PORT"
 if [ "$WALLET" = 1 ]; then

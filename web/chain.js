@@ -8,6 +8,7 @@ import {
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
 import { TRIPS, TREASURY } from "./trips.js";
 import { BONUS_MAX_COINS, isBonusDrop } from "./bonus-rules.js";
+import { DROPS2_BASE, dropLane, dropNumber } from "./drop-pick.js";
 
 const ERROR_TEXT = {
   // Courier Skins for $STAMP (SkinsStampSale)
@@ -104,6 +105,8 @@ const ERC20_ABI = parseAbi([
   "function balanceOf(address) view returns (uint256)",
   "function allowance(address, address) view returns (uint256)",
   "function approve(address, uint256) returns (bool)",
+  "function symbol() view returns (string)",
+  "function name() view returns (string)",
 ]);
 const FEED_ABI = parseAbi(["function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)"]);
 const QUOTER_ABI = parseAbi([
@@ -175,6 +178,8 @@ export async function connectChain() {
     stamp: game ? { address: dep.contracts.stamp, abi: withErrors(dep.abis.stamp) } : null,
     office: game ? { address: dep.contracts.office, abi: withErrors(dep.abis.office) } : null,
     drops: dep.contracts.drops ? { address: dep.contracts.drops, abi: withErrors(dep.abis.drops) } : null,
+    // The second TokenDrops (partner tokens, such as $MINE): the same contract, with its own drops.
+    drops2: dep.contracts.drops && dep.contracts.drops2 ? { address: dep.contracts.drops2, abi: withErrors(dep.abis.drops) } : null,
     skins: dep.contracts.skins ? { address: dep.contracts.skins, abi: withErrors(dep.abis.skins) } : null,
     skinsStamp: dep.contracts.skinsStamp ? { address: dep.contracts.skinsStamp, abi: withErrors(dep.abis.skinsStamp) } : null,
     // Courier Companions: none until the contract is deployed, and every companion feature hides till then.
@@ -719,64 +724,109 @@ export async function connectChain() {
     }
     return dropToken.get(k);
   }
+  // Two TokenDrops contracts: the first's drops keep their own numbers, the second's are numbered from DROPS2_BASE
+  // (drop-pick.js), so every drop here has one number. `lanes[i]`: contract i, and for the second, the tokens it was
+  // set up for (the Launchpad's can go on either).
+  const lanes = [C.drops, C.drops2].filter(Boolean).map((c, lane) => ({ lane, c, base: lane ? DROPS2_BASE : 0, tokens: lane ? dep.drops2Tokens ?? [] : [] }));
+  const at = (id) => {
+    const l = lanes[dropLane(Number(id))];
+    if (!l) throw new Error(`No drop #${id}`);
+    return { c: l.c, n: BigInt(dropNumber(Number(id))) };
+  };
   const dropOf = async (id) => {
-    const d = await read(C.drops, "drop", [BigInt(id)]);
+    const { c, n } = at(id), lane = dropLane(Number(id));
+    const d = await read(c, "drop", [n]);
     return {
-      id: Number(id), token: d.token, isStamp: same(d.token, C.stamp.address), isBonus: isBonusDrop(id), spots: Number(d.spots), maxPerWallet: Number(d.maxPerWallet),
+      id: Number(id), lane, n: Number(n), contract: c.address,
+      token: d.token, isStamp: same(d.token, C.stamp.address), isBonus: !lane && isBonusDrop(id), spots: Number(d.spots), maxPerWallet: Number(d.maxPerWallet),
       startDay: Number(d.startDay), endDay: Number(d.endDay), perCoin: d.perCoin, dailyCoins: d.dailyCoins, left: d.left,
       ...(await tokenInfo(d.token)),
     };
   };
+  /// `fn` for each contract, the first's first. The second's is left out if it doesn't answer (the first's still show).
+  const eachLane = async (fn) => (await Promise.all(lanes.map((l) => (l.lane ? fn(l).catch((e) => (console.warn(e), [])) : fn(l))))).flat();
   const drops = C.drops ? {
     address: C.drops.address,
+    lanes: lanes.map(({ lane, c, tokens }) => ({ lane, address: c.address, tokens })),
     today: () => Number(BigInt(Math.floor(Date.now() / 1000)) / 86400n),
-    /// The drops with coins out on `day`, oldest first, each with its token's symbol and metadata and the coins
-    /// paid that day.
-    async running(day) {
-      const ids = await read(C.drops, "activeDrops", [day]);
-      return Promise.all(ids.map(async (id) => ({ ...(await dropOf(id)), paid: await read(C.drops, "paidCoins", [id, day]) })));
-    },
-    /// Every drop (for the treasury's list), newest first, with the coins each has paid today.
-    async all(day) {
-      const n = Number(await read(C.drops, "dropCount"));
-      const list = await Promise.all(Array.from({ length: n }, async (_, i) => ({ ...(await dropOf(i)), paidToday: await read(C.drops, "paidCoins", [BigInt(i), day]) })));
+    /// The drops with coins out on `day`, oldest first (the first contract's, then the second's), each with its
+    /// token's symbol and metadata and the coins paid that day.
+    running: (day) => eachLane(async (l) => {
+      const ids = (await read(l.c, "activeDrops", [day])).filter((n) => l.lane || n < BigInt(DROPS2_BASE));
+      return Promise.all(ids.map(async (n) => ({ ...(await dropOf(l.base + Number(n))), paid: await read(l.c, "paidCoins", [n, day]) })));
+    }),
+    /// Every drop (for the treasury's list), newest first on each contract, with the coins each has paid today.
+    all: (day) => eachLane(async (l) => {
+      const n = Number(await read(l.c, "dropCount"));
+      const list = await Promise.all(Array.from({ length: n }, async (_, i) => ({ ...(await dropOf(l.base + i)), paidToday: await read(l.c, "paidCoins", [BigInt(i), day]) })));
       return list.reverse();
-    },
+    }),
+    /// Who owns the drops, and whether claims are paused: `owner`, `paused` and `isOwner` for the first contract
+    /// (`isOwner` too if you own either), and `lanes` for each.
     async owner() {
-      const [owner, paused] = await Promise.all([read(C.drops, "owner"), read(C.drops, "paused")]);
-      return { owner, paused, isOwner: !!account && same(owner, account) };
+      const each = await Promise.all(lanes.map(async (l) => {
+        try {
+          const [owner, paused] = await Promise.all([read(l.c, "owner"), read(l.c, "paused")]);
+          return { lane: l.lane, address: l.c.address, owner, paused, isOwner: !!account && same(owner, account) };
+        } catch (e) {
+          if (!l.lane) throw e;
+          console.warn(e); // (the second's controls stay hidden till it answers)
+          return { lane: l.lane, address: l.c.address, owner: null, paused: false, isOwner: false };
+        }
+      }));
+      return { owner: each[0].owner, paused: each[0].paused, isOwner: each.some((l) => l.isOwner), lanes: each };
     },
     /// The coins drop `id` paid for `day`'s finds.
-    paidOn: (id, day) => read(C.drops, "paidCoins", [BigInt(id), day]),
+    paidOn: (id, day) => read(at(id).c, "paidCoins", [at(id).n, day]),
     /// What a find count would pay now: [coins, amount].
-    claimable: (id, day, coins) => (account ? read(C.drops, "claimable", [BigInt(id), account, day, coins]) : [0, 0n]),
+    claimable: (id, day, coins) => (account ? read(at(id).c, "claimable", [at(id).n, account, day, coins]) : [0, 0n]),
     /// The coins you've claimed from drop `id` for `day`.
-    claimedOn: (id, day) => (account ? read(C.drops, "claimed", [BigInt(id), day, account]) : 0),
+    claimedOn: (id, day) => (account ? read(at(id).c, "claimed", [at(id).n, day, account]) : 0),
     /// A drop's day: the coins paid that day across everyone and its cap, and yours and a wallet's most.
     /// One drop, as it stands (with its token's symbol and metadata).
     drop: dropOf,
+    /// A token's symbol, name and metadata.
+    tokenInfo,
     async dayOf(id, day) {
+      const { c, n } = at(id);
       const [d, paid, mine] = await Promise.all([
-        dropOf(id), read(C.drops, "paidCoins", [BigInt(id), day]), account ? read(C.drops, "claimed", [BigInt(id), day, account]) : 0,
+        dropOf(id), read(c, "paidCoins", [n, day]), account ? read(c, "claimed", [n, day, account]) : 0,
       ]);
       return { ...d, paid: Number(paid), mine: Number(mine) };
     },
     /// Sign the hunt's sign-in message with the logged-in wallet (proves it's theirs; no transaction).
     sign: (message) => wallet.signMessage({ account, message }),
-    /// Claim every voucher from the multiplayer server in one transaction.
-    claimAll: (vouchers) => send(C.drops, "claimMany", [vouchers.map((v) => ({
-      drop: BigInt(v.drop), day: v.day, coins: v.coins, deadline: BigInt(v.deadline), signature: v.signature,
-    }))]),
+    /// Claim every voucher from the multiplayer server: one transaction for each contract they're on, each tried
+    /// even if another fails (and if one did, saying the rest went through).
+    async claimAll(vouchers) {
+      let paid = 0, failed = null;
+      for (const l of lanes) {
+        const mine = vouchers.filter((v) => dropLane(Number(v.drop)) === l.lane);
+        if (!mine.length) continue;
+        try {
+          await send(l.c, "claimMany", [mine.map((v) => ({
+            drop: at(v.drop).n, day: v.day, coins: v.coins, deadline: BigInt(v.deadline), signature: v.signature,
+          }))]);
+          paid++;
+        } catch (e) {
+          failed ??= e;
+        }
+      }
+      if (failed && paid) throw new Error(`Part of it was claimed, but one claim didn't go through (${explain(failed)}). Try again for the rest.`);
+      if (failed) throw failed;
+    },
     tokenBalance: (token) => (account ? read({ address: token, abi: ERC20_ABI }, "balanceOf", [account]) : 0n),
     /// The treasury: start, top up, end and withdraw drops, and pause claims.
     admin: {
-      async createDrop({ token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount }) {
-        const t = { address: token, abi: ERC20_ABI };
-        if ((await read(t, "allowance", [account, C.drops.address])) < amount) await send(t, "approve", [C.drops.address, amount]);
-        return send(C.drops, "createDrop", [token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount]);
+      /// `lane`: which contract (0: the Launchpad's tokens, 1: the second's, for the tokens it was set up for).
+      async createDrop({ lane = 0, token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount }) {
+        const c = lanes[lane].c, t = { address: token, abi: ERC20_ABI };
+        if ((await read(t, "allowance", [account, c.address])) < amount) await send(t, "approve", [c.address, amount]);
+        return send(c, "createDrop", [token, perCoin, spots, maxPerWallet, dailyCoins, startDay, days, amount]);
       },
-      /// The companion bonus's pool: a $STAMP drop paying 1 $STAMP a coin, up to BONUS_MAX_COINS a wallet a day and
-      /// `dailyCoins` a day for everyone. Resolves to its drop number (to add to BONUS_DROPS in bonus-rules.js).
+      /// The companion bonus's pool (on the first contract, the one the room signs bonus vouchers for): a $STAMP drop
+      /// paying 1 $STAMP a coin, up to BONUS_MAX_COINS a wallet a day and `dailyCoins` a day for everyone. Resolves to
+      /// its drop number (to add to BONUS_DROPS in bonus-rules.js).
       async createBonusPool({ dailyCoins, startDay, days, amount }) {
         const receipt = await drops.admin.createDrop({
           token: C.stamp.address, perCoin: parseEther("1"), spots: BONUS_MAX_COINS, maxPerWallet: BONUS_MAX_COINS, dailyCoins, startDay, days, amount,
@@ -785,15 +835,16 @@ export async function connectChain() {
         return Number(ev.args.drop);
       },
       async topUp(id, token, amount) {
-        const t = { address: token, abi: ERC20_ABI };
-        if ((await read(t, "allowance", [account, C.drops.address])) < amount) await send(t, "approve", [C.drops.address, amount]);
-        await send(C.drops, "topUp", [BigInt(id), amount]);
+        const { c, n } = at(id), t = { address: token, abi: ERC20_ABI };
+        if ((await read(t, "allowance", [account, c.address])) < amount) await send(t, "approve", [c.address, amount]);
+        await send(c, "topUp", [n, amount]);
       },
       /// Stop a drop after `lastDay` (today: its coins stay out until midnight UTC).
-      endDrop: (id, lastDay) => send(C.drops, "endDrop", [BigInt(id), lastDay]),
+      endDrop: (id, lastDay) => send(at(id).c, "endDrop", [at(id).n, lastDay]),
       /// Take a drop's tokens back (once claims have closed, or while paused); a running one ends after `lastDay`.
-      withdraw: (id, lastDay) => send(C.drops, "withdraw", [BigInt(id), account, lastDay]),
-      setPaused: (on) => send(C.drops, "setPaused", [on]),
+      withdraw: (id, lastDay) => send(at(id).c, "withdraw", [at(id).n, account, lastDay]),
+      /// Pause (or resume) claims on contract `lane`.
+      setPaused: (lane, on) => send(lanes[lane].c, "setPaused", [on]),
     },
   } : null;
 

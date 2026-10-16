@@ -123,6 +123,25 @@ npx wrangler secret put DROPS_KEY          # the voucher key (its address is DRO
 npx wrangler deploy --var DROPS_ADDRESS:0x…
 ```
 
+**Partner drops.** Tokens that aren't the Launchpad's (a partner project's, such as $MINE) drop from a second
+TokenDrops, the same contract, which asks a `DropsTokenList` (`contracts/src/DropsTokenList.sol`) instead of the
+Launchpad whether it can drop a token: the tokens the treasury approved, plus the Launchpad's. The room signs for
+both with the same `DROPS_KEY` (`DROPS2_ADDRESS` in `wrangler.toml`), each voucher with its own contract's domain.
+So that neither contract's drops can ever move the other's coins, each has its own block of the day's shuffle
+(`web/drop-pick.js`): after the 24 empty spots, the next 60 are the first contract's and the rest (36) the
+partner contract's; the game and the room number the partner contract's drop k as drop 1000 + k. The room sends
+the partner vouchers apart (`["vouchers", first, partner]`), so games loaded before there were two only see the
+first's, and claiming takes one transaction per contract. The panel's drop form offers the partner tokens (on
+the partner contract) next to the Launchpad's, says how many coins a day each contract has free, and has a pause
+for each.
+
+```bash
+cd contracts
+./script/deploy-partner-drops.sh --broadcast --browser --browser-disable-open       # the list and the contract
+# (put its address in wrangler.toml's DROPS2_ADDRESS, deploy the room, push the site, then:)
+./script/deploy-partner-drops.sh drop --broadcast --browser --browser-disable-open  # start the $MINE drop
+```
+
 `./dev.sh` deploys local drops and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs them too (token
 drops need the launchpad: `./dev.sh --fork`). `StampHunt.sol`, the $STAMP-only version, was never deployed.
 

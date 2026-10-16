@@ -16,7 +16,7 @@ import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAb
 import { privateKeyToAccount } from "viem/accounts";
 import SPOTS from "../../web/hunt-spots.json";
 import { huntDay, authMessage, authMessageBefore } from "../../web/hunt-pick.js";
-import { layDrops } from "../../web/drop-pick.js";
+import { layDrops, DROPS2_BASE, dropLane, dropNumber } from "../../web/drop-pick.js";
 import { TRIPS, TREASURY, WORLDS } from "../../web/trips.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
@@ -511,27 +511,45 @@ export class Planet extends DurableObject {
     return out;
   }
 
-  /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from TokenDrops and kept a minute.
-  /// If the chain doesn't answer, the last list (or none) is used: coins already out keep working either way.
+  /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from both TokenDrops contracts and kept a
+  /// minute: DROPS_ADDRESS's, then DROPS2_ADDRESS's (numbered from DROPS2_BASE: web/drop-pick.js). Each contract's are
+  /// read and kept on their own, so if one doesn't answer, its last list (or none) is used and the other's still work:
+  /// each has its own block of spots, so coins already out keep their place either way.
   async dropsOn(day) {
+    const one = this.env.DROPS_ADDRESS, two = this.env.DROPS2_ADDRESS;
+    const lanes = [[one, 0], [two && two.toLowerCase() !== one?.toLowerCase() ? two : null, DROPS2_BASE]].filter(([address]) => address);
+    return (await Promise.all(lanes.map(([address, base]) => this.dropsAt(address, base, day)))).flat();
+  }
+
+  /// One contract's drops on `day` (numbered from `base`).
+  async dropsAt(address, base, day) {
     this.dropCache ??= new Map();
-    const c = this.dropCache.get(day);
-    if (!this.env.DROPS_ADDRESS || (c && Date.now() - c.at < DROPS_CHECK_MS)) return c?.list ?? [];
+    const k = `${base}:${address}:${day}`, c = this.dropCache.get(k);
+    if (c && Date.now() - c.at < DROPS_CHECK_MS) return c.list;
     try {
       this.chain ??= createPublicClient({ transport: http(this.env.PAD_RPC ?? this.env.SKINS_RPC ?? "https://robinhood-rpc.publicnode.com") });
-      const read = (functionName, args = []) => this.chain.readContract({ address: this.env.DROPS_ADDRESS, abi: DROPS_ABI, functionName, args });
-      this.dropStamp ??= (await read("stamp")).toLowerCase();
-      const ids = await read("activeDrops", [day]);
+      const read = (functionName, args = []) => this.chain.readContract({ address, abi: DROPS_ABI, functionName, args });
+      // (The first contract's $STAMP is also what the Space Express ticket check looks for.)
+      this.dropStamps ??= new Map();
+      if (!this.dropStamps.has(address)) this.dropStamps.set(address, (await read("stamp")).toLowerCase());
+      const stamp = this.dropStamps.get(address);
+      if (!base) this.dropStamp = stamp;
+      const ids = (await read("activeDrops", [day])).filter((id) => base || id < BigInt(DROPS2_BASE));
       const list = await Promise.all(ids.map(async (id) => {
         const d = await read("drop", [id]);
-        return { id: Number(id), spots: Number(d.spots), isStamp: d.token.toLowerCase() === this.dropStamp };
+        return { id: base + Number(id), spots: Number(d.spots), isStamp: d.token.toLowerCase() === stamp };
       }));
-      this.dropCache.set(day, { at: Date.now(), list });
-      if (this.dropCache.size > 4) this.dropCache.delete(this.dropCache.keys().next().value);
+      this.dropCache.set(k, { at: Date.now(), list });
+      if (this.dropCache.size > 8) this.dropCache.delete(this.dropCache.keys().next().value);
       return list;
     } catch {
       return c?.list ?? [];
     }
+  }
+
+  /// Where drop `id` (as the game numbers it) lives: its contract and its number there.
+  dropAt(id) {
+    return dropLane(id) ? { address: this.env.DROPS2_ADDRESS, n: dropNumber(id) } : { address: this.env.DROPS_ADDRESS, n: id };
   }
 
   /// A wallet's finds for one day: a token drop's coins (`key`: its id).
@@ -646,42 +664,41 @@ export class Planet extends DurableObject {
   }
 
   /// The ["vouchers"] answer for a signed-in hunter: a signed note of each drop's finds, today's and yesterday's, and
-  /// their companion bonus shares, for TokenDrops.claimMany.
+  /// their companion bonus shares, for TokenDrops.claimMany. The first contract's are in m[1] and the second's in m[2]
+  /// (each with `contract`: its address, and `id`: its number there), so a game loaded before there were two only
+  /// ever sees the first's.
   async vouchers(a, day, now) {
     const signer = (this.signer ??= privateKeyToAccount(this.env.DROPS_KEY));
     const deadline = Math.floor(now / 1000) + VOUCHER_SECS;
-    const out = [];
+    const sign = (contract, n, d, coins, until) => signer.signTypedData({
+      domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: contract },
+      types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
+      primaryType: "Finds",
+      message: { player: a.wallet, drop: BigInt(n), day: d, coins, deadline: BigInt(until) },
+    });
+    const out = [[], []];
     for (const d of [day - 1, day]) {
       const lay = layDrops(d, SPOTS.length, await this.dropsOn(d));
       for (const { drop } of lay.coins) {
         const n = (await this.finds(d, a.wallet, drop)).set.size;
         if (!n) continue;
-        const coins = Math.min(n, 65535);
-        const signature = await signer.signTypedData({
-          domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
-          types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
-          primaryType: "Finds",
-          message: { player: a.wallet, drop: BigInt(drop), day: d, coins, deadline: BigInt(deadline) },
-        });
-        out.push({ drop, day: d, coins, deadline, signature });
+        const coins = Math.min(n, 65535), at = this.dropAt(drop);
+        const signature = await sign(at.address, at.n, d, coins, deadline);
+        out[dropLane(drop)].push({ drop, day: d, coins, deadline, signature, contract: at.address, id: at.n });
       }
     }
-    // The companion bonus: yesterday's share (paid as today) and the day before's (paid as yesterday, still open).
+    // The companion bonus (the first contract's drops only): yesterday's share (paid as today) and the day before's
+    // (paid as yesterday, still open).
     if (await this.bonusDropsReady()) {
       const { day: today, ms } = this.bonusClock(now), until = Math.floor(ms / 1000) + VOUCHER_SECS;
       for (const playDay of [today - 2, today - 1]) {
         const p = await this.bonusPaid(a.wallet, playDay);
         if (!p) continue;
-        const signature = await signer.signTypedData({
-          domain: { name: "Courier World Drops", version: "1", chainId: Number(this.env.DROPS_CHAIN_ID ?? 4663), verifyingContract: this.env.DROPS_ADDRESS },
-          types: { Finds: [{ name: "player", type: "address" }, { name: "drop", type: "uint256" }, { name: "day", type: "uint32" }, { name: "coins", type: "uint16" }, { name: "deadline", type: "uint64" }] },
-          primaryType: "Finds",
-          message: { player: a.wallet, drop: BigInt(p.drop), day: p.payDay, coins: p.coins, deadline: BigInt(until) },
-        });
-        out.push({ drop: p.drop, day: p.payDay, coins: p.coins, deadline: until, signature });
+        const signature = await sign(this.env.DROPS_ADDRESS, p.drop, p.payDay, p.coins, until);
+        out[0].push({ drop: p.drop, day: p.payDay, coins: p.coins, deadline: until, signature, contract: this.env.DROPS_ADDRESS, id: p.drop });
       }
     }
-    return out.length ? ["vouchers", out] : ["nope", -1, "Find a coin first."];
+    return out[0].length || out[1].length ? ["vouchers", ...out] : ["nope", -1, "Find a coin first."];
   }
 
   // ---------------------------------------------------------------- fishing

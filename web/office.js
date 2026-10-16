@@ -6,6 +6,7 @@ import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_POOL_FORM, bonusCap, isBonusDrop } from "./bonus-rules.js";
+import { dropLane, dropNumber, laneSpots } from "./drop-pick.js";
 import { renderStamp } from "./portrait.js";
 import { planetLook } from "./planet-looks.js";
 import { FISH, FISH_PER_DAY, FISH_MINT_DAYS, tierOf } from "./fish-kinds.js";
@@ -14,6 +15,8 @@ import { createTrade } from "./trade.js";
 import { displayName } from "./names.js";
 
 const TIER_NAMES = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
+/// "#1", or "#0 (partner drops)" for the second drops contract's.
+const dropName = (id) => `#${dropNumber(Number(id))}${dropLane(Number(id)) ? " (partner drops)" : ""}`;
 const RARITY_INK = { Common: "#5f6b6e", Uncommon: "#5e9f57", Rare: "#3f6fbf", Epic: "#8d5a99", Legendary: "#c9962a" };
 const ZERO = "0x0000000000000000000000000000000000000000";
 const SOURCE_URL = "https://github.com/AdamNakamoto/courierworld";
@@ -165,7 +168,7 @@ export function createOffice(chain, {
       // ($STAMP drops put no coins out, so they pay nothing for finds. The companion bonus's pays for play: below.)
       const n = d.isStamp ? 0 : mine?.coins?.[d.id]?.length ?? 0;
       d.foundToday = n;
-      d.pay = n ? (await chain.drops.claimable(d.id, day, Math.min(n, 65535)))[1] : 0n;
+      d.pay = n ? (await chain.drops.claimable(d.id, day, Math.min(n, 65535)).catch(() => [0, 0n]))[1] : 0n;
     }
     const out = { day, running, ...own };
     // Whether a companion bonus season is running: today's play is paid tomorrow, by a listed drop with $STAMP left.
@@ -185,9 +188,15 @@ export function createOffice(chain, {
       out.bonus.push({ drop: p.drop, payDay: p.payDay, coins: p.coins, pay, claimed });
     }
     if (own.isOwner) {
-      out.all = await chain.drops.all(day);
+      // (Only the drops and tokens of the contracts you own: the treasury owns both.)
+      const mineLane = (lane) => own.lanes?.[lane]?.isOwner ?? !lane;
+      out.all = (await chain.drops.all(day)).filter((d) => mineLane(d.lane));
       const launched = chain.pad ? await chain.pad.tokens((await chain.pad.info()).count) : [];
-      out.tokens = launched.map((t) => ({ address: t.address, symbol: t.symbol })); // (a $STAMP drop would put no coins out)
+      // (A $STAMP drop would put no coins out.) The Launchpad's tokens go on the first drops contract, the tokens the
+      // second was set up for (partner tokens, such as $MINE) on that one: each contract has its own block of spots.
+      const partners = await Promise.all(chain.drops.lanes.filter((l) => l.lane).flatMap((l) =>
+        l.tokens.map(async (address) => ({ address, symbol: (await chain.drops.tokenInfo(address).catch(() => null))?.symbol ?? "TOKEN", lane: l.lane }))));
+      out.tokens = [...partners, ...launched.map((t) => ({ address: t.address, symbol: t.symbol, lane: 0 }))].filter((t) => mineLane(t.lane));
     }
     return out;
   }
@@ -195,7 +204,8 @@ export function createOffice(chain, {
   /// Why your finds (the room's vouchers) would pay nothing now, in words.
   async function nothingToClaim(vouchers) {
     for (const v of vouchers) {
-      const d = await chain.drops.dayOf(v.drop, v.day), when = v.day === huntDay() ? "today" : "yesterday";
+      const d = await chain.drops.dayOf(v.drop, v.day).catch(() => null), when = v.day === huntDay() ? "today" : "yesterday";
+      if (!d) continue; // (a contract this page doesn't know, or that didn't answer)
       // (A companion bonus voucher is for the day before its day, and a wallet's whole share: if it's not out of
       // $STAMP, it's been claimed.)
       if (isBonusDrop(v.drop)) {
@@ -230,12 +240,13 @@ export function createOffice(chain, {
 
   /// The treasury's controls: start a drop, the list of drops (end, top up, withdraw), pause.
   function dropAdmin(h) {
-    const f = dropForm, token = f.token || h.tokens[0]?.address;
+    const f = dropForm, token = f.token || h.tokens[0]?.address, lane = h.tokens.find((t) => t.address === token)?.lane ?? 0;
     let html = `<div class="admin-hunt"><h4>Start a drop <span class="muted">you run the treasure hunt</span></h4>`;
     if (!h.tokens.length) html += `<p class="note">A drop's coins pay a Launchpad token: once one has launched, you can start a drop of it here.</p>`;
-    else html += `<label class="field">Token<select data-act="dropToken">${h.tokens.map((t) => `<option value="${t.address}" ${t.address === token ? "selected" : ""}>$${esc(t.symbol)}</option>`).join("")}</select></label>
+    else html += `<p class="note">${laneNote(h, lane)}</p>
+      <label class="field">Token<select data-act="dropToken">${h.tokens.map((t) => `<option value="${t.address}" ${t.address === token ? "selected" : ""}>$${esc(t.symbol)}</option>`).join("")}</select></label>
       <label class="field">Tokens per coin<input data-act="dropPerCoin" value="${esc(f.perCoin)}" inputmode="decimal" placeholder="e.g. 100000"></label>
-      <label class="field">Coins out each day (1 to 48)<input data-act="dropSpots" value="${esc(f.spots)}" inputmode="numeric"></label>
+      <label class="field">Coins out each day (1 to ${Math.min(48, laneFree(h, lane))})<input data-act="dropSpots" value="${esc(f.spots)}" inputmode="numeric"></label>
       <label class="field">Coins one wallet is paid for, per day<input data-act="dropMax" value="${esc(f.maxPerWallet)}" inputmode="numeric"></label>
       <label class="field">Coins paid per day, everyone together (every player can collect each coin, so this caps a day)<input data-act="dropDaily" value="${esc(f.dailyCoins)}" inputmode="numeric"></label>
       <label class="field">Days (from today)<input data-act="dropDays" value="${esc(f.days)}" inputmode="numeric"></label>
@@ -257,15 +268,22 @@ export function createOffice(chain, {
         const live = d.startDay <= h.day && h.day <= d.endDay, over = h.day > d.endDay + 1 || d.endDay < d.startDay;
         const what = d.isBonus ? " · companion bonus" : d.id === bonusMade ? " · companion bonus (add it to BONUS_DROPS)"
           : d.isStamp && h.day < d.startDay ? " · $STAMP, not running yet" : d.isStamp ? " · $STAMP (no coins in the game: end it and withdraw)" : "";
-        html += `<div class="kv"><span>#${d.id} $${esc(d.symbol)}${what} · ${fmt(d.perCoin, 0)}/coin · ${live ? `running · paid today ${d.paidToday}/${d.dailyCoins}` : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
+        html += `<div class="kv"><span>${dropName(d.id)} $${esc(d.symbol)}${what} · ${fmt(d.perCoin, 0)}/coin · ${live ? `running · paid today ${d.paidToday}/${d.dailyCoins}` : over ? "over" : h.day > d.endDay ? "claims close tomorrow" : "starts soon"}</span><b>${fmt(d.left, 0)} left</b></div>
           <div class="row2">${live || h.day < d.startDay ? `<button class="pbtn" data-act="dropEnd" data-id="${d.id}" ${busy ? "disabled" : ""} ${d.isBonus ? `title="Today's play is the last it pays for (paid tomorrow)"` : ""}>End</button>` : ""}
           ${!over ? `<button class="pbtn" data-act="dropTopUp" data-id="${d.id}" data-token="${d.token}" ${busy ? "disabled" : ""}>Top up</button>` : ""}
-          ${(over || h.paused) && d.left > 0n ? `<button class="pbtn" data-act="dropWithdraw" data-id="${d.id}" ${busy ? "disabled" : ""}>Withdraw</button>` : ""}</div>`;
+          ${(over || h.lanes?.[d.lane]?.paused) && d.left > 0n ? `<button class="pbtn" data-act="dropWithdraw" data-id="${d.id}" ${busy ? "disabled" : ""}>Withdraw</button>` : ""}</div>`;
       }
       html += `<label class="field">Tokens to top up with<input data-act="dropTopUpAmount" value="${esc(f.topUp)}" inputmode="decimal" placeholder="e.g. 50000"></label>`;
     }
-    html += `<button class="pbtn wide" data-act="dropPause" ${busy ? "disabled" : ""}>${h.paused ? "Resume claims" : "Pause all claims"}</button>
-      <p class="note">${h.paused ? "Claims are paused: you can withdraw any drop." : "Watch each drop's paid-today count: if it fills up unusually fast (the server's key leaked, say), pause. Claims stop at once and you can take every drop's tokens back. A drop can lose at most its daily cap a day."}</p></div>`;
+    // (One pause for each drops contract: the server's key signs for both, so if it leaked, pause both.)
+    const two = (h.lanes?.length ?? 1) > 1;
+    for (const l of h.lanes ?? [{ lane: 0, paused: h.paused, isOwner: true }]) {
+      if (!l.isOwner) continue;
+      const which = two ? (l.lane ? " (partner drops)" : " (Launchpad drops)") : "";
+      html += `<button class="pbtn wide" data-act="dropPause" data-lane="${l.lane}" ${busy ? "disabled" : ""}>${l.paused ? `Resume claims${which}` : `Pause all claims${which}`}</button>`;
+    }
+    const anyPaused = (h.lanes ?? []).some((l) => l.paused) || h.paused;
+    html += `<p class="note">${anyPaused ? `Claims are paused${two ? " on a contract" : ""}: you can withdraw any of its drops.` : `Watch each drop's paid-today count: if it fills up unusually fast (the server's key leaked, say), pause${two ? " both" : ""}. Claims stop at once and you can take every drop's tokens back. A drop can lose at most its daily cap a day.`}</p></div>`;
     return html;
   }
   /// $STAMP that covers the companion bonus pool for all its days.
@@ -304,6 +322,18 @@ export function createOffice(chain, {
     return html;
   }
   /// Tokens that cover a drop's daily limit for all its days.
+  /// The coins a drops contract has room for today, after the drops of it running now (each has its own block of
+  /// spots: drop-pick.js).
+  function laneFree(h, lane) {
+    const used = h.running.filter((d) => !d.isStamp && dropLane(d.id) === lane).reduce((n, d) => n + d.spots, 0);
+    return Math.max(0, laneSpots(lane, hunt.spots) - used);
+  }
+  function laneNote(h, lane) {
+    const free = laneFree(h, lane);
+    const which = lane ? "Partner tokens go on the partner drops contract" : "Launchpad tokens go on the Launchpad drops contract";
+    return `${which}: ${free} of its ${laneSpots(lane, hunt.spots)} coins a day are free today (each contract has its own spots, so neither moves the other's coins).`;
+  }
+
   function dropSuggest() {
     const f = dropForm;
     try {
@@ -429,6 +459,7 @@ export function createOffice(chain, {
       const h = huntInfo, st0 = hunt.state(), st = st0?.wallet && s.account && st0.wallet.toLowerCase() === s.account.toLowerCase() ? st0 : null;
       const coins = h.running.filter((d) => !d.isStamp);
       const total = h.running.reduce((m, d) => (d.pay ? m.set(d.symbol, (m.get(d.symbol) ?? 0n) + d.pay) : m), new Map());
+      const twoClaims = new Set(h.running.filter((d) => d.pay).map((d) => dropLane(d.id))).size > 1;
       // (The companion bonus's drops pay nothing for finds, so their shares are only counted here.)
       for (const x of h.bonus ?? []) if (x.pay) total.set("STAMP", (total.get("STAMP") ?? 0n) + x.pay);
       html += `<section class="hunt"><h3>Treasure hunt <span class="muted">new spots every day at 00:00 UTC</span></h3>`;
@@ -456,7 +487,7 @@ export function createOffice(chain, {
       else {
         const label = total.size ? `Claim ${[...total].map(([sym, v]) => `${fmt(v, 0)} $${esc(sym)}`).join(" + ")}` : "Claim treasure";
         html += `<button class="pbtn primary wide" data-act="huntClaim" ${busy ? "disabled" : ""}>${label}</button>
-          <p class="note">Claim by the end of the next day (UTC). Each drop pays a few coins per wallet a day, while its tokens last.</p>`;
+          <p class="note">Claim by the end of the next day (UTC). Each drop pays a few coins per wallet a day, while its tokens last.${twoClaims ? " Your wallet asks twice: the Launchpad tokens and the partner tokens are paid by separate contracts." : ""}</p>`;
       }
       if (h.isOwner) html += dropAdmin(h);
       html += `</section>`;
@@ -823,9 +854,10 @@ export function createOffice(chain, {
       });
       case "huntClaim": return run("Claiming treasure", async () => {
         // Only ask the wallet for claims that pay: otherwise say why, rather than send a transaction that fails.
-        const vouchers = await hunt.vouchers();
+        // (Only vouchers for drops contracts this page knows, and one that doesn't answer never holds up the other's.)
+        const vouchers = (await hunt.vouchers()).filter((v) => chain.drops.lanes.some((l) => l.lane === dropLane(Number(v.drop))));
         const paying = [];
-        for (const v of vouchers) if ((await chain.drops.claimable(v.drop, v.day, v.coins))[1] > 0n) paying.push(v);
+        for (const v of vouchers) if ((await chain.drops.claimable(v.drop, v.day, v.coins).catch(() => [0, 0n]))[1] > 0n) paying.push(v);
         if (!paying.length) throw new Error(await nothingToClaim(vouchers));
         await chain.drops.claimAll(paying);
         huntAt = 0;
@@ -833,6 +865,7 @@ export function createOffice(chain, {
       case "dropCreate": {
         const f = dropForm, token = f.token || huntInfo?.tokens?.[0]?.address;
         if (!token) return toast("No token has launched yet: a drop's coins pay a Launchpad token.", "error");
+        const lane = huntInfo.tokens.find((t) => t.address === token)?.lane ?? 0, free = laneFree(huntInfo, lane);
         let perCoin, amount;
         try {
           perCoin = parseEther(f.perCoin || "0");
@@ -844,8 +877,9 @@ export function createOffice(chain, {
         if (perCoin <= 0n || amount <= 0n || !(spots >= 1 && spots <= 48) || !(max >= 1 && max <= spots) || daily < BigInt(max) || daily > 10_000n || !(days >= 1 && days <= 365)) {
           return toast("Check the drop: tokens per coin, coins out (1 to 48), a wallet's coins (up to that), coins a day for everyone (a wallet's to 10,000), days (1 to 365), and the tokens to put in.", "error");
         }
+        if (spots > free) return toast(`Only ${free} coins a day are free on this drops contract today: put out ${free} or fewer.`, "error");
         return run(`Starting a drop`, async () => {
-          await chain.drops.admin.createDrop({ token, perCoin, spots, maxPerWallet: max, dailyCoins: daily, startDay: huntDay(), days, amount });
+          await chain.drops.admin.createDrop({ lane, token, perCoin, spots, maxPerWallet: max, dailyCoins: daily, startDay: huntDay(), days, amount });
           Object.assign(dropForm, { perCoin: "", amount: "" });
           huntAt = 0;
         });
@@ -876,12 +910,12 @@ export function createOffice(chain, {
       case "dropEnd": {
         // (A companion bonus drop pays for each day the next day: ending it after tomorrow still pays for today's play.)
         const id = Number(b.dataset.id), last = isBonusDrop(id) ? huntDay() + 1 : huntDay();
-        return run(`Ending drop #${id} after ${isBonusDrop(id) ? "paying for today's play" : "today"}`, async () => {
+        return run(`Ending drop ${dropName(id)} after ${isBonusDrop(id) ? "paying for today's play" : "today"}`, async () => {
           await chain.drops.admin.endDrop(id, last);
           huntAt = 0;
         });
       }
-      case "dropWithdraw": return run(`Taking drop #${b.dataset.id}'s tokens back`, async () => {
+      case "dropWithdraw": return run(`Taking drop ${dropName(b.dataset.id)}'s tokens back`, async () => {
         await chain.drops.admin.withdraw(Number(b.dataset.id), huntDay());
         huntAt = 0;
       });
@@ -889,16 +923,19 @@ export function createOffice(chain, {
         let amount;
         try { amount = parseEther(dropForm.topUp || "0"); } catch { amount = 0n; }
         if (amount <= 0n) return toast("Enter how many tokens to top up with.", "error");
-        return run(`Topping up drop #${b.dataset.id}`, async () => {
+        return run(`Topping up drop ${dropName(b.dataset.id)}`, async () => {
           await chain.drops.admin.topUp(Number(b.dataset.id), b.dataset.token, amount);
           dropForm.topUp = "";
           huntAt = 0;
         });
       }
-      case "dropPause": return run(huntInfo?.paused ? "Resuming claims" : "Pausing claims", async () => {
-        await chain.drops.admin.setPaused(!huntInfo?.paused);
-        huntAt = 0;
-      });
+      case "dropPause": {
+        const lane = Number(b.dataset.lane ?? 0), paused = !!(huntInfo?.lanes?.[lane]?.paused ?? huntInfo?.paused);
+        return run(paused ? "Resuming claims" : "Pausing claims", async () => {
+          await chain.drops.admin.setPaused(lane, !paused);
+          huntAt = 0;
+        });
+      }
       case "upgrade": return run("Upgrading the post office", () => chain.upgrade(snap));
       case "assign": return run(`Courier #${id} heading out`, () => chain.assign(id));
       case "unassign": return run(`Courier #${id} coming back`, () => chain.unassign(id));

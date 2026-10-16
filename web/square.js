@@ -73,7 +73,7 @@ function leds(g, w, h) {
 }
 
 /// "$PEPE", or "$PEPE + $LCAT": the tokens a running drop is paying out.
-const dropSymbols = (drops) => drops.slice(0, 2).map((d) => `$${d.symbol}`).join(" + ");
+const dropSymbols = (drops) => [...new Set(drops.map((d) => `$${d.symbol}`))].slice(0, 2).join(" + ");
 /// The drop the posters feature: the newest one running.
 const featured = (drops) => drops[drops.length - 1];
 const tokens = (wei, compact = true) =>

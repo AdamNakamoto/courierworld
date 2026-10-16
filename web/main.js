@@ -325,6 +325,8 @@ const MP_URL = new URLSearchParams(location.search).get("mp") ?? "wss://courier-
 const MP_HTTP = MP_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
 // Token pictures are hosted by the multiplayer server (this one, or the live one for tokens launched there).
 const PICTURE_HOSTS = [...new Set([`${MP_HTTP}/pad/image/`, "https://courier-world-mp.courier-world-mp.workers.dev/pad/image/"])];
+// Coin pictures for drop tokens that aren't the Launchpad's (they have no picture there): token (lower case) -> URL.
+const DROP_PICTURES = { "0x1583948760169672c2af7198026f1aede048657f": "/brand/mine-token.png" }; // $MINE (MineWorldCraft)
 const TIERS = ["Kiosk", "Branch", "Depot", "Hub", "HQ"];
 let chainRef = null;
 let nopeSyncAt = 0, nopeSync = null; // when a refused find may next be brought back, and the look that will (net's onNope)
@@ -536,7 +538,7 @@ async function refreshDrops() {
     const tokens = running.filter((d) => !d.isStamp);
     for (const d of tokens) {
       d.empty = d.left < d.perCoin; // paid out: its coins stay off the map (their spots stay reserved, so nothing moves)
-      const url = parseMeta(d.metadata, PICTURE_HOSTS).image;
+      const url = DROP_PICTURES[d.token.toLowerCase()] ?? parseMeta(d.metadata, PICTURE_HOSTS).image;
       d.pictureUrl = url ?? null;
       if (url && !coinPictures.has(url)) {
         coinPictures.set(url, null);
@@ -2071,6 +2073,7 @@ const chainReady = connectChain()
         },
         vouchers: () => net.vouchers(),
         bonus: () => bonus,
+        spots: HUNT_SPOTS.length,
       } : null,
       fish: { state: () => fishState, vouchers: () => net.fishVouchers() },
       onSnapshot(s) {

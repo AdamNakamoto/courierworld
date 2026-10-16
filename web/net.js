@@ -537,7 +537,8 @@ export function createNet(W, {
         onFound(m[1], m[2], m[3], m[4]); // (day, spot, that drop's finds today, the drop id)
         return;
       case "vouchers":
-        voucherWait?.resolve(m[1]);
+        // (The first drops contract's vouchers, then the second's: a game loaded before there were two only reads m[1].)
+        voucherWait?.resolve([...(m[1] ?? []), ...(m[2] ?? [])]);
         voucherWait = null;
         return;
       case "fcast":
