@@ -809,6 +809,7 @@ export async function connectChain() {
           }))]);
           paid++;
         } catch (e) {
+          if (/rejected|denied/i.test(e?.shortMessage ?? e?.message ?? "")) throw e; // (a "no" in the wallet stops both)
           failed ??= e;
         }
       }

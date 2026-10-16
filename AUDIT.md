@@ -745,3 +745,9 @@ takes the contracts' addresses from their receipts, and checks the voucher key a
 contract's on chain; admin controls show only for the contracts the wallet owns. Not fixed, by design: the first
 contract's coins are capped at 60 a day (it was 96), so until the PEPE drops end (day 20745) a new Launchpad drop
 can have 2 coins; drops should be started from a freshly loaded page (an old one doesn't know the cap).
+
+Before the $MINE drop started, an independent preflight against the live chain and site confirmed that the drop
+moves no PEPE coin on any day (old and new layouts compared for the real drop list) and that the room and the game
+lay out the same coins. It added: `script/pause-drops.sh on|off` pauses or resumes both drops contracts from the
+treasury's wallet without the site; a "no" in the wallet on the first of two claims stops the second; the drop
+script refuses the first contract as `DROPS2`.

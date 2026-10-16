@@ -90,6 +90,9 @@ if [ "$STEP" = deploy ]; then
   fi
 else
   DROPS2=${DROPS2:-$(jq -r .drops2 deployments/robinhood-drops2.json)}
+  FIRST=$(jq -r .drops deployments/robinhood-drops.json)
+  [ "$(echo "$DROPS2" | tr '[:upper:]' '[:lower:]')" != "$(echo "$FIRST" | tr '[:upper:]' '[:lower:]')" ] \
+    || { echo "DROPS2 is the first drops contract: partner drops go on the partner contract." >&2; exit 1; }
   DROP_TOKEN=${DROP_TOKEN:-$MINE}
   DROP_PER_COIN=${DROP_PER_COIN:-500}
   DROP_SPOTS=${DROP_SPOTS:-20}
