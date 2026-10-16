@@ -35,7 +35,7 @@ const PHRASES = 16; // emotes the game can show (web/net.js EMOTES); -1 is a wav
 
 // The game's homes: courierworld.fun, its backup on IMD's hosting, Vercel previews, and local development.
 const ORIGINS = [/^https:\/\/(www\.)?courierworld\.fun$/, /^https:\/\/courierworld\.sites\.imd\.fun$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
-  /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
+  /^https:\/\/courier-world-mp\.courier-world-mp\.workers\.dev$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
 const ENUMS = {
   hairStyle: ["pony", "bun", "bob", "twin", "long"],
   headwear: ["none", "cap", "bucket", "beanie", "headphones", "goggles", "hardhat"],
@@ -1477,10 +1477,10 @@ const polled = new Map(); // "/count" or "/names" -> { at, body }: what the room
 // The same narrow relay as the website's /api/logs (web/api/logs.js), for hosts without it (the IMD backup): only
 // the block number, the chain id and the post office's own events pass to Robinhood Chain's official RPC, which
 // some internet providers block. Only for the game's own sites.
-// The official RPC first; it turns Cloudflare's shared addresses away for event queries now and then (429), and
-// then the website's own relay on Vercel answers instead (server to server, so a browser block on the website's
-// domain doesn't matter).
-const LOGS_UPSTREAMS = ["https://rpc.mainnet.chain.robinhood.com", "https://courierworld.fun/api/logs"];
+// The official RPC (it turns Cloudflare's shared addresses away for event queries now and then, 429: tried again after
+// a pause). The website's Vercel relay used to be the second choice; the site is now served by this Worker (which
+// answers /api/logs too), so asking courierworld.fun would only ask itself.
+const LOGS_UPSTREAMS = ["https://rpc.mainnet.chain.robinhood.com"];
 async function logsRelay(req, env) {
   const origin = req.headers.get("Origin") || "";
   if (!ORIGINS.some((re) => re.test(origin))) return new Response("Not allowed", { status: 403 });
@@ -1516,7 +1516,7 @@ async function logsRelay(req, env) {
   let r = null;
   for (let i = 0; i < 4; i++) {
     try {
-      r = await fetch(LOGS_UPSTREAMS[i % 2], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      r = await fetch(LOGS_UPSTREAMS[i % LOGS_UPSTREAMS.length], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       if (r.status !== 429 && r.status < 500) break;
     } catch {
       r = null;
@@ -1540,7 +1540,7 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     if (url.pathname.startsWith("/pad/image")) return padImage(req, env, url);
-    if (url.pathname === "/logs") return logsRelay(req, env);
+    if (url.pathname === "/logs" || url.pathname === "/api/logs") return logsRelay(req, env); // (/api/logs: the site's own, as on Vercel)
     const room = env.PLANET.get(env.PLANET.idFromName("planet"));
     // The online count and the names are polled by every open game: kept a little while at Cloudflare's edge, so
     // the polls share one request to the room instead of each costing one (the free plan caps the room's
@@ -1566,6 +1566,7 @@ export default {
       if (!ORIGINS.some((re) => re.test(req.headers.get("Origin") || ""))) return new Response("Not allowed", { status: 403 });
       return room.fetch(req);
     }
-    return new Response("Courier World multiplayer\n", { headers: { "content-type": "text/plain" } });
+    // (Not a file of the site nor one of the room's addresses.)
+    return new Response("Not found\n", { status: 404, headers: { "content-type": "text/plain" } });
   },
 };

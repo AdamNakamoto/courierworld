@@ -1,0 +1,6 @@
+# Never published with the site by the Worker (multiplayer/wrangler.toml [assets]): the local dev chain's file, and
+# Vercel's own (its function, served by the Worker's /api/logs instead, and its config).
+chain.json
+.DS_Store
+api/
+vercel.json

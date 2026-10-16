@@ -3,6 +3,18 @@ name = "courier-world-mp"
 main = "src/index.js"
 compatibility_date = "2025-10-01"
 
+# Its workers.dev address must stay on: the game's room is there (wss://courier-world-mp.courier-world-mp.workers.dev).
+# courierworld.fun and www reach this Worker through routes set in the Cloudflare dashboard (Domains & Routes:
+# courierworld.fun/* and www.courierworld.fun/*, zone courierworld.fun).
+workers_dev = true
+
+# The website (web/ as it is: no build) is served by this same Worker, as MineWorldCraft's is: a request for a file in
+# web/ is answered from the static assets (free, and not counted against the Worker's daily requests); anything else
+# (/ws, /count, /names, /logs, /api/logs, /pad/image) reaches the Worker. web/.assetsignore keeps local dev files and
+# Vercel's own files off the site; web/_headers sets the headers web/vercel.json sets on Vercel.
+[assets]
+directory = "../web"
+
 [[durable_objects.bindings]]
 name = "PLANET"
 class_name = "Planet"

@@ -1,0 +1,11 @@
+# The site's headers when the Worker serves it (multiplayer/wrangler.toml [assets]): the same as web/vercel.json's.
+/*
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+
+/deployments/*
+  Cache-Control: no-cache
