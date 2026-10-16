@@ -5,3 +5,4 @@ web/chain.json
 .DS_Store
 .vercel
 .claude/
+dist/

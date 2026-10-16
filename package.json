@@ -1,0 +1,8 @@
+{
+  "name": "courierworld-site",
+  "private": true,
+  "description": "Courier World's website: the static game in web/. For static hosts that build (the IMD backup): `npm run build` copies web/ to dist/. Vercel serves web/ directly.",
+  "scripts": {
+    "build": "node build-site.mjs"
+  }
+}
