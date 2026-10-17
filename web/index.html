@@ -131,6 +131,7 @@
     <div id="tripPick" class="trip-pick" role="tablist" aria-label="Where to">
       <button class="pbtn" type="button" role="tab" data-trip="moon">🌙 Moon · 100</button>
       <button class="pbtn" type="button" role="tab" data-trip="mars">🔴 Mars · 200</button>
+      <button class="pbtn" type="button" role="tab" data-trip="fren">🐾 Frenpet · 300</button>
     </div>
     <h3 id="tripTitle">Fly to the moon</h3>
     <p id="tripText" class="orb-text"></p>
@@ -138,6 +139,11 @@
     <p id="tripNote" class="orb-note"></p>
   </div>
   <div id="flightFade" class="flight-fade" hidden><span id="flightFadeText"></span></div>
+  <!-- Frenpet World: say something to the pet you're patting (fren.js, main.js). -->
+  <form id="petSay" class="pet-say" hidden>
+    <input id="petSayText" maxlength="140" autocomplete="off" autocapitalize="sentences" enterkeyhint="send" placeholder="Say something…" aria-label="Say something to the pet">
+    <button type="submit">Say</button>
+  </form>
 
   <aside id="office" class="office card" hidden>
     <div class="ohead"><h2>Post office</h2><button id="officeClose" class="pbtn" aria-label="Close">✕</button></div>

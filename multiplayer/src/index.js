@@ -25,6 +25,7 @@ import { COMPANION_IDS } from "../../web/companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_MOVE_M, BONUS_WARMUP_MS, bonusCoins, bonusShare, bonusPayDay } from "../../web/bonus-rules.js";
 import { FISH, FISH_PER_DAY, FISH_MINT_DAYS, fishOf } from "../../web/fish-kinds.js";
 import { fishingSpot, pickFish, BITE_MIN_MS, BITE_MAX_MS, FIGHT_MIN_MS, CAST_MS, CAST_GAP_MS } from "../../web/fish-rules.js";
+import { FREN_R, PAT_REACH, petById } from "../../web/fren-pick.js";
 
 const R = 34; // the planet's radius, in metres (matches web/world.js)
 const NEAR = Math.cos(40 / R); // players within 40 m (a dot product of their directions) get every update
@@ -252,6 +253,7 @@ export class Planet extends DurableObject {
     if (m[0] === "namecheck" || m[0] === "setname" || m[0] === "name" || m[0] === "unname") return this.naming(ws, a, m);
     if (m[0] === "auth" || m[0] === "resume" || m[0] === "hunt" || m[0] === "grab" || m[0] === "vouchers" || m[0] === "wgrab" || m[0] === "mgrab") return this.hunt(ws, a, m, now);
     if (m[0] === "fcast" || m[0] === "fland" || m[0] === "fstate" || m[0] === "fvouchers") return this.fishing(ws, a, m, now);
+    if (m[0] === "pat" || m[0] === "petsay") return this.pets(ws, a, m, now);
     if (m[0] === "ticket") return this.ticket(ws, a, m[1], m[2], now);
     if (m[0] === "moon") return this.ticket(ws, a, "moon", m[1], now, true); // (from a game loaded before Mars)
     if (m[0] === "world") return this.goTo(ws, a, m[1], now);
@@ -610,6 +612,7 @@ export class Planet extends DurableObject {
       send(ws, ["hunttoken", token]);
       send(ws, await state());
       this.sendFish(ws, a, now).catch(() => {});
+      if (worldOf(a) === "fren") this.sendPets(ws, a).catch(() => {});
       return this.sendBonus(ws, a).catch(() => {});
     }
     if (m[0] === "resume") {
@@ -623,6 +626,7 @@ export class Planet extends DurableObject {
       ws.serializeAttachment(a);
       send(ws, await state());
       this.sendFish(ws, a, now).catch(() => {});
+      if (worldOf(a) === "fren") this.sendPets(ws, a).catch(() => {});
       return this.sendBonus(ws, a).catch(() => {});
     }
     if (m[0] === "hunt") return send(ws, await state());
@@ -1350,6 +1354,62 @@ export class Planet extends DurableObject {
       const oi = this.info(o);
       return worldOf(oi) === w && oi.s ? [[oi.id, oi.s]] : [];
     })]);
+    if (w === "fren" && a.wallet) this.sendPets(ws, a).catch(() => {}); // (how well each pet knows them)
+  }
+
+  // ---------------------------------------------------------------- Frenpet World's pets
+
+  /// A wallet's friendships: pet id -> { n (days patted), d (the last UTC day it grew) }. One stored row a wallet,
+  /// kept in memory a while (a few hundred wallets).
+  async petsOf(wallet) {
+    this.petCache ??= new Map();
+    if (!this.petCache.has(wallet)) {
+      this.petCache.set(wallet, (await this.ctx.storage.get(`pet:${wallet}`)) ?? {});
+      if (this.petCache.size > 500) this.petCache.delete(this.petCache.keys().next().value);
+    }
+    return this.petCache.get(wallet);
+  }
+
+  /// ["pets", { petId: days }]: how well each pet knows this wallet.
+  async sendPets(ws, a) {
+    if (!a.wallet) return;
+    const all = await this.petsOf(a.wallet), out = {};
+    for (const [id, r] of Object.entries(all)) out[id] = r.n;
+    send(ws, ["pets", out]);
+  }
+
+  /// Frenpet World (web/fren-pick.js). ["pat", petId]: a signed-in courier on a ticket, standing by that pet's home,
+  /// pats it: the pet's friendship with the wallet grows by one, once a UTC day ("petok" says so), and everyone there
+  /// sees them sit and pat it. ["petsay", petId, text]: something said to a pet, shown over their head to everyone
+  /// near (not kept, and not in the chat log). Wrong-way answers are ["nope", -6, why].
+  async pets(ws, a, m, now) {
+    const nope = (why) => send(ws, ["nope", -6, why]);
+    const pet = typeof m[1] === "string" ? petById(m[1]) : null;
+    if (!pet) return;
+    if (worldOf(a) !== "fren" || !(a.frenUntil > now)) return nope("You need to be on Frenpet World for that.");
+    if (m[0] === "petsay") {
+      const r = cleanChat(m[2]);
+      if (r.error) return send(ws, ["chatno", r.error]);
+      if (now - (a.chatAt ?? 0) < CHAT_EVERY_MS) return send(ws, ["chatno", "Slow down a little."]);
+      a.chatAt = now;
+      ws.serializeAttachment(a);
+      return this.broadcast(ws, ["petsay", a.id, pet.id, r.text], a.s);
+    }
+    if (!a.wallet) return nope("Sign in (the treasure hunt's signature) so the pets remember you.");
+    if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement. Reload to try again.");
+    if (!a.s || now - a.sAt > 4000) return nope("Hold still a moment, then try again.");
+    if (arcBetween(a.s, pet.home, FREN_R) > PAT_REACH) return nope(`You're not close enough to ${pet.name}.`);
+    if (now - (a.patAt ?? 0) < 1500) return; // (a pat at a time)
+    a.patAt = now;
+    ws.serializeAttachment(a);
+    this.broadcast(ws, ["pat", a.id, pet.id], a.s);
+    const all = await this.petsOf(a.wallet), day = huntDay(now), r = all[pet.id] ?? { n: 0, d: -1 };
+    const grew = r.d < day;
+    if (grew) {
+      all[pet.id] = { n: r.n + 1, d: day };
+      await this.ctx.storage.put(`pet:${a.wallet}`, all);
+    }
+    send(ws, ["petok", pet.id, (all[pet.id] ?? r).n, grew ? 1 : 0]);
   }
 
   async webSocketClose(ws, code) {

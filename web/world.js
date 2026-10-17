@@ -416,8 +416,12 @@ const POST_FRAG = /* glsl */ `
   uniform mat4 invProj;
   uniform mat3 camRot, worldInv;
   uniform vec3 horizon, zenith, cloudShade, cloudLight, ink;
-  uniform float stars, overcast, space, mars, dust;
+  uniform float stars, overcast, space, mars, dust, fren;
   varying vec2 vUv;
+  // Frenpet World's look: the screen in chunky pixels (FREN_ROWS of them top to bottom) and Frenpet's four greens.
+  const float FREN_ROWS = 220.0;
+  // (Linear values of #151a16, #6b8570, #a7c0aa and #dcfde6: this pass works in linear colour.)
+  const vec3 FREN_K = vec3(0.0075, 0.0103, 0.0080), FREN_D = vec3(0.1470, 0.2346, 0.1620), FREN_G = vec3(0.3864, 0.5271, 0.4020), FREN_L = vec3(0.7157, 0.9823, 0.7913);
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float vnoise(vec2 p) {
@@ -465,13 +469,20 @@ const POST_FRAG = /* glsl */ `
     vec3 ms = mix(vec3(0.86, 0.57, 0.39), vec3(0.6, 0.34, 0.29), smoothstep(-0.15, 0.85, dW.y));
     ms = mix(ms, vec3(1.0, 0.95, 0.88), step(0.9986, hash3(floor(dL * 240.0))) * 0.25 * (1.0 - dust));
     ms = mix(ms, vec3(0.84, 0.58, 0.40), dust * 0.85);
-    return mix(mix(c, sp, space), ms, mars);
+    // Frenpet World: a flat mint sky with blocky white clouds drifting past.
+    vec2 cell = floor(vec2(atan(dL.z, dL.x) * 9.0 + time * 0.02, dW.y * 14.0));
+    float cl = step(0.62, vnoise(cell * vec2(0.55, 1.6))) * step(0.12, dW.y);
+    vec3 fs = mix(vec3(0.84, 0.99, 0.9), vec3(1.0), cl);
+    return mix(mix(mix(c, sp, space), ms, mars), fs, fren);
   }
 
   void main() {
-    vec2 px = thickness / res;
-    vec2 wob = (vec2(vnoise(vUv * res / 30.0), vnoise(vUv * res / 30.0 + 19.0)) - 0.5) * px * 1.8;
-    vec2 uv = vUv + wob;
+    // (On Frenpet World every lookup snaps to its chunky pixel grid, and the hand-drawn wobble is off.)
+    vec2 cells = vec2(FREN_ROWS * res.x / res.y, FREN_ROWS);
+    vec2 sUv = fren > 0.5 ? (floor(vUv * cells) + 0.5) / cells : vUv;
+    vec2 px = fren > 0.5 ? 1.0 / cells : thickness / res;
+    vec2 wob = (vec2(vnoise(sUv * res / 30.0), vnoise(sUv * res / 30.0 + 19.0)) - 0.5) * px * 1.8 * (1.0 - fren);
+    vec2 uv = sUv + wob;
 
     float zc = invZ(uv);
     float zl = invZ(uv - vec2(px.x, 0.0)), zr = invZ(uv + vec2(px.x, 0.0));
@@ -489,16 +500,24 @@ const POST_FRAG = /* glsl */ `
     // Distances were tuned for a planet of radius 24; they grow with it.
     float edge = max(depthEdge, normalEdge) * mix(1.0, 0.4, smoothstep(${(22 * R / 24).toFixed(1)}, ${(70 * R / 24).toFixed(1)}, dist));
 
-    float raw = texture2D(tDepth, vUv).x;
+    float raw = texture2D(tDepth, sUv).x;
     vec3 base;
     // Over the sky the colour pass is black except for additive rain streaks, which show through.
-    if (raw >= 0.99999) base = sky(vUv) + texture2D(tColor, vUv).rgb;
+    if (raw >= 0.99999) base = sky(sUv) + texture2D(tColor, sUv).rgb;
     else {
-      base = mix(texture2D(tColor, vUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45 * (1.0 - space - mars));
+      base = mix(texture2D(tColor, sUv).rgb, horizon, smoothstep(${(30 * R / 24).toFixed(1)}, ${(95 * R / 24).toFixed(1)}, dist) * 0.45 * (1.0 - space - mars - fren));
       // On Mars, a dusty haze far off, and close in when a storm blows.
       base = mix(base, vec3(0.86, 0.6, 0.42), mars * (smoothstep(10.0, 45.0, dist) * 0.3 + smoothstep(2.0, 20.0, dist) * 0.75 * dust));
     }
-    gl_FragColor = vec4(mix(base, ink, edge * 0.9), 1.0);
+    vec3 col = mix(base, ink, edge * 0.9);
+    if (fren > 0.5) {
+      // Frenpet's four greens by brightness (judged on a gamma-ish value: the pets' grey-green must stay apart from
+      // their mint); strong colours (a pat's purple hearts, the tower's red roof, a bright jacket) keep theirs.
+      float l = dot(sqrt(max(col, 0.0)), vec3(0.299, 0.587, 0.114)), sat = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
+      vec3 q = l < 0.3 ? FREN_K : l < 0.55 ? FREN_D : l < 0.8 ? FREN_G : FREN_L;
+      col = mix(q, col, step(0.42, sat));
+    }
+    gl_FragColor = vec4(col, 1.0);
     #include <colorspace_fragment>
   }`;
 
@@ -1337,6 +1356,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
       space: { value: 0 },
       mars: { value: 0 },
       dust: { value: 0 },
+      fren: { value: 0 },
       stars: { value: 0 },
       overcast: { value: 0 },
     },
@@ -1546,6 +1566,7 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     setSky(kind, frame = null) {
       post.uniforms.space.value = kind === "space" ? 1 : 0;
       post.uniforms.mars.value = kind === "mars" ? 1 : 0;
+      post.uniforms.fren.value = kind === "fren" ? 1 : 0;
       post.uniforms.dust.value = 0;
       skyFrame = kind !== "sky" && frame ? frame : world;
     },

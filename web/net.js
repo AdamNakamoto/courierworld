@@ -293,7 +293,7 @@ function along(p) {
 export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {}, onBonus = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
-  onFish = () => {}, onFishNews = () => {},
+  onFish = () => {}, onFishNews = () => {}, onPets = () => {}, onPetPat = () => {}, onPetSay = () => {},
   world = (w) => (w === "planet" ? { group: W.world, r: R, terrain: W.terrain } : null),
 }) {
   const players = new Map(); // id -> { hello, root, rider, tag, follower, pos, fwd, target, h, air, spd, swim, wave }
@@ -319,6 +319,8 @@ export function createNet(W, {
   // Fishing (web/fishing.js): a cast or a landing waiting for the room, and what's to send right after where you are.
   let castWait = null, landWait = null, fishVoucherWait = null;
   const fishOut = [];
+  // Frenpet World: a pat waiting for the room's answer (it goes out right after where you are, like a cast).
+  let patWait = null;
 
   const count = () => onCount(ws?.readyState === 1 && me ? players.size + 1 : null);
   const send = (m) => {
@@ -345,8 +347,8 @@ export function createNet(W, {
       }
     };
     ws.onclose = () => {
-      for (const w of [castWait, landWait, fishVoucherWait]) w?.reject(new Error("Lost the connection to the other players. Try again in a moment."));
-      castWait = landWait = fishVoucherWait = null;
+      for (const w of [castWait, landWait, fishVoucherWait, patWait]) w?.reject(new Error("Lost the connection to the other players. Try again in a moment."));
+      castWait = landWait = fishVoucherWait = patWait = null;
       for (const id of [...players.keys()]) remove(id);
       count();
       later();
@@ -423,6 +425,14 @@ export function createNet(W, {
     p.target = { p: new THREE.Vector3(x, y, z).normalize(), f: new THREE.Vector3(fx, fy, fz), h, air, spd, swim, t: performance.now() / 1000,
       vel: moving ? v : null, turn: moving ? turn : 0 };
     if (p.fishing && (spd > 0.05 || performance.now() > p.fishUntil)) rodDown(p); // (walked off, or the cast ran out)
+    if (p.patting && (spd > 0.05 || performance.now() > p.patUntil)) patUp(p); // (got up and walked off)
+  }
+  /// Someone gets up from patting a pet.
+  function patUp(p) {
+    const pet = p.patting;
+    p.patting = null;
+    p.rider?.ch.setPat?.(0);
+    onPetPat(pet, false, p.id);
   }
   /// Someone's rod goes away.
   function rodDown(p) {
@@ -568,6 +578,32 @@ export function createNet(W, {
         if (k && p.root.visible) emotes.say(p.rider.group, `🐟 ${k}!`, p.rider.ride ? 3.2 : 2.85);
         return;
       }
+      case "pat": {
+        // Someone on Frenpet World sat down by a pet to pat it (they get up when they move off).
+        const p = players.get(m[1]);
+        if (!p || typeof m[2] !== "string") return;
+        if (p.patting && p.patting !== m[2]) patUp(p);
+        [p.patting, p.patUntil] = [m[2], performance.now() + 45_000];
+        p.rider.ch.setPat?.(1);
+        onPetPat(m[2], true, p.id, p.root.visible ? p.root : null);
+        return;
+      }
+      case "petsay": {
+        // Something someone said to a pet: over their head, and the pet answers (main.js).
+        const p = players.get(m[1]);
+        if (!p || typeof m[3] !== "string") return;
+        if (p.root.visible) emotes.say(p.rider.group, m[3], p.rider.ride ? 3.2 : 2.85);
+        onPetSay(m[2], m[3], p.id);
+        return;
+      }
+      case "petok":
+        // Your pat counted: that pet's friendship with you now, and whether it grew (once a UTC day).
+        patWait?.resolve({ id: m[1], n: Number(m[2]) || 0, grew: !!m[3] });
+        patWait = null;
+        return;
+      case "pets":
+        onPets(m[1] && typeof m[1] === "object" ? m[1] : {});
+        return;
       case "fishnews":
         // (The wallet that caught it, as the room checked it.)
         onFishNews(/^0x[0-9a-fA-F]{40}$/.test(m[3] ?? "") ? m[3] : null, Number(m[2]));
@@ -585,6 +621,9 @@ export function createNet(W, {
         } else if (m[1] === -5 && fishVoucherWait) {
           fishVoucherWait.reject(new Error(m[2]));
           fishVoucherWait = null;
+        } else if (m[1] === -6 && patWait) {
+          patWait.reject(new Error(m[2]));
+          patWait = null;
         } else onNope(m[1], m[2]);
         return;
       case "join":
@@ -863,6 +902,19 @@ export function createNet(W, {
       }, () => landWait, () => (landWait = null));
     },
     fishState: () => send(["fstate"]),
+    /// Frenpet World: pat pet `id` (the room checks you're by it, signed in and on a ticket). Resolves with that pet's
+    /// friendship with you ({ id, n, grew }).
+    pat(id) {
+      return fishAsk((resolve, reject) => {
+        patWait = { resolve, reject };
+        fishOut.push(["pat", id]);
+      }, () => patWait, () => (patWait = null));
+    },
+    /// Say something to pet `id` (everyone on Frenpet World near you sees it over your head).
+    petSay(id, text) {
+      send(["petsay", id, text]);
+      emotes.say(anchor, text, 2.55);
+    },
     /// Signed vouchers for each day's catch still in the mint window, for CourierFish.mintMany.
     fishVouchers() {
       return fishAsk((resolve, reject) => {

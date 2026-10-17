@@ -665,7 +665,7 @@ export function createCharacter(p) {
 
   // ---- poses and animation
   let pose = "walk"; // walk | sit (bike, moped) | stand (skateboard, plane)
-  let phase = 0, blink = 2 + Math.random() * 3, wave = 0, swim = 0, fish = 0, fishPull = 0;
+  let phase = 0, blink = 2 + Math.random() * 3, wave = 0, swim = 0, fish = 0, fishPull = 0, pat = 0;
   function setPose(next) {
     pose = next;
   }
@@ -681,6 +681,10 @@ export function createCharacter(p) {
   function setFish(k, pull = 0) {
     fish = k;
     fishPull = pull;
+  }
+  /// 0..1: sitting on the ground, patting a pet in front with the right hand (Frenpet World).
+  function setPat(k) {
+    pat = k;
   }
   /// speed: 0 idle, 0.62 walking, 1 running (or how hard she's pedalling). air: 0 on the ground … 1 mid-jump.
   /// dist: ground covered this frame; when given, the stride follows it so the feet don't skate.
@@ -790,7 +794,29 @@ export function createCharacter(p) {
       arms[1].rotation.z += (-0.35 - arms[1].rotation.z) * fish;
       elbows[1].rotation.x += (-1.0 - elbows[1].rotation.x) * fish;
     }
-    head.rotation.x = -0.05 * k + Math.sin(t * 1.1) * 0.025 * (1 - k);
+    // Patting a pet: sat on the ground, legs out in front, the right hand patting a head just ahead, the left on the
+    // ground beside her, looking down at the pet.
+    if (pat > 0 && pose === "walk") {
+      const tap = Math.max(0, Math.sin(t * 6.5)), to = (o, v) => o + (v - o) * pat;
+      legs[0].rotation.x = to(legs[0].rotation.x, -1.45);
+      legs[1].rotation.x = to(legs[1].rotation.x, -1.35);
+      legs[0].rotation.z = to(legs[0].rotation.z, 0.12);
+      legs[1].rotation.z = to(legs[1].rotation.z, -0.12);
+      knees[0].rotation.x = to(knees[0].rotation.x, 0.25);
+      knees[1].rotation.x = to(knees[1].rotation.x, 0.35);
+      arms[0].rotation.x = to(arms[0].rotation.x, -1.05 - tap * 0.25);
+      arms[0].rotation.z = to(arms[0].rotation.z, 0.1);
+      elbows[0].rotation.x = to(elbows[0].rotation.x, -0.55 + tap * 0.2);
+      arms[1].rotation.x = to(arms[1].rotation.x, -0.25);
+      arms[1].rotation.z = to(arms[1].rotation.z, 0.45);
+      elbows[1].rotation.x = to(elbows[1].rotation.x, -0.15);
+      pelvis.rotation.set(0, 0, 0);
+      spine.rotation.x = to(spine.rotation.x, 0.18);
+      chest.rotation.set(to(chest.rotation.x, 0.12), 0, 0);
+      body.position.y = to(body.position.y, -0.62);
+      body.rotation.x = to(body.rotation.x, 0);
+    }
+    head.rotation.x = -0.05 * k + Math.sin(t * 1.1) * 0.025 * (1 - k) + 0.3 * pat;
     for (const tl of tails) tl.rotation.x = tl.userData.rest + Math.sin(phase * 2) * 0.14 * speed + Math.sin(t * 1.7) * 0.03;
     if (bag) bag.rotation.x = Math.sin(phase) * 0.1 * speed;
     blink -= dt;
@@ -829,5 +855,5 @@ export function createCharacter(p) {
   rodTip.position.y = 1.37;
   rod.add(pole, grip, reelMesh, rodTip);
   rod.visible = false;
-  return { root, body, head, update, setPose, setWave, setSwim, setFish, rodTip };
+  return { root, body, head, update, setPose, setWave, setSwim, setFish, setPat, rodTip };
 }

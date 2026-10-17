@@ -5,6 +5,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { SEA_LEVEL } from "./terrain.js";
 import { CITY, VOLCANO, ICE, RADIO, CANYON, MOUNTAINS } from "./mars-pick.js";
+import { PLACES, PETS, ADAM, fromPad } from "./fren-pick.js";
 
 const vec = (d) => (d?.isVector3 ? d.clone() : new THREE.Vector3(...d)).normalize();
 
@@ -43,6 +44,24 @@ export function marsPlaces() {
     { d: vec(RADIO), name: "📻 Radio station", kind: "spot" },
     { d: vec(CANYON.c), name: "Canyon", kind: "zone" },
     ...(MOUNTAINS[0] ? [{ d: vec(MOUNTAINS[0].d), name: "Red Ridge", kind: "zone" }] : []),
+  ];
+}
+
+/// Frenpet World's: the rocket, the village's places, ADAM and every pet's home.
+export function frenPlaces() {
+  const at = (k) => vec(fromPad(...PLACES[k]));
+  return [
+    { d: vec([0, 1, 0]), name: "🚀 Rocket home", kind: "spot" },
+    { d: at("plaza"), name: "Pet plaza", kind: "zone" },
+    { d: at("cabin"), name: "Log cabin", kind: "spot" },
+    { d: at("tower"), name: "🗼 The tower (where IMD was born)", kind: "zone" },
+    { d: at("windmill"), name: "Windmill", kind: "spot" },
+    { d: at("houses"), name: "Houses", kind: "spot" },
+    { d: at("pond"), name: "Pond", kind: "spot" },
+    { d: at("field"), name: "Sprout field", kind: "spot" },
+    { d: at("forest"), name: "Forest", kind: "zone" },
+    { d: vec(ADAM.home), name: "ADAM", kind: "spot" },
+    ...PETS.map((p) => ({ d: vec(p.home), name: `🐾 ${p.name}`, kind: "spot" })),
   ];
 }
 

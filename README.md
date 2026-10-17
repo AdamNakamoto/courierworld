@@ -146,7 +146,7 @@ cd contracts
 `./dev.sh` deploys local drops and writes `multiplayer/.dev.vars`, so `npx wrangler dev` runs them too (token
 drops need the launchpad: `./dev.sh --fork`). `StampHunt.sol`, the $STAMP-only version, was never deployed.
 
-## The moon and Mars
+## The moon, Mars and Frenpet World
 
 The neon district's rocket flies couriers to two small worlds, each built the first time someone goes: the moon
 (`web/moon.js`, rules in `web/moon-pick.js`: radius 12 m, gravity 0.35 of the planet's, craters, the moon frogs and
@@ -161,6 +161,23 @@ that one under you. The painted sky has a "space" mode for the moon and a "mars"
 
 The rover is a ride (`rides.js`): hopping in swaps your courier onto it, and it's parked where
 you hop out (back in the garage when you fly home).
+
+**Frenpet World** (`web/fren.js`, rules in `web/fren-pick.js`, pixel art in `web/fren-art.js`): the Frenpet pets'
+green world, where IMD was born, made at Frenpet's request with their pets' own designs (used with Frenpet's
+approval). Radius 15 m, gravity 0.85, a 300 $STAMP ticket to the treasury for an hour. While you're there the post
+pass (`world.js`, the `fren` uniform) draws everything in chunky pixels and Frenpet's four greens (strong colours,
+such as a pat's purple hearts and the tower's red roof, keep theirs), over a flat mint sky with blocky clouds. Its
+places are a pet statue on the plaza, a log cabin, fences, blocky trees, a windmill, houses, a pond, a sprout field,
+a forest round the far side, the stone tower (ADAM, IMD's founder, at its door: a local to talk to) and a floating
+island. Twelve pets (cats, dogs, dragons, pandas, a penguin, a frog, a sheep and a monkey) are camera-facing pixel
+sprites that wander within 1.8 m of their homes. E by a pet sits you down to pat it (`character.js` `setPat`: sat on
+the ground, the right hand patting): it hops in front of you, hearts float up and it greets you by how well it knows
+you; E pats again, walking gets you up, and a box says something to it. The room keeps each wallet's friendships
+(`pet:<wallet>`: pet id -> days patted and the last UTC day it grew): `["pat", petId]` (sent right after a fresh
+position, like a cast) from a signed-in courier on Frenpet World with its ticket, within `PAT_REACH` of that pet's
+home, adds a day once a UTC day per pet (`["petok", id, days, grew]`) and shows the others there `["pat", who, id]`;
+`["petsay", petId, text]` is cleaned like chat and shown to those near (`["petsay", who, id, text]`), never kept.
+`["pets", {id: days}]` comes on arrival (or on signing in there). Wrong-way answers are `["nope", -6, why]`.
 
 A ticket is sent from the player's wallet to the treasury (`chain.ticket(world)`: 100 $STAMP for the moon, 200 for
 Mars), good for an hour. The room checks it (`["ticket", world, txHash]`): a successful transaction from the player's

@@ -19,6 +19,8 @@ import { createStamps } from "./stamps.js";
 import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { createMoon } from "./moon.js";
 import { createMars } from "./mars.js";
+import { createFren } from "./fren.js";
+import { friendTier, PETS as FREN_PETS } from "./fren-pick.js";
 import { TRIPS } from "./trips.js";
 import { parseMeta } from "./pad-rules.js";
 import { createDistrict } from "./district.js";
@@ -28,7 +30,7 @@ import { createFollower } from "./companions.js";
 import { COMPANION_IDS, companionOf } from "./companion-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, bonusCap } from "./bonus-rules.js";
 import { createFishing } from "./fishing.js";
-import { createMapOverlay, planetPlaces, marsPlaces, moonPlaces } from "./map.js";
+import { createMapOverlay, planetPlaces, marsPlaces, moonPlaces, frenPlaces } from "./map.js";
 import { fishOf } from "./fish-kinds.js";
 import { displayName } from "./names.js";
 
@@ -46,6 +48,7 @@ const planetGround = { key: "planet", R, center: new THREE.Vector3(), group: W.w
 const trips = {
   moon: { key: "moon", build: createMoon, w: null },
   mars: { key: "mars", build: createMars, w: null },
+  fren: { key: "fren", build: createFren, w: null },
 };
 let G = planetGround, away = null;
 /// Metres along the ground you're on between two directions.
@@ -349,6 +352,19 @@ const net = createNet(W, {
       if (away && ticketLeft(away.key) > 0) net.setWorld(away.key);
     }
     office?.huntChanged();
+  },
+  // Frenpet World: how well each pet knows you, and others patting pets and talking to them.
+  onPets(map) {
+    petFriends = map;
+  },
+  onPetPat(petId, on, who, root) {
+    const w = trips.fren.w;
+    if (!w) return;
+    if (on) w.patStart(petId, root ? root.position.clone().normalize() : w.group.position.clone().normalize(), who);
+    else w.patEnd(petId);
+  },
+  onPetSay(petId, text) {
+    setTimeout(() => trips.fren.w?.say(petId, petAnswer(petId, text)), 900);
   },
   onFound(day, spot, count, owner) {
     if (huntState && huntState.day === day && Number.isInteger(owner)) {
@@ -1009,6 +1025,10 @@ function interact() {
     if (gArc(me, w.rocket.d) < w.rocket.reach) return flyHome();
     if (player.rideKey === "rover") return hopOut();
     if (w.rover?.near(me)) return hopIn();
+    // Frenpet World: sit down by the pet next to you and pat it (again: another pat).
+    if (patting) return patAgain();
+    const pet = w.nearestPet?.(me, 1.7);
+    if (pet) return startPat(pet);
     const who = w.nearestLocal(me, 2.4);
     if (who) {
       who.talk(true);
@@ -1168,9 +1188,9 @@ function mapMode(on, now = false) {
     fishing?.cancel();
     map = { k: 0, closing: false, dist: mapFit(), from: world.quaternion.clone(), camFrom: camPos.clone(), lookFrom: camLook.clone() };
     map.to = new THREE.Quaternion().setFromUnitVectors(UP, MAP_DIR).multiply(world.quaternion);
-    mapUi.setPlaces(away ? (away.key === "mars" ? marsPlaces() : moonPlaces()) : planetPlaces(W, { board, account: chainRef?.account }));
+    mapUi.setPlaces(away ? (away.key === "mars" ? marsPlaces() : away.key === "fren" ? frenPlaces() : moonPlaces()) : planetPlaces(W, { board, account: chainRef?.account }));
     const me = localPos(), here = W.square && arc(me, W.square.d) < W.square.r ? W.square : W.terrain.zoneAt(me);
-    $("mapWhere").textContent = away ? (away.key === "mars" ? "Mars" : "The moon") : `You're in ${here.name}`;
+    $("mapWhere").textContent = away ? (away.key === "mars" ? "Mars" : away.key === "fren" ? "Frenpet World" : "The moon") : `You're in ${here.name}`;
     $("mapHint").textContent = matchMedia("(pointer: coarse)").matches ? "Drag to spin the world · pinch or +/− to zoom" : "Drag to spin the world · scroll or +/− to zoom · G or Esc to close";
     $("mapHint").style.animation = "none";
     void $("mapHint").offsetWidth; // (restart its fade)
@@ -1582,6 +1602,7 @@ function frame() {
     const run = keys.has("shift") || mag > 0.95 && joy.id !== null;
     const steering = mag > 0.05;
     if (steering && fishing?.busy()) fishing.cancel(); // (walking off reels the line in)
+    if (steering && patting) stopPat(); // (and gets you up from patting a pet)
     const want = new THREE.Vector2();
     if (steering) {
       facingCamera = false;
@@ -1812,7 +1833,7 @@ function showPad(on) {
 }
 /// Near the Launchpad's door, once per visit: how to walk in.
 let padHinted = false;
-// ---------------------------------------------------------------- trips: the moon and Mars
+// ---------------------------------------------------------------- trips: the moon, Mars and Frenpet World
 // Trips from the neon district's rocket on a ticket paid in $STAMP (trips.js; the worlds themselves are moon.js and
 // mars.js, each built the first time someone goes). While you're there it's what you walk on (G), the planet is put
 // away, space (or Mars's sky) is overhead, and the room shows you only to the others there.
@@ -1821,13 +1842,15 @@ let tripPick = "moon"; // the trip the card at the rocket shows
 const TRIP_TEXT = {
   moon: () => `Low gravity, craters, and Courier World hanging in a black sky. Meet the moon frogs at Moon Base and jump higher than you ever could at home. A ticket is ${TRIPS.moon.priceText} $STAMP to the Courier World treasury and lasts an hour; fly home whenever you like.`,
   mars: () => `A red world as big as ours: Mars City's glass domes by the spaceport, red mountains beyond, a canyon, a sleeping volcano, an ice cap and dust storms. Twenty Martians and astronauts to meet, and a rover to drive. A ticket is ${TRIPS.mars.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
+  fren: () => `The Frenpet pets' green pixel world, where IMD was born. Sit down by a pet and pat its head, say something nice, and it remembers you: every day you come back and pat it, you're better friends. ADAM waits at the old stone tower. A ticket is ${TRIPS.fren.priceText} $STAMP to the Courier World treasury and lasts an hour.`,
 };
 const WELCOME = {
   moon: () => `🌙 Welcome to the moon! Gravity is low, so jump. Moon Base is close by, and the rocket flies you home.`,
   mars: () => `🔴 Welcome to Mars! Mars City is just ahead, Pip's rover is in the garage (E to drive), and the rocket flies you home. Mind the dust storms.`,
+  fren: () => `🐾 Welcome to Frenpet World! Walk up to a pet and ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to sit down and pat it. They remember you.`,
 };
-const EMOJI = { moon: "🌙", mars: "🔴" };
-const NOUN = { moon: "Moon", mars: "Mars" };
+const EMOJI = { moon: "🌙", mars: "🔴", fren: "🐾" };
+const NOUN = { moon: "Moon", mars: "Mars", fren: "Frenpet World" };
 function tripWorld(trip) {
   if (!trip.w) {
     trip.w = trip.build(W);
@@ -1941,13 +1964,13 @@ function flyTo(k) {
   if (map) mapMode(false, true);
   if (away || flying) return;
   if (photo) photoMode(false);
-  flight(k === "mars" ? "🚀 Lift-off! Next stop, Mars" : "🚀 Lift-off!", () => {
+  flight(k === "mars" ? "🚀 Lift-off! Next stop, Mars" : k === "fren" ? "🚀 Lift-off! Next stop, Frenpet World" : "🚀 Lift-off!", () => {
     const trip = trips[k], w = tripWorld(trip);
     leftFrom = { q: playerQ.clone(), y: bodyY };
     [away, G, world] = [trip, w.ground, w.group];
     W.world.visible = false;
     w.group.visible = true;
-    W.setSky(k === "mars" ? "mars" : "space", w.group);
+    W.setSky(k === "mars" ? "mars" : k === "fren" ? "fren" : "space", w.group);
     standAt(w.arrival.d, w.arrival.tangent);
     companionHere(); // (it flew with you)
     net.setWorld(k);
@@ -1960,6 +1983,7 @@ function flyHome(why = null) {
   if (!away || flying) return;
   if (photo) photoMode(false);
   const trip = away;
+  stopPat();
   flight("🌍 Back to Courier World", () => {
     if (player.rideKey === "rover") hopOut(false);
     trip.w.rover?.home();
@@ -1986,7 +2010,7 @@ function rocketHint(p) {
   const d = arc(p, r.d);
   if (!rocketHinted && d < r.reach + 0.6) {
     rocketHinted = true;
-    toast(`🚀 The Space Express: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to fly to the moon or Mars`);
+    toast(`🚀 The Space Express: ${matchMedia("(pointer: coarse)").matches ? "tap Hi" : "press E"} to fly to the moon, Mars or Frenpet World`);
   } else if (rocketHinted && d > r.reach + 6) rocketHinted = false;
 }
 
@@ -2017,11 +2041,12 @@ const angleTo = (d) => {
 /// dust storms on Mars, and home when the ticket runs out.
 function tripTick(p, dt, t) {
   const trip = away, w = trip.w, k = trip.key, left = ticketLeft(k);
-  if (huntState?.wallet && left <= 0 && !flying) return flyHome(`Your ${NOUN[k].toLowerCase()} ticket ran out, so the rocket brought you home.`);
+  if (huntState?.wallet && left <= 0 && !flying) return flyHome(`Your ${k === "fren" ? NOUN[k] : NOUN[k].toLowerCase()} ticket ran out, so the rocket brought you home.`);
   const ticket = huntState?.wallet ? ` · ticket ${minutes(left)}` : "";
   const home = w.rocket, dd = gArc(p, home.d);
   $("target").textContent = `${EMOJI[k]} ${NOUN[k]}${ticket}`;
   pointArrow(angleTo(home.d), dd < home.reach ? "· E to fly home" : `· rocket ${Math.round(dd)}m`, dd < home.reach);
+  if (k === "fren") petHint(p);
   w.update(dt, t, { me: p });
   trip.puffs.update(dt, 1);
   if (w.rover) {
@@ -2032,6 +2057,89 @@ function tripTick(p, dt, t) {
       stormSaid = true;
       toast("🌪️ A dust storm is blowing in! It passes in a minute or so.");
     } else if (w.dust < 0.02) stormSaid = false;
+  }
+}
+
+// ---------------------------------------------------------------- Frenpet World's pets
+// Sit down by a pet (E, or Hi on a phone) and it hops over in front of you to be patted: hearts, a happy bounce, a
+// line in a bubble, and (signed in) the room counts it: one more day of friendship, once a UTC day per pet
+// (fren-pick.js). While you sit, E pats again and the box at the bottom says something to it; walking gets you up.
+let patting = null; // { pet } while you sit by one
+let petFriends = {}; // pet id -> days of friendship with you (from the room)
+let petHinted = false;
+const PET_SOUND = { cat: "Mrrp!", dog: "Woof!", dragon: "Rawr!", panda: "Mmf!", penguin: "Squee!", frog: "Ribbit!", sheep: "Baa!", monkey: "Ook ook!" };
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+/// What a pet says when you sit down by it, by how well it knows you.
+function petGreeting(pet) {
+  const n = petFriends[pet.id] ?? 0, s = PET_SOUND[pet.kind] ?? "!";
+  if (n >= 14) return pick([`${s} My favourite human!`, `${s} You came back again! You always do.`, `${s} I saved you the sunny spot.`]);
+  if (n >= 3) return pick([`${s} It's you! I remember you.`, `${s} Pats please. The good ones.`, `${s} I was hoping you'd come.`]);
+  if (n >= 1) return pick([`${s} Oh, hi again!`, `${s} You smell familiar.`, `${s} Back for more pats?`]);
+  return pick([`${s} *sniff sniff* Who are you?`, `${s} A courier! From the big planet?`, `${s} Hello, stranger.`]);
+}
+/// A pet's answer to something said to it.
+function petAnswer(petId, text) {
+  const pet = trips.fren.w ? PETS_BY_ID[petId] : null, s = PET_SOUND[pet?.kind] ?? "!";
+  if (/love|cute|good|best|sweet|friend|❤|💜/i.test(text)) return pick([`${s} ❤`, `${s} *happy wiggle*`, `${s} I love you too!`]);
+  if (/\?$/.test(text.trim())) return pick([`${s} *tilts head*`, `${s} Hmm... yes!`, `${s} Maybe? Pat me and I'll tell you.`]);
+  return pick([`${s}`, `${s} *listens*`, `${s} *purrs and nods*`, `${s} Tell me more!`]);
+}
+const PETS_BY_ID = Object.fromEntries(FREN_PETS.map((p) => [p.id, p]));
+function startPat(pet) {
+  const w = away.w, me = localPos();
+  patting = { pet };
+  vel.set(0, 0);
+  player.ch.setPat?.(1);
+  w.patStart(pet.id, me, "me", me.clone().multiplyScalar(G.R).addScaledVector(ahead(), 0.62).normalize());
+  w.say(pet.id, petGreeting(pet));
+  sounds.collect?.();
+  $("petSayText").placeholder = `Say something to ${pet.name}…`;
+  $("petSay").hidden = false;
+  if (!signedIn()) return toast(`Sign in (the rocket's card asks you) and ${pet.name} will remember you.`);
+  net.pat(pet.id).then(({ n, grew }) => {
+    petFriends[pet.id] = n;
+    const t = friendTier(n);
+    w.hearts(pet.id, grew ? 5 : 2);
+    if (grew) toast(`💜 ${pet.name} remembers you: ${n} day${n === 1 ? "" : "s"} of friendship · ${t.name} ${"♥".repeat(t.hearts)}${t.next ? ` · ${t.next - n} more day${t.next - n === 1 ? "" : "s"} to the next` : ""}`);
+  }).catch((e) => toast(explain(e), "error"));
+}
+function patAgain() {
+  const w = away?.w;
+  if (!patting || !w) return;
+  w.hearts(patting.pet.id, 2);
+  if (Math.random() < 0.35) w.say(patting.pet.id, `${PET_SOUND[patting.pet.kind] ?? "!"} ${pick(["*purr*", "*happy*", "More!", "Hehe", "❤"])}`, 2.5);
+}
+function stopPat() {
+  if (!patting) return;
+  away?.w?.patEnd?.(patting.pet.id);
+  player.ch.setPat?.(0);
+  $("petSay").hidden = true;
+  $("petSayText").blur();
+  patting = null;
+}
+$("petSay").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("petSayText").value.trim();
+  if (!text || !patting) return;
+  $("petSayText").value = "";
+  const pet = patting.pet;
+  net.petSay(pet.id, text);
+  setTimeout(() => patting?.pet === pet && away?.w?.say(pet.id, petAnswer(pet.id, text)), 900);
+});
+/// On Frenpet World, each frame: the pet next to you and how well it knows you (and a hint, once a visit).
+function petHint(p) {
+  const w = away.w;
+  if (patting) {
+    $("target").textContent = `🐾 Patting ${patting.pet.name} · ${matchMedia("(pointer: coarse)").matches ? "Hi" : "E"} to pat again · walk to get up`;
+    return;
+  }
+  const pet = w.nearestPet?.(p, 1.7);
+  if (!pet) return;
+  const n = petFriends[pet.id] ?? 0, t = friendTier(n);
+  $("target").textContent = `🐾 ${pet.name} · ${t.name} ${"♥".repeat(t.hearts)} · ${matchMedia("(pointer: coarse)").matches ? "Hi" : "E"} to sit & pat`;
+  if (!petHinted) {
+    petHinted = true;
+    toast(`🐾 ${pet.name}! ${matchMedia("(pointer: coarse)").matches ? "Tap Hi" : "Press E"} to sit down and pat.`);
   }
 }
 
