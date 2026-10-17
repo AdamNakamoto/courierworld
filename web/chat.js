@@ -111,6 +111,8 @@ export function createChat(net, { toast, me = () => null, myName = () => null })
     open,
     close,
     get isOpen() { return box.classList.contains("open"); },
+    /// Whether a line from `l` ({ id, name }) would be shown (chat on, not muted): for what's said to Frenpet World's pets.
+    allows: (l) => enabled && !muted.has(muteKey(l)),
     /// A new line from the room: shown in the box and as a bubble over whoever said it.
     add(l) {
       if (!enabled || muted.has(muteKey(l))) return;

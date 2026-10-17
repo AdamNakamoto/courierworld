@@ -419,7 +419,7 @@ const POST_FRAG = /* glsl */ `
   uniform float stars, overcast, space, mars, dust, fren;
   varying vec2 vUv;
   // Frenpet World's look: the screen in chunky pixels (FREN_ROWS of them top to bottom) and Frenpet's four greens.
-  const float FREN_ROWS = 220.0;
+  const float FREN_ROWS = 260.0;
   // (Linear values of #151a16, #6b8570, #a7c0aa and #dcfde6: this pass works in linear colour.)
   const vec3 FREN_K = vec3(0.0075, 0.0103, 0.0080), FREN_D = vec3(0.1470, 0.2346, 0.1620), FREN_G = vec3(0.3864, 0.5271, 0.4020), FREN_L = vec3(0.7157, 0.9823, 0.7913);
 
@@ -1333,6 +1333,37 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
   const colorRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(1, 1) });
   const normalRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
   const normalMat = cutaway(new THREE.MeshNormalMaterial());
+  // Sprites can't go through the normal pass (it draws every mesh with one material), so the ink pass would outline
+  // whatever stands behind them, right across them. A sprite given a "flat twin" (flatNormals) has its shape drawn
+  // into the normal pass as a surface facing the camera, after the meshes, so it's outlined as itself. The twins live
+  // on their own layer: the colour pass never sees them.
+  const FLAT_LAYER = 3, flatTwins = [];
+  const flatOut = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace("outgoingLight = diffuseColor.rgb;", "outgoingLight = vec3(0.5, 0.5, 1.0); diffuseColor.a = 1.0;");
+  };
+  function flatNormals(sprite, { depthTest = true } = {}) {
+    const m = new THREE.SpriteMaterial({ map: sprite.material.map, alphaTest: Math.max(0.5, sprite.material.alphaTest || 0), depthTest, transparent: false });
+    m.onBeforeCompile = flatOut;
+    const twin = new THREE.Sprite(m);
+    twin.center.copy(sprite.center);
+    twin.layers.set(FLAT_LAYER);
+    sprite.add(twin);
+    flatTwins.push(twin);
+    return twin;
+  }
+  /// Let a twin go (its sprite is being thrown away).
+  function dropFlatNormals(twin) {
+    const i = flatTwins.indexOf(twin);
+    if (i >= 0) flatTwins.splice(i, 1);
+    twin.removeFromParent();
+    twin.material.dispose();
+  }
+  /// Whether a twin is in the scene and everything up to it is shown.
+  const shown = (o) => {
+    let x = o;
+    for (; x.parent; x = x.parent) if (!x.visible) return false;
+    return x === scene && scene.visible;
+  };
   const post = new THREE.ShaderMaterial({
     vertexShader: POST_VERT,
     fragmentShader: POST_FRAG,
@@ -1523,12 +1554,24 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     gl.render(scene, camera);
     scene.overrideMaterial = null;
     for (const o of noNormals) o.visible = true;
+    // (The sprites' flat twins, on top of the meshes' normals: only when some are out, e.g. on Frenpet World.)
+    if (flatTwins.some(shown)) {
+      const mask = camera.layers.mask, clear = gl.autoClear;
+      camera.layers.set(FLAT_LAYER);
+      gl.autoClear = false;
+      gl.render(scene, camera);
+      gl.autoClear = clear;
+      camera.layers.mask = mask;
+    }
     gl.setRenderTarget(null);
     gl.render(postScene, postCam);
   }
 
   return {
     scene, camera, world, render, obstacles, addresses, spawn, noNormals, frameAt, nearestRoad, setTimeOfDay,
+    /// Give a sprite a flat twin in the normal pass, so the ink pass outlines it rather than what's behind it. Keep
+    /// the twin's material map in step with the sprite's if that changes.
+    flatNormals, dropFlatNormals,
     /// Whether a spot on the planet (with this much room around it) is inside something solid or under water.
     blocked,
     /// Lots for the players' post offices ({ d, spin }), nearest the main post office first.

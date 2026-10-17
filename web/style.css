@@ -436,6 +436,7 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .pet-say { position: fixed; left: 50%; bottom: 104px; transform: translateX(-50%); z-index: 11; display: flex; gap: 6px; width: min(420px, calc(100vw - 32px));
   background: #fff; border: 3px solid #151a16; padding: 6px; box-shadow: 4px 4px 0 #151a16; }
 .pet-say[hidden] { display: none; }
+@media (hover: none), (max-width: 640px) { .pet-say { top: 96px; bottom: auto; } } /* (clear of the joystick and Jump) */
 .pet-say input { flex: 1; min-width: 0; font: 600 16px ui-monospace, Menlo, monospace; border: 0; outline: none; background: transparent; color: #151a16; padding: 4px; }
 .pet-say button { font: 700 14px ui-monospace, Menlo, monospace; background: #dcfde6; color: #151a16; border: 2px solid #151a16; padding: 4px 12px; cursor: pointer; }
 .trip-pick .pbtn[aria-selected="true"] { background: var(--ink); color: #fbf8ef; }

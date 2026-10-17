@@ -33,24 +33,42 @@ export const PLACES = {
   forest: [-0.6, 30], // round the far side
 };
 
+/// How far round each place its building (or pond, or field) reaches, in metres: pets live just outside.
+const YARD = { plaza: 2.6, cabin: 3.0, tower: 3.2, windmill: 2.2, houses: 3.0, pond: 3.4, field: 2.4, forest: 0 };
+const norm = (v) => {
+  const l = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / l, v[1] / l, v[2] / l];
+};
+/// `m` metres from `d` toward `to` (any direction on the world), then `side` metres to the right of that way.
+function stepToward(d, to, m, side = 0) {
+  const k = d[0] * to[0] + d[1] * to[1] + d[2] * to[2];
+  const t = norm([to[0] - d[0] * k, to[1] - d[1] * k, to[2] - d[2] * k]), a = m / FREN_R;
+  const p = norm(d.map((v, i) => v * Math.cos(a) + t[i] * Math.sin(a)));
+  if (!side) return p;
+  const r = norm([p[1] * t[2] - p[2] * t[1], p[2] * t[0] - p[0] * t[2], p[0] * t[1] - p[1] * t[0]]), b = side / FREN_R;
+  return norm(p.map((v, i) => v * Math.cos(b) + r[i] * Math.sin(b)));
+}
+
 /// The pets: { id, kind (fren-art.js PET_ART), name, home (a direction), wander (metres from home they roam) }.
-/// Ids never change (friendship is stored by them); add new pets at the end.
+/// Each lives just outside its place on the side toward the pad (or, `far`, the side away from it: the plaza's pets,
+/// so they're not under the rocket) ([place, metres to the side, far]), never in a building or the pond. Ids never
+/// change (friendship is stored by them); add new pets at the end.
 export const PETS = [
-  ["mochi", "cat", "Mochi", "plaza", 0.9, 1.6],
-  ["biscuit", "dog", "Biscuit", "cabin", -0.7, 2.2],
-  ["ember", "dragon", "Ember", "tower", 0.6, 3.2],
-  ["bao", "panda", "Bao", "pond", -0.5, 2.6],
-  ["waddles", "penguin", "Waddles", "pond", 0.7, 2.8],
-  ["hopper", "frog", "Hopper", "pond", 0, 3.4],
-  ["wooly", "sheep", "Wooly", "field", 0.4, 2.0],
-  ["momo", "monkey", "Momo", "windmill", -0.6, 2.4],
-  ["pixel", "cat", "Pixel", "houses", -0.5, 2.0],
-  ["nugget", "dog", "Nugget", "plaza", -0.9, 2.4],
-  ["tofu", "panda", "Tofu", "forest", 0.5, 2.5],
-  ["smokey", "dragon", "Smokey", "forest", -0.6, 3.0],
-].map(([id, kind, name, place, turn, off]) => {
+  ["mochi", "cat", "Mochi", "plaza", 1.2, true],
+  ["biscuit", "dog", "Biscuit", "cabin", -1.4],
+  ["ember", "dragon", "Ember", "tower", 1.6],
+  ["bao", "panda", "Bao", "pond", -1.8],
+  ["waddles", "penguin", "Waddles", "pond", 1.8],
+  ["hopper", "frog", "Hopper", "pond", 0],
+  ["wooly", "sheep", "Wooly", "field", 0.8],
+  ["momo", "monkey", "Momo", "windmill", -1.0],
+  ["pixel", "cat", "Pixel", "houses", -0.8],
+  ["nugget", "dog", "Nugget", "plaza", -1.6, true],
+  ["tofu", "panda", "Tofu", "forest", 2.0],
+  ["smokey", "dragon", "Smokey", "forest", -2.0],
+].map(([id, kind, name, place, side, far = false]) => {
   const [az, m] = PLACES[place];
-  return { id, kind, name, place, home: fromPad(az + turn * (off / m), m + (turn >= 0 ? 0.6 : -0.6)), wander: 1.8 };
+  return { id, kind, name, place, home: stepToward(fromPad(az, m), far ? LANDING.map((v) => -v) : LANDING, YARD[place] + 1.4, side), wander: 1.8 };
 });
 export const PET_IDS = PETS.map((p) => p.id);
 export const petById = (id) => PETS.find((p) => p.id === id) ?? null;

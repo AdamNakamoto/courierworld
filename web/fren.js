@@ -46,8 +46,10 @@ function bubbleTex(text) {
   let line = "";
   for (const w of words) {
     const next = line ? `${line} ${w}` : w;
-    if (g.measureText(next).width > 420 && line) [lines, line] = [[...lines, line], w];
-    else line = next;
+    if (g.measureText(next).width > 420 && line) {
+      lines.push(line);
+      line = w;
+    } else line = next;
   }
   if (line) lines.push(line);
   const shown = lines.slice(0, 3), w = Math.min(460, Math.max(...shown.map((l) => g.measureText(l).width))) + 40, h = shown.length * 38 + 30;
@@ -125,6 +127,7 @@ export function createFren(W) {
   const circle = (d, r, opts = {}) => obstacles.push({ d, kind: "circle", r, ...opts, cos: Math.cos((r + 1) / FREN_R) });
   const keepOut = [{ d: top, r: 3.2 }]; // (trees and tufts stay clear of these)
   const free = (d, r) => !keepOut.some((k) => farc(k.d, d) < k.r + r);
+  for (const p of PETS) keepOut.push({ d: D(p.home), r: 1.6 }); // (nothing grows where a pet lives)
 
   // Colours, before the post pass folds them into four greens (by brightness: light, mid, dark, ink).
   const C = { grass: 0xcdeed6, path: 0xf4fff7, wood: 0x98ab92, woodDark: 0x6f8170, roof: 0x5c6d5f, ink: 0x27312a, canopy: 0x3a4a3e, trunk: 0x56483a, stone: 0xb3bcb2, light: 0xe9f5ea, water: 0x86b2a6, red: 0xc9443a };
@@ -196,6 +199,7 @@ export function createFren(W) {
     cat.position.y = 0.82;
     g.add(cat);
     W.noNormals.push(cat);
+    W.flatNormals?.(cat); // (outlined as itself, not the plinth behind it)
     place(g, d);
     circle(d, 0.95, { y1: 2.3 });
     keepOut.push({ d, r: 2.6 });
@@ -482,19 +486,27 @@ export function createFren(W) {
   // ---- the pets: sprites that wander near their homes, hop as they walk, face the way they go, and stop to be patted
   const petTex = {};
   for (const k of Object.keys(PET_ART)) petTex[k] = [pixelTex(PET_ART[k]), pixelTex(PET_ART[k], { flip: true })];
+  // (A small pixel shadow under each pet sits it on the ground, and stays put while it hops.)
+  const shadowGeo = new THREE.CircleGeometry(1, 10), shadowMat = new THREE.MeshBasicMaterial({ color: 0x8aa491 });
   const pets = PETS.map((p, i) => {
-    const art = PET_ART[p.kind], tall = p.kind === "dragon" ? 1.15 : 1.0;
+    const art = PET_ART[p.kind], tall = p.kind === "dragon" ? 1.3 : 1.15;
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: petTex[p.kind][0], alphaTest: 0.5 }));
     spr.center.set(0.5, 0);
     spr.scale.set(tall * (art[0].length / art.length), tall, 1);
     group.add(spr);
     W.noNormals.push(spr);
+    const twin = W.flatNormals?.(spr) ?? null;
+    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+    shadow.scale.set(spr.scale.x * 0.42, spr.scale.x * 0.42, 1);
+    group.add(shadow);
     const home = D(p.home);
-    keepOut.push({ d: home, r: 0.6 });
-    return { ...p, spr, tall, homeV: home, at: home.clone(), to: home.clone(), mode: "idle", wait: 1 + (i % 5), ph: i * 1.7, right: i % 2 === 0, patBy: 0, look: null };
+    return { ...p, spr, twin, shadow, tall, homeV: home, at: home.clone(), to: home.clone(), mode: "idle", wait: 1 + (i % 5), ph: i * 1.7, right: i % 2 === 0, patters: new Map(), look: null };
   });
+  const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
   const placePet = (p, hop) => {
     p.spr.position.copy(p.at).multiplyScalar(FREN_R + hop);
+    p.shadow.position.copy(p.at).multiplyScalar(FREN_R + 0.015);
+    p.shadow.quaternion.copy(W.frameAt(p.at, 0)).multiply(flat);
   };
 
   // Hearts that float up from a patted pet (a small pool), and the bubbles pets say things in.
@@ -518,17 +530,20 @@ export function createFren(W) {
   let bubble = null; // { s (sprite), pet, left (seconds) }
   function petSay(p, text, secs = 4.5) {
     if (bubble) {
+      if (bubble.twin) W.dropFlatNormals?.(bubble.twin);
+      W.noNormals.splice(W.noNormals.indexOf(bubble.s) >>> 0, 1);
       group.remove(bubble.s);
       bubble.s.material.map.dispose();
       bubble.s.material.dispose();
     }
     const { t, aspect } = bubbleTex(text), s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }));
     s.center.set(0.5, 0);
-    s.scale.set(0.62 * aspect, 0.62, 1);
+    s.scale.set(0.85 * aspect, 0.85, 1); // (big enough to read through the chunky pixels)
     s.renderOrder = 5;
     group.add(s);
     W.noNormals.push(s);
-    bubble = { s, pet: p, left: secs };
+    const twin = W.flatNormals?.(s, { depthTest: false }) ?? null; // (no lines through the words)
+    bubble = { s, twin, pet: p, left: secs };
   }
 
   // ADAM, IMD's founder, at the tower door: someone to talk to (E), like the moon's frogs.
@@ -538,9 +553,10 @@ export function createFren(W) {
     g.add(body);
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: pixelTex(ADAM_ART), alphaTest: 0.5 }));
     spr.center.set(0.5, 0);
-    spr.scale.set(1.6 * (20 / 23), 1.6, 1);
+    spr.scale.set(1.75 * (20 / 23), 1.75, 1);
     body.add(spr);
     W.noNormals.push(spr);
+    W.flatNormals?.(spr);
     const d = D(ADAM.home);
     g.position.copy(d).multiplyScalar(FREN_R);
     g.quaternion.copy(facing(d, top.clone().sub(d)));
@@ -581,22 +597,22 @@ export function createFren(W) {
     },
     /// Courier `who` (an id, or "me") sits by pet `id` at `me` (a direction): it stops, turns to them and is happy.
     /// `front` (yours): where in front of you it hops to, to be patted (never further than a short hop from its home).
+    /// (Others' pats wear off after a while if no word comes that they got up: a lost connection, say.)
     patStart(id, me, who = "me", front = null) {
       const p = pets.find((x) => x.id === id);
       if (!p) return;
-      p.patBy = (p.patBy ?? 0) + 1;
-      p.look = me.clone();
+      p.patters.set(who, who === "me" ? Infinity : performance.now() + 60_000);
+      if (me) p.look = me.clone();
       if (front && farc(front, p.homeV) < p.wander + 1.5) p.at.copy(front);
       p.mode = "pat";
       p.wait = 0;
       burst(p, 3);
-      p.patWho = who;
     },
-    patEnd(id) {
+    patEnd(id, who = "me") {
       const p = pets.find((x) => x.id === id);
       if (!p) return;
-      p.patBy = Math.max(0, (p.patBy ?? 1) - 1);
-      if (!p.patBy) {
+      p.patters.delete(who);
+      if (!p.patters.size && p.mode === "pat") {
         p.mode = "idle";
         p.wait = 1.5;
       }
@@ -623,6 +639,8 @@ export function createFren(W) {
       for (const p of pets) {
         let hop = 0;
         if (p.mode === "pat") {
+          for (const [who, until] of p.patters) if (performance.now() > until) p.patters.delete(who);
+          if (!p.patters.size) [p.mode, p.wait] = ["idle", 1.5];
           // Turned to whoever's patting, bouncing happily now and then.
           if (p.look) p.right = tmp.copy(p.look).sub(p.at).dot(camRight) > 0;
           hop = Math.max(0, Math.sin(t * 7 + p.ph)) * 0.06;
@@ -649,7 +667,10 @@ export function createFren(W) {
         }
         placePet(p, hop);
         const want = petTex[p.kind][p.right ? 0 : 1];
-        if (p.spr.material.map !== want) p.spr.material.map = want;
+        if (p.spr.material.map !== want) {
+          p.spr.material.map = want;
+          if (p.twin) p.twin.material.map = want;
+        }
         // Breathing when still, squash on landing when hopping.
         const sq = p.mode === "walk" ? 1 - 0.06 * Math.max(0, Math.cos(t * 18 + p.ph * 2)) : 1 + 0.02 * Math.sin(t * 2.4 + p.ph);
         p.spr.scale.y = p.tall * sq;
@@ -669,6 +690,8 @@ export function createFren(W) {
         bubble.left -= dt;
         bubble.s.position.copy(bubble.pet.at).multiplyScalar(FREN_R + bubble.pet.tall + 0.35);
         if (bubble.left <= 0) {
+          if (bubble.twin) W.dropFlatNormals?.(bubble.twin);
+          W.noNormals.splice(W.noNormals.indexOf(bubble.s) >>> 0, 1);
           group.remove(bubble.s);
           bubble.s.material.map.dispose();
           bubble.s.material.dispose();

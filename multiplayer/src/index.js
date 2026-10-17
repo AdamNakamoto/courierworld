@@ -1388,10 +1388,16 @@ export class Planet extends DurableObject {
     if (!pet) return;
     if (worldOf(a) !== "fren" || !(a.frenUntil > now)) return nope("You need to be on Frenpet World for that.");
     if (m[0] === "petsay") {
+      // (Chat's rules: cleaned, one line every CHAT_EVERY_MS, not the same line twice in 30 s, and the room-wide cap.
+      // Only once they're somewhere on Frenpet World, so it reaches just those there.)
+      if (!a.s) return;
       const r = cleanChat(m[2]);
-      if (r.error) return send(ws, ["chatno", r.error]);
-      if (now - (a.chatAt ?? 0) < CHAT_EVERY_MS) return send(ws, ["chatno", "Slow down a little."]);
-      a.chatAt = now;
+      if (r.error) return nope(r.error);
+      if (now - (a.chatAt ?? 0) < CHAT_EVERY_MS) return nope("Slow down a little.");
+      if (r.text === a.chatLast && now - a.chatAt < 30_000) return nope("You just said that.");
+      if (!(now - this.chatT0 < 5000)) [this.chatT0, this.chatN] = [now, 0];
+      if (++this.chatN > CHAT_ROOM_MAX) return nope("It's busy here. Try again in a moment.");
+      [a.chatAt, a.chatLast] = [now, r.text];
       ws.serializeAttachment(a);
       return this.broadcast(ws, ["petsay", a.id, pet.id, r.text], a.s);
     }
@@ -1399,7 +1405,11 @@ export class Planet extends DurableObject {
     if ((a.strikes ?? 0) >= 3) return nope("Something looked off with your movement. Reload to try again.");
     if (!a.s || now - a.sAt > 4000) return nope("Hold still a moment, then try again.");
     if (arcBetween(a.s, pet.home, FREN_R) > PAT_REACH) return nope(`You're not close enough to ${pet.name}.`);
-    if (now - (a.patAt ?? 0) < 1500) return; // (a pat at a time)
+    if (now - (a.patAt ?? 0) < 1500) {
+      // (A pat at a time: another this soon just hears how things stand.)
+      const r = (await this.petsOf(a.wallet))[pet.id];
+      return send(ws, ["petok", pet.id, r?.n ?? 0, 0]);
+    }
     a.patAt = now;
     ws.serializeAttachment(a);
     this.broadcast(ws, ["pat", a.id, pet.id], a.s);

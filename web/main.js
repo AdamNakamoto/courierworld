@@ -357,12 +357,13 @@ const net = createNet(W, {
   onPets(map) {
     petFriends = map;
   },
-  onPetPat(petId, on, who, root) {
+  onPetPat(petId, on, who, dir) {
     const w = trips.fren.w;
     if (!w) return;
-    if (on) w.patStart(petId, root ? root.position.clone().normalize() : w.group.position.clone().normalize(), who);
-    else w.patEnd(petId);
+    if (on) w.patStart(petId, dir, who);
+    else w.patEnd(petId, who);
   },
+  allowSay: (l) => chatUI.allows(l),
   onPetSay(petId, text) {
     setTimeout(() => trips.fren.w?.say(petId, petAnswer(petId, text)), 900);
   },
@@ -2095,7 +2096,7 @@ function startPat(pet) {
   sounds.collect?.();
   $("petSayText").placeholder = `Say something to ${pet.name}…`;
   $("petSay").hidden = false;
-  if (!signedIn()) return toast(`Sign in (the rocket's card asks you) and ${pet.name} will remember you.`);
+  if (!signedIn()) return toast(`Sign in to the treasure hunt (Post Office panel, P) and ${pet.name} will remember you.`);
   net.pat(pet.id).then(({ n, grew }) => {
     petFriends[pet.id] = n;
     const t = friendTier(n);
@@ -2111,7 +2112,7 @@ function patAgain() {
 }
 function stopPat() {
   if (!patting) return;
-  away?.w?.patEnd?.(patting.pet.id);
+  away?.w?.patEnd?.(patting.pet.id, "me");
   player.ch.setPat?.(0);
   $("petSay").hidden = true;
   $("petSayText").blur();
@@ -2130,11 +2131,12 @@ $("petSay").addEventListener("submit", (e) => {
 function petHint(p) {
   const w = away.w;
   if (patting) {
+    player.ch.setPat?.(1); // (kept on, even if you switch courier while sitting)
     $("target").textContent = `🐾 Patting ${patting.pet.name} · ${matchMedia("(pointer: coarse)").matches ? "Hi" : "E"} to pat again · walk to get up`;
     return;
   }
   const pet = w.nearestPet?.(p, 1.7);
-  if (!pet) return;
+  if (!pet || gArc(p, w.rocket.d) < w.rocket.reach) return; // (by the rocket, E flies you home: no pat hint)
   const n = petFriends[pet.id] ?? 0, t = friendTier(n);
   $("target").textContent = `🐾 ${pet.name} · ${t.name} ${"♥".repeat(t.hearts)} · ${matchMedia("(pointer: coarse)").matches ? "Hi" : "E"} to sit & pat`;
   if (!petHinted) {

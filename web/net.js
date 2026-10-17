@@ -293,7 +293,7 @@ function along(p) {
 export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {}, onBonus = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
-  onFish = () => {}, onFishNews = () => {}, onPets = () => {}, onPetPat = () => {}, onPetSay = () => {},
+  onFish = () => {}, onFishNews = () => {}, onPets = () => {}, onPetPat = () => {}, onPetSay = () => {}, allowSay = () => true,
   world = (w) => (w === "planet" ? { group: W.world, r: R, terrain: W.terrain } : null),
 }) {
   const players = new Map(); // id -> { hello, root, rider, tag, follower, pos, fwd, target, h, air, spd, swim, wave }
@@ -408,6 +408,7 @@ export function createNet(W, {
   function remove(id) {
     const p = players.get(id);
     if (!p) return;
+    if (p.patting) patUp(p); // (the pet they were patting goes back to its day)
     p.root.parent?.remove(p.root);
     W.noNormals.splice(W.noNormals.indexOf(p.tag), 1);
     p.tag.material.map.dispose();
@@ -518,6 +519,7 @@ export function createNet(W, {
       case "world": {
         const p = players.get(m[1]);
         if (!p) return;
+        if (p.patting) patUp(p);
         p.world = WORLDS.includes(m[2]) ? m[2] : "planet";
         [p.target, p.placed] = [null, false];
         p.root.visible = false;
@@ -583,15 +585,18 @@ export function createNet(W, {
         const p = players.get(m[1]);
         if (!p || typeof m[2] !== "string") return;
         if (p.patting && p.patting !== m[2]) patUp(p);
+        const again = p.patting === m[2];
         [p.patting, p.patUntil] = [m[2], performance.now() + 45_000];
         p.rider.ch.setPat?.(1);
-        onPetPat(m[2], true, p.id, p.root.visible ? p.root : null);
+        if (!again) onPetPat(m[2], true, p.id, p.target?.p?.clone() ?? null); // (where they are, for the pet to face)
         return;
       }
       case "petsay": {
         // Something someone said to a pet: over their head, and the pet answers (main.js).
         const p = players.get(m[1]);
         if (!p || typeof m[3] !== "string") return;
+        // (Chat's rules for what you see: chat off, or that player muted, and it isn't shown.)
+        if (!allowSay({ id: String(p.id), name: p.hello?.name ?? (p.hello?.addr ? `${p.hello.addr.slice(0, 6)}…${p.hello.addr.slice(-4)}` : "Guest") })) return;
         if (p.root.visible) emotes.say(p.rider.group, m[3], p.rider.ride ? 3.2 : 2.85);
         onPetSay(m[2], m[3], p.id);
         return;
