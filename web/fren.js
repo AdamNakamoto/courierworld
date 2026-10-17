@@ -8,8 +8,8 @@
 // Its group sits so the world's top is where the planet's is, as the moon's does (moon.js), and `ground` is what
 // main.js walks on.
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { R, toon, mulberry32, texFromCanvas } from "./world.js";
-import { FREN_R, FREN_GRAVITY, LANDING, PLACES, PETS, ADAM, fromPad } from "./fren-pick.js";
+import { R, toon, mulberry32, texFromCanvas, Batch } from "./world.js";
+import { FREN_R, FREN_GRAVITY, LANDING, PLACES, PETS, ADAM, PAT_REACH, fromPad } from "./fren-pick.js";
 import { PET_ART, ADAM_ART, HEART_ART, pixelCanvas } from "./fren-art.js";
 import { facing, padAndRocket, createLocals } from "./space.js";
 
@@ -99,19 +99,25 @@ export function createFren(W) {
   W.scene.add(group);
   const rnd = mulberry32(5150);
   const top = D(LANDING), east = V(1, 0, 0), north = V(0, 0, 1);
+  // Everything that stands still goes in `statics`, merged into one mesh at the end (as Mars's is): a few draw calls
+  // instead of hundreds. What moves (the sails, the clouds, the pets, ADAM) goes in `group` itself.
+  const statics = new THREE.Group();
+  group.add(statics);
   const place = (obj, d, h = 0, spin = 0) => {
     obj.position.copy(d).multiplyScalar(FREN_R + h);
     obj.quaternion.copy(W.frameAt(d, spin));
-    group.add(obj);
+    statics.add(obj);
     return obj;
   };
   /// Stand `obj` at `d` facing `look` (a direction on the ground: it faces toward it).
   const placeFacing = (obj, d, look, h = 0) => {
     obj.position.copy(d).multiplyScalar(FREN_R + h);
     obj.quaternion.copy(facing(d, look.clone().sub(d)));
-    group.add(obj);
+    statics.add(obj);
     return obj;
   };
+  /// How far the round ground drops away `r` metres from a spot: flat things that wide sink this much to sit on it.
+  const sag = (r) => (r * r) / (2 * FREN_R);
   const mesh = (geo, color, extra) => {
     const m = new THREE.Mesh(geo, toon(color, extra));
     m.castShadow = m.receiveShadow = true;
@@ -151,7 +157,7 @@ export function createFren(W) {
     return FREN_R * Math.acos(Math.min(1, Math.max(-1, 1 - best)));
   };
 
-  // ---- the ground: a mint ball with lighter paths and a light plaza, and darker grass here and there
+  // ---- the ground: a mint ball with lighter paths and a light plaza
   {
     const geo = new THREE.IcosahedronGeometry(FREN_R, 22);
     const pos = geo.attributes.position, col = [], v = new THREE.Vector3(), c = new THREE.Color(), plaza = placeAt("plaza");
@@ -159,8 +165,7 @@ export function createFren(W) {
       v.fromBufferAttribute(pos, i).normalize();
       pos.setXYZ(i, v.x * FREN_R, v.y * FREN_R, v.z * FREN_R);
       const onPath = toPath(v) < 0.75 || farc(v, plaza) < 2.4 || farc(v, top) < 2.6;
-      const patch = Math.sin(v.x * 41 + v.z * 29) * Math.sin(v.y * 37 - v.x * 23) > 0.86; // (small, scattered: Frenpet's ground is mostly clean)
-      c.setHex(onPath ? C.path : patch ? 0xa9cdb2 : C.grass);
+      c.setHex(onPath ? C.path : C.grass); // (clean, like Frenpet's: the tufts and flowers give it texture)
       col.push(c.r, c.g, c.b);
     }
     geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
@@ -217,8 +222,8 @@ export function createFren(W) {
         g.add(log);
       }
     }
-    const gable = mesh(new THREE.CylinderGeometry(1.25, 1.25, dep, 3), C.wood); // (a three-sided cylinder: a prism)
-    gable.rotation.x = Math.PI / 2;
+    const gable = mesh(new THREE.CylinderGeometry(1.25, 1.25, w, 3), C.wood); // (a three-sided cylinder: a prism, apex up)
+    gable.rotation.x = -Math.PI / 2;
     gable.rotation.z = Math.PI / 2;
     gable.scale.set(1, 1, 0.62);
     gable.position.set(0, hgt + 0.36, 0);
@@ -229,14 +234,16 @@ export function createFren(W) {
     }
     box(0.42, 1.0, 0.42, C.stone, 1.0, hgt + 0.9, -0.4, g);
     box(0.5, 0.1, 0.5, C.ink, 1.0, hgt + 1.42, -0.4, g);
-    box(0.7, 1.15, 0.08, C.ink, 0, 0.58, dep / 2 + 0.06, g);
-    box(0.84, 0.1, 0.1, C.light, 0, 1.2, dep / 2 + 0.08, g);
+    // (The door and windows stand proud of the logs.)
+    const front = dep / 2 + 0.15;
+    box(0.7, 1.15, 0.08, C.ink, 0, 0.58, front, g);
+    box(0.84, 0.1, 0.1, C.light, 0, 1.2, front + 0.02, g);
     for (const x of [-1.05, 1.05]) {
-      box(0.62, 0.55, 0.08, C.ink, x, 1.05, dep / 2 + 0.06, g);
-      box(0.08, 0.6, 0.1, C.light, x, 1.05, dep / 2 + 0.09, g);
-      box(0.66, 0.08, 0.1, C.light, x, 1.05, dep / 2 + 0.09, g);
+      box(0.62, 0.55, 0.08, C.ink, x, 1.05, front, g);
+      box(0.08, 0.6, 0.1, C.light, x, 1.05, front + 0.03, g);
+      box(0.66, 0.08, 0.1, C.light, x, 1.05, front + 0.03, g);
     }
-    placeFacing(g, d, top);
+    placeFacing(g, d, top, -sag(Math.hypot(w, dep) / 2));
     circle(d, 2.0, { wall: { h: 3.2 } });
     keepOut.push({ d, r: 3.0 });
     // Fences either side of the cabin, like the picture postcard.
@@ -246,14 +253,14 @@ export function createFren(W) {
 
   /// A wooden fence from `a` to `b`: posts every metre or so and two rails.
   function fence(a, b) {
-    const n = Math.max(1, Math.round(farc(a, b) / 1.1));
+    const n = Math.max(1, Math.round(farc(a, b) / 0.7)); // (close enough together that nobody slips between)
     const pts = Array.from({ length: n + 1 }, (_, i) => a.clone().lerp(b, i / n).normalize());
     for (const p of pts) {
       const post = new THREE.Group();
       box(0.12, 0.75, 0.12, C.wood, 0, 0.37, 0, post);
       box(0.16, 0.06, 0.16, C.woodDark, 0, 0.77, 0, post);
       place(post, p);
-      circle(p, 0.12, { y1: 0.8 });
+      circle(p, 0.2, { y1: 0.8 });
     }
     for (let i = 0; i < n; i++) {
       const m = pts[i].clone().add(pts[i + 1]).normalize(), len = farc(pts[i], pts[i + 1]);
@@ -263,7 +270,7 @@ export function createFren(W) {
       rails.position.copy(m).multiplyScalar(FREN_R);
       rails.quaternion.copy(facing(m, dir));
       rails.rotateY(Math.PI / 2);
-      group.add(rails);
+      statics.add(rails);
     }
   }
 
@@ -306,6 +313,8 @@ export function createFren(W) {
     box(0.22, 0.22, 0.3, C.ink, 0, 0, -0.1, sails);
     g.add(sails);
     placeFacing(g, d, top);
+    g.updateMatrixWorld(true);
+    group.attach(sails); // (they turn: not merged with the rest)
     circle(d, 1.2, { wall: { h: 4.5 } });
     keepOut.push({ d, r: 2.2 });
   }
@@ -315,8 +324,8 @@ export function createFren(W) {
     const d = placeAt("houses", turn, dm), g = new THREE.Group(), dep = 2.0;
     box(w, h, dep, C.wood, 0, h / 2, 0, g);
     box(w + 0.1, 0.12, dep + 0.1, C.woodDark, 0, h * 0.5, 0, g);
-    const gable = mesh(new THREE.CylinderGeometry(w * 0.42, w * 0.42, dep, 3), C.wood);
-    gable.rotation.x = Math.PI / 2;
+    const gable = mesh(new THREE.CylinderGeometry(w * 0.42, w * 0.42, w, 3), C.wood);
+    gable.rotation.x = -Math.PI / 2;
     gable.rotation.z = Math.PI / 2;
     gable.scale.set(1, 1, 0.75);
     gable.position.set(0, h + 0.3, 0);
@@ -327,49 +336,50 @@ export function createFren(W) {
       box(0.5, 0.45, 0.08, C.ink, x, y, dep / 2 + 0.05, g);
       box(0.56, 0.06, 0.1, C.light, x, y, dep / 2 + 0.08, g);
     }
-    placeFacing(g, d, placeAt("plaza"));
+    placeFacing(g, d, placeAt("plaza"), -sag(Math.hypot(w, dep) / 2));
     circle(d, w * 0.62, { wall: { h: h + 1 } });
     keepOut.push({ d, r: w * 0.9 });
   }
 
   // ---- the pond, with stones round it, reeds and a little dock
+  /// A patch of the ground's own curve (a cap of a sphere just above it), `r` metres round `d`.
+  const cap = (d, r, h, color) => {
+    const m = mesh(new THREE.SphereGeometry(FREN_R + h, 28, 4, 0, Math.PI * 2, 0, r / FREN_R), color);
+    m.quaternion.setFromUnitVectors(V(0, 1, 0), d);
+    statics.add(m);
+    return m;
+  };
   {
-    const d = placeAt("pond"), g = new THREE.Group(), r = 2.4;
-    const water = new THREE.Mesh(new THREE.CircleGeometry(r, 28), toon(C.water));
-    water.rotation.x = -Math.PI / 2;
-    water.position.y = 0.03;
-    g.add(water);
+    const d = placeAt("pond"), r = 2.4, t1 = new THREE.Vector3().crossVectors(d, east).normalize(), t2 = new THREE.Vector3().crossVectors(d, t1);
+    const round = (a, m) => along(d, t1.clone().multiplyScalar(Math.cos(a)).addScaledVector(t2, Math.sin(a)), m);
+    cap(d, r, 0.03, C.water);
     for (let i = 0; i < 22; i++) {
       const a = (i / 22) * Math.PI * 2, s = mesh(new THREE.DodecahedronGeometry(0.17 + (i % 3) * 0.05, 0), i % 2 ? C.stone : C.light);
-      s.position.set(Math.cos(a) * (r + 0.1), 0.06, Math.sin(a) * (r + 0.1));
-      g.add(s);
+      place(s, round(a, r + 0.1), 0.06, i);
     }
     for (let i = 0; i < 6; i++) {
-      const a = 2.2 + i * 0.32, reed = mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.8, 4), C.canopy);
-      reed.position.set(Math.cos(a) * (r - 0.25), 0.4, Math.sin(a) * (r - 0.25));
-      g.add(reed);
+      const reed = mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.8, 4), C.canopy);
+      reed.position.y = 0.4;
+      place(new THREE.Group().add(reed), round(2.2 + i * 0.32, r - 0.25));
     }
-    for (const [x, z] of [[0.6, -0.5], [-0.8, 0.4], [0.2, 0.9]]) {
-      const pad = mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.02, 10), C.canopy);
-      pad.position.set(x, 0.05, z);
-      g.add(pad);
-    }
-    box(0.7, 0.08, 1.6, C.wood, 0, 0.12, r - 0.3, g);
-    placeFacing(g, d, top);
+    for (const [a, m] of [[0.7, 0.8], [2.6, 0.9], [4.4, 0.6]]) place(mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.02, 10), C.canopy), round(a, m), 0.05);
+    const dock = new THREE.Group();
+    box(0.7, 0.08, 1.6, C.wood, 0, 0.12, 0, dock);
+    placeFacing(dock, along(d, toPadAt(d), r - 0.7), top);
     circle(d, r, { wall: { h: 0.4 } });
     keepOut.push({ d, r: r + 1 });
   }
 
   // ---- the sprout field: rows of sprouts in dark soil, fenced
   {
-    const d = placeAt("field"), g = new THREE.Group();
-    box(3.4, 0.06, 2.6, C.trunk, 0, 0.03, 0, g);
+    const d = placeAt("field"), g = new THREE.Group(), drop = sag(Math.hypot(3.4, 2.6) / 2);
+    box(3.4, 0.2 + drop, 2.6, C.trunk, 0, (0.2 + drop) / 2, 0, g); // (thick enough to meet the ground at its corners)
     for (let i = 0; i < 4; i++) for (let j = 0; j < 6; j++) {
       const s = mesh(new THREE.ConeGeometry(0.1, 0.32, 5), C.canopy);
-      s.position.set(-1.35 + j * 0.54, 0.2, -0.95 + i * 0.63);
+      s.position.set(-1.35 + j * 0.54, 0.36 + drop, -0.95 + i * 0.63);
       g.add(s);
     }
-    placeFacing(g, d, top);
+    placeFacing(g, d, top, -drop);
     circle(d, 1.6, { y1: 0.3 });
     keepOut.push({ d, r: 2.4 });
   }
@@ -472,6 +482,12 @@ export function createFren(W) {
     W.noNormals.push(fall);
     const d = D(fromPad(2.7, 19));
     place(isle, d, 10, 0.4);
+    // (Kept out of the merged ground pieces, in a still group of its own: `statics` and it both sit at the world's
+    // centre, so its place is the same.)
+    const aloft = new THREE.Group();
+    group.add(aloft);
+    aloft.add(isle);
+    isle.traverse((o) => o.isMesh && (o.castShadow = false));
   }
   for (let i = 0; i < 9; i++) {
     const cloud = new THREE.Group();
@@ -481,6 +497,8 @@ export function createFren(W) {
     cloud.quaternion.copy(W.frameAt(d, rnd() * 6));
     sky.add(cloud);
   }
+  // (Things in the sky cast no shadows: with the sun following the camera, theirs would wander over the ground.)
+  sky.traverse((o) => o.isMesh && (o.castShadow = false));
   group.add(sky);
 
   // ---- the pets: sprites that wander near their homes, hop as they walk, face the way they go, and stop to be patted
@@ -512,7 +530,7 @@ export function createFren(W) {
   // Hearts that float up from a patted pet (a small pool), and the bubbles pets say things in.
   const heartTex = pixelTex(HEART_ART);
   const hearts = Array.from({ length: 18 }, () => {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: heartTex, transparent: true, depthWrite: false }));
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: heartTex, alphaTest: 0.5, transparent: false }));
     s.scale.set(0.32, 0.27, 1);
     s.visible = false;
     group.add(s);
@@ -536,7 +554,8 @@ export function createFren(W) {
       bubble.s.material.map.dispose();
       bubble.s.material.dispose();
     }
-    const { t, aspect } = bubbleTex(text), s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }));
+    // (Always drawn, in front of everything, and it writes depth: over open sky the post pass would paint the sky on it.)
+    const { t, aspect } = bubbleTex(text), s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, alphaTest: 0.5, transparent: false, depthFunc: THREE.AlwaysDepth }));
     s.center.set(0.5, 0);
     s.scale.set(0.85 * aspect, 0.85, 1); // (big enough to read through the chunky pixels)
     s.renderOrder = 5;
@@ -571,7 +590,22 @@ export function createFren(W) {
     ], 0.4);
   }
 
-  const cam = new THREE.Vector3(), camRight = new THREE.Vector3(), tmp = new THREE.Vector3();
+  // ---- everything that stands still, merged into one mesh (signs, glass, water spray and sprites stay apart)
+  {
+    const batch = new Batch(), merged = [];
+    group.updateMatrixWorld(true);
+    const inv = group.matrixWorld.clone().invert(), m4 = new THREE.Matrix4();
+    statics.traverse((o) => {
+      const mat = o.material;
+      if (!o.isMesh || o.isInstancedMesh || !mat?.isMeshToonMaterial || mat.transparent || mat.map || mat.vertexColors || (mat.emissive && mat.emissive.getHex() !== 0) || mat.side === THREE.DoubleSide) return;
+      batch.add(o.geometry, m4.multiplyMatrices(inv, o.matrixWorld), mat.color);
+      merged.push(o);
+    });
+    for (const o of merged) o.parent.remove(o);
+    group.add(batch.build(toon(0xffffff, { vertexColors: true })));
+  }
+
+  const cam = new THREE.Vector3(), camRight = new THREE.Vector3(), tmp = new THREE.Vector3(), invGroup = new THREE.Quaternion();
   return {
     group,
     /// What main.js walks on here.
@@ -590,6 +624,7 @@ export function createFren(W) {
     nearestPet(me, reach = 1.6) {
       let best = null, bd = reach;
       for (const p of pets) {
+        if (farc(p.homeV, me) > PAT_REACH - 0.3) continue; // (the room measures from its home)
         const dd = farc(p.at, me);
         if (dd < bd) [best, bd] = [p, dd];
       }
@@ -603,7 +638,7 @@ export function createFren(W) {
       if (!p) return;
       p.patters.set(who, who === "me" ? Infinity : performance.now() + 60_000);
       if (me) p.look = me.clone();
-      if (front && farc(front, p.homeV) < p.wander + 1.5) p.at.copy(front);
+      if (front && farc(front, p.homeV) < PAT_REACH - 1.8) p.at.copy(front);
       p.mode = "pat";
       p.wait = 0;
       burst(p, 3);
@@ -634,7 +669,8 @@ export function createFren(W) {
       const camera = W.camera;
       if (camera) {
         camera.getWorldPosition(cam);
-        camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        // (In this world's frame: main.js turns it under you, so the scene's "right" isn't the world's.)
+        camRight.set(1, 0, 0).applyQuaternion(camera.quaternion).applyQuaternion(invGroup.copy(group.quaternion).invert());
       }
       for (const p of pets) {
         let hop = 0;
@@ -684,7 +720,8 @@ export function createFren(W) {
         h.s.position.copy(h.d).multiplyScalar(FREN_R + h.h + rise);
         tmp.copy(camRight).multiplyScalar(h.dx + Math.sin((t + h.dx) * 5) * 0.06);
         h.s.position.add(tmp);
-        h.s.material.opacity = Math.min(1, k * 2);
+        const size = Math.min(1, k * 2.5); // (fades by shrinking: it writes depth, so it can't be see-through)
+        h.s.scale.set(0.32 * size, 0.27 * size, 1);
       }
       if (bubble) {
         bubble.left -= dt;

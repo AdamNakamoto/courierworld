@@ -472,7 +472,7 @@ const POST_FRAG = /* glsl */ `
     // Frenpet World: a flat mint sky with blocky white clouds drifting past.
     vec2 cell = floor(vec2(atan(dL.z, dL.x) * 9.0 + time * 0.02, dW.y * 14.0));
     float cl = step(0.62, vnoise(cell * vec2(0.55, 1.6))) * step(0.12, dW.y);
-    vec3 fs = mix(vec3(0.84, 0.99, 0.9), vec3(1.0), cl);
+    vec3 fs = mix(FREN_L, vec3(1.0), cl);
     return mix(mix(mix(c, sp, space), ms, mars), fs, fren);
   }
 
@@ -510,8 +510,8 @@ const POST_FRAG = /* glsl */ `
       base = mix(base, vec3(0.86, 0.6, 0.42), mars * (smoothstep(10.0, 45.0, dist) * 0.3 + smoothstep(2.0, 20.0, dist) * 0.75 * dust));
     }
     vec3 col = mix(base, ink, edge * 0.9);
-    if (fren > 0.5) {
-      // Frenpet's four greens by brightness (judged on a gamma-ish value: the pets' grey-green must stay apart from
+    if (fren > 0.5 && raw < 0.99999) {
+      // (The sky stays as it's painted: mint with white clouds.) Frenpet's four greens by brightness (judged on a gamma-ish value: the pets' grey-green must stay apart from
       // their mint); strong colours (a pat's purple hearts, the tower's red roof, a bright jacket) keep theirs.
       float l = dot(sqrt(max(col, 0.0)), vec3(0.299, 0.587, 0.114)), sat = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
       vec3 q = l < 0.3 ? FREN_K : l < 0.55 ? FREN_D : l < 0.8 ? FREN_G : FREN_L;
@@ -1342,6 +1342,8 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     sh.fragmentShader = sh.fragmentShader.replace("outgoingLight = diffuseColor.rgb;", "outgoingLight = vec3(0.5, 0.5, 1.0); diffuseColor.a = 1.0;");
   };
   function flatNormals(sprite, { depthTest = true } = {}) {
+    // (The lights join the twins' layer too: the same lights in every pass, so no material is re-checked each frame.)
+    if (!flatTwins.length) scene.traverse((o) => o.isLight && o.layers.enable(FLAT_LAYER));
     const m = new THREE.SpriteMaterial({ map: sprite.material.map, alphaTest: Math.max(0.5, sprite.material.alphaTest || 0), depthTest, transparent: false });
     m.onBeforeCompile = flatOut;
     const twin = new THREE.Sprite(m);

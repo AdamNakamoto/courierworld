@@ -797,16 +797,18 @@ export function createCharacter(p) {
     // Patting a pet: sat on the ground, legs out in front, the right hand patting a head just ahead, the left on the
     // ground beside her, looking down at the pet.
     if (pat > 0 && pose === "walk") {
+      // (Index 0 is the right side. Legs apart and nearly straight, so the soles rest on the ground; the right arm up
+      // and forward to a pet's head, the elbow tapping.)
       const tap = Math.max(0, Math.sin(t * 6.5)), to = (o, v) => o + (v - o) * pat;
-      legs[0].rotation.x = to(legs[0].rotation.x, -1.45);
-      legs[1].rotation.x = to(legs[1].rotation.x, -1.35);
-      legs[0].rotation.z = to(legs[0].rotation.z, 0.12);
-      legs[1].rotation.z = to(legs[1].rotation.z, -0.12);
-      knees[0].rotation.x = to(knees[0].rotation.x, 0.25);
-      knees[1].rotation.x = to(knees[1].rotation.x, 0.35);
-      arms[0].rotation.x = to(arms[0].rotation.x, -1.05 - tap * 0.25);
-      arms[0].rotation.z = to(arms[0].rotation.z, 0.1);
-      elbows[0].rotation.x = to(elbows[0].rotation.x, -0.55 + tap * 0.2);
+      legs[0].rotation.x = to(legs[0].rotation.x, -1.5);
+      legs[1].rotation.x = to(legs[1].rotation.x, -1.42);
+      legs[0].rotation.z = to(legs[0].rotation.z, -0.14);
+      legs[1].rotation.z = to(legs[1].rotation.z, 0.14);
+      knees[0].rotation.x = to(knees[0].rotation.x, 0.04);
+      knees[1].rotation.x = to(knees[1].rotation.x, 0.1);
+      arms[0].rotation.x = to(arms[0].rotation.x, -1.85 - tap * 0.18);
+      arms[0].rotation.z = to(arms[0].rotation.z, 0.12);
+      elbows[0].rotation.x = to(elbows[0].rotation.x, -0.5 + tap * 0.3);
       arms[1].rotation.x = to(arms[1].rotation.x, -0.25);
       arms[1].rotation.z = to(arms[1].rotation.z, 0.45);
       elbows[1].rotation.x = to(elbows[1].rotation.x, -0.15);

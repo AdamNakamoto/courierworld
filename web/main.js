@@ -1975,6 +1975,7 @@ function flyTo(k) {
     standAt(w.arrival.d, w.arrival.tangent);
     companionHere(); // (it flew with you)
     net.setWorld(k);
+    if (k === "fren") petHinted = false; // (the "press E to pat" hint once a visit)
     $("compass").hidden = false; // (the way back to the rocket)
     setTimeout(() => toast(WELCOME[k]()), 1200);
   });
