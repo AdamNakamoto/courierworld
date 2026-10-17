@@ -347,6 +347,43 @@ npx wrangler deploy
 The deploy writes `deployments/robinhood-companions.json` and runs `export-web.sh`, which adds the companions to
 `web/deployments/robinhood.json`; commit it and the shop opens.
 
+## Courier Cars
+
+`CourierCars.sol` (live since 2026-10-17 at `0x79DD8994Fa61AE96e40C3881d6cdc1188Bd44eE6`, owned by the treasury, Sourcify verified) sells cars a courier can drive: the `CourierCompanions` contract above deployed
+again (an ERC-1155, each kind of car a token id with its own $STAMP price, a supply that can only shrink and a
+per-wallet limit counting purchases; paid only in $STAMP, straight to the treasury; the royalty enforced through the
+same transfer validator), named "Courier Cars" (`CAR`), with three changes: the royalty is a fixed 5% to the
+treasury (`ROYALTY_BPS`; no `setRoyalty`, and `setTreasury` always moves it), like the skins', planets' and fish's;
+`setKinds` sets several kinds in one transaction (the deploy is two: the contract, then the lineup); and car wording.
+The lineup, in `DeployCars.s.sol` (from `web/car-kinds.js`): Common 500 $STAMP (300 of each, 5 a wallet: van, taxi,
+hatchback, pickup, 4x4, camper), Rare 1,500 (100, 3 a wallet: ice-cream truck, monster truck, tuk-tuk,
+double-decker, tractor), Epic 4,000 (30, 2 a wallet: sports car, convertible, race car, muscle car) and Legendary
+10,000 (10, 1 a wallet: hover car, golden limo, neon cyber car, rocket car). Every car is Courier World's own design.
+Tests: `CourierCars.t.sol` and `CourierCars.invariant.t.sol` (the companions' suites, plus `setKinds` and the fixed
+royalty).
+
+- `web/car-kinds.js`: what each car is (name, tier, blurb...), shared by the game, the Post Office panel (the
+  showroom, where players buy and pick the car they drive), the room and the metadata.
+- `web/cars.js` draws the cars (`createCar(id)`): each body is an extruded side profile, with wheels that turn, and
+  a few that do more (the hover car floats, the rocket car's flame flickers, the monster truck bounces).
+- Driving is a layer over whoever you play as (`driving` in `web/main.js`, kept per wallet): only the car shows,
+  at the moped's speed (`CAR_SPEED`), on every world; in the Mars rover the car waits. No fishing or patting from
+  a car. A car you no longer own is dropped at the next chain read.
+- The room shows a player's car to others only after reading on chain (`balanceOf` on `CARS_ADDRESS`) that the
+  wallet on their name tag owns it: the hello asks with `carId`, others get `car`.
+- Without a cars address (`chain.cars` null, no `CARS_ADDRESS` in the room), everything hides itself.
+- Metadata: `web/cars/<id>.json` (name, description, picture, and Tier / Kind / Style / Supply traits) under the contract's `base`
+  (`CARS_BASE`, https://courierworld.fun/cars/ by default), plus `collection.json` (`contractURI`, ERC-7572). The
+  pictures are rendered from the game models.
+
+```bash
+cd contracts
+./script/deploy-cars.sh                                                # dry run on a fork
+RPC_URL=… ./script/deploy-cars.sh --broadcast --browser --browser-disable-open  # sign at http://127.0.0.1:9545 with the treasury wallet (it becomes the owner)
+cd ../multiplayer   # set CARS_ADDRESS in wrangler.toml's [vars], then
+npx wrangler deploy
+```
+
 ## Courier Planets
 
 `CourierPlanets.sol` (live since 2026-10-15 at `0xE7F9fc69Cb0471EDDcb62e8FC3e4D0256306e7e3`, owned by the treasury,
@@ -566,11 +603,12 @@ editing the tables. `CourierNFT.freezeRenderer()` locks the art forever.
 | `TokenDrops.sol` | The treasure hunt's payouts: the treasury's token drops, for finds the multiplayer room has checked (and the companion bonus's $STAMP drops) |
 | `StampHunt.sol` | The earlier $STAMP-only hunt (replaced by TokenDrops, never deployed) |
 | `CourierCompanions.sol` | Companions that follow your courier: ERC-1155 kinds sold only for $STAMP (straight to the treasury), supplies that only shrink, wallet limits, enforced 5% royalty (ERC1155-C); live at `0x4254…49B7` |
+| `CourierCars.sol` | Cars a courier can drive: the companions' contract again, with the royalty fixed at 5% to the treasury and `setKinds` for the lineup; live at `0x79DD…4eE6` |
 | `CourierPad.sol`, `PadToken.sol` | The launchpad: players with a post office launch a token (burning a $STAMP fee); 95% locked in its IMD pool, 5% to the treasury for drops, 4% trading fee to the protocol; the same hook as $STAMP's, for many tokens |
 
 ```bash
-cd contracts && forge test                                             # 395 tests
-forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest|CourierCompanionsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
+cd contracts && forge test                                             # 528 tests (the fork tests skip without a fork)
+forge test --match-contract "StampHookForkTest|LaunchStagesForkTest|CourierSkinsForkTest|SkinsStampSaleForkTest|CourierPadForkTest|CourierCompanionsForkTest|CourierCarsForkTest" --fork-url robinhood   # real pools, stage 2, royalty registry
 ```
 
 ## Deploying to Robinhood Chain

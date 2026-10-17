@@ -5,6 +5,7 @@ import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { courier, SUPPLY } from "./traits.js";
 import { SKINS, SKIN_SUPPLY } from "./skins.js";
 import { COMPANIONS, TIERS, companionOf } from "./companion-kinds.js";
+import { CARS, CAR_TIERS, carOf } from "./car-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_POOL_FORM, bonusCap, isBonusDrop } from "./bonus-rules.js";
 import { dropLane, dropNumber, laneSpots } from "./drop-pick.js";
 import { renderStamp } from "./portrait.js";
@@ -73,7 +74,7 @@ const listOf = (names) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} 
 /// following you (as many as you like, one of each kind you own). (Only once the Courier Companions contract is deployed.)
 export function createOffice(chain, {
   onPlayAs, onWearSkin = () => {}, wearing = () => null, onSnapshot, toast, hunt = null, username = null, onLaunchpad = null,
-  onCompanion = () => {}, companionsShown = () => [], fish = null,
+  onCompanion = () => {}, companionsShown = () => [], fish = null, onCar = () => {}, driving = () => null,
 }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("office");
@@ -100,6 +101,7 @@ export function createOffice(chain, {
   let invite = new URLSearchParams(location.search).get("ref") ?? "";
   let naming = false, nameDraft = ""; // picking a name, and what's typed so far
   let followNext = null; // a companion just bought: it joins those following you once the chain shows it's yours
+  let carNext = null; // a car just bought: you get in once the chain shows it's yours
   const stamps = new Map(); // `${seed}:${id}` -> data URL
   const rendering = new Set();
   let queue = Promise.resolve(); // stamp renders, one at a time
@@ -125,6 +127,10 @@ export function createOffice(chain, {
       snap = await chain.snapshot();
       onSnapshot?.(snap);
       // (Called only once the snapshot shows it's yours, so the game, which has the snapshot first, agrees.)
+      if (carNext != null && snap.cars?.owned[carNext]) {
+        onCar(carNext);
+        carNext = null;
+      }
       if (followNext != null && snap.companions?.owned[followNext]) {
         onCompanion(followNext, true);
         followNext = null;
@@ -619,6 +625,44 @@ export function createOffice(chain, {
       html += `<p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${k.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
     }
 
+    // ---- Courier Cars: cars to drive, bought only with $STAMP (once deployed). Driving one, only the car shows.
+    if (s.cars) {
+      const c = s.cars, now = driving(), onChain = new Map(c.kinds.map((k) => [k.id, k]));
+      let needStamp = false;
+      html += `<section class="cars"><h3>Cars <span class="muted">drive round the planet in your own</span></h3>
+        <p class="note">Nineteen cars, from the post office's own van to a rocket car. Driving one, you go at a moped's speed and only your car shows, to everyone in the game. Each kind is limited, and paid only in $STAMP, all of it to the treasury.</p>`;
+      // Driving one you no longer hold (sold, or another wallet logged in): the game takes you out of it; say so.
+      if (now && !c.owned[now]) html += `<div class="kv"><span>${carOf(now)?.icon ?? "🚗"} You're driving a car this wallet doesn't hold</span><button class="pbtn" data-act="carOut">Get out</button></div>`;
+      for (const tier of CAR_TIERS) {
+        const list = CARS.filter((x) => x.tier === tier && onChain.has(x.id));
+        if (!list.length) continue;
+        html += `<h4>${tier}</h4><div class="comp-list">`;
+        for (const meta of list) {
+          const k = onChain.get(meta.id), left = Math.max(0, k.maxSupply - k.minted), own = c.owned[k.id] ?? 0;
+          const capped = k.perWallet > 0 && (c.bought[k.id] ?? 0) >= k.perWallet;
+          const poor = !!s.account && s.stamp != null && s.stamp < k.price;
+          if (poor && left && k.open && !capped) needStamp = true;
+          const on = now === k.id;
+          html += `<div class="comp-card car-card ${on ? "on" : ""} ${!left || !k.open ? "off" : ""}">
+            <img class="car-pic" src="./cars/${k.id}.png" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'comp-icon', textContent: '${meta.icon}' }))">
+            <div class="comp-info"><b>${esc(meta.name)}</b>
+              <span class="comp-blurb" title="${esc(meta.blurb)}">${esc(firstSentence(meta.blurb))}</span>
+              <span class="muted">${fmt(k.price, 0)} $STAMP · ${left ? `${left.toLocaleString()} left` : "Sold out"}${k.open ? "" : " · Closed"}${k.perWallet ? ` · ${k.perWallet} a wallet` : ""}</span>
+              ${own || on ? `<span class="comp-tags">${own ? `<span class="comp-tag">You own ${own}</span>` : ""}${on ? `<span class="comp-tag following">Driving</span>` : ""}</span>` : ""}</div>
+            <div class="comp-act">
+              <button class="pbtn primary" data-act="carBuy" data-id="${k.id}" ${!s.account || busy || !left || !k.open || capped || poor ? "disabled" : ""}
+                ${capped ? `title="You've bought ${k.perWallet}, the most one wallet can"` : ""}>${capped ? "Wallet limit" : "Buy"}</button>
+              ${own ? (on ? `<button class="pbtn" data-act="carOut">Get out</button>` : `<button class="pbtn" data-act="carDrive" data-id="${k.id}">Drive</button>`) : ""}
+            </div></div>`;
+        }
+        html += `</div>`;
+      }
+      if (!s.account) html += `<p class="note">Log in to buy a car.</p>`;
+      else if (needStamp) html += `<p class="note">You have ${fmt(s.stamp, 0)} $STAMP: not quite enough for the ones you can't buy.${chain.trade ? " Get more in the trade box above." : ""}</p>`;
+      html += `<p class="note">One at a time, up to each kind's wallet limit (which counts what you've bought, so passing one on doesn't reset it). Cars are just for fun: they never change what your post office earns. Step out of your car to fish or to sit with Frenpet World's pets.</p>
+        <p class="note">Check it yourself: ${s.explorer ? `<a href="${s.explorer}/address/${c.address}" target="_blank" rel="noopener">contract</a> · ` : ""}<a href="${SOURCE_URL}" target="_blank" rel="noopener">source code</a></p></section>`;
+    }
+
     // ---- Courier Companions: friends that follow your courier around, bought only with $STAMP (once deployed)
     if (s.companions) {
       const c = s.companions, shown = companionsShown(), onChain = new Map(c.kinds.map((k) => [k.id, k]));
@@ -967,6 +1011,20 @@ export function createOffice(chain, {
       case "unwear":
         onWearSkin(null);
         return draw(true);
+      case "carBuy": {
+        const meta = carOf(id);
+        if (!meta) return;
+        return run(`Buying the ${meta.name}`, async () => {
+          await chain.buyCar(snap, id, 1);
+          carNext = id; // (you're in it as soon as the chain says it's yours)
+        });
+      }
+      case "carDrive":
+        onCar(id);
+        return draw(true);
+      case "carOut":
+        onCar(null);
+        return draw(true);
       case "companionBuy": {
         const meta = companionOf(id);
         if (!meta) return;
@@ -1073,6 +1131,13 @@ export function createOffice(chain, {
       lastHtml = lastMore = "";
       draw(true);
       panel.querySelector("section.skins")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
+    /// Open the panel at the Cars showroom (when the contract is deployed).
+    showCars() {
+      panel.hidden = false;
+      lastHtml = lastMore = "";
+      draw(true);
+      panel.querySelector("section.cars")?.scrollIntoView({ block: "start", behavior: "smooth" });
     },
     /// Open the panel at the Companions shop (when the contract is deployed).
     showCompanions() {

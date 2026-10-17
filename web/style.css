@@ -373,13 +373,37 @@ body.ticking .office, body.ticking #toasts { top: 94px; }
 .skin-mint[hidden] + .planet-buy { margin-top: -14px; }
 .planet-buy-hud { top: 104px; background: #9fd3f2; transform: rotate(1deg); }
 .skin-mint-hud[hidden] + .planet-buy-hud { top: 62px; }
+/* "Buy a Courier Car": the third, under whichever of the two above show */
+.car-buy { margin-top: 8px; background: #ffb36b; transform: rotate(1deg); }
+.car-buy:hover { transform: rotate(1deg) translateY(-2px); }
+.car-buy:active { transform: rotate(1deg) translateY(2px); }
+.skin-mint[hidden] + .planet-buy[hidden] + .car-buy { margin-top: -14px; }
+.car-buy-hud { top: 146px; background: #ffb36b; transform: rotate(-1deg); }
+.skin-mint-hud[hidden] + .planet-buy-hud:not([hidden]) + .car-buy-hud, .skin-mint-hud:not([hidden]) + .planet-buy-hud[hidden] + .car-buy-hud { top: 104px; }
+.skin-mint-hud[hidden] + .planet-buy-hud[hidden] + .car-buy-hud { top: 62px; }
+/* A car's picture in the showroom */
+.car-pic { width: 64px; height: 64px; object-fit: contain; flex: none; }
 @media (max-width: 640px) {
   .skin-mint-hud { top: 150px; right: auto; left: 14px; }
   .skin-mint-hud .long { display: none; }
   .skin-mint-hud .short { display: inline; }
-  /* (beside the skins button: below it sits the chat pill) */
-  .planet-buy-hud { top: 150px; left: 150px; }
+  /* (all three in one row, small enough to clear the buttons down the right: below them sits the chat pill) */
+  .skin-mint-hud, .planet-buy-hud, .car-buy-hud { font-size: 11px; padding: 7px 8px; letter-spacing: .01em; }
+  .skin-mint-hud .em, .planet-buy-hud .em, .car-buy-hud .em { margin-right: .3em; }
+  .planet-buy-hud { top: 150px; left: 124px; }
   .skin-mint-hud[hidden] + .planet-buy-hud { top: 150px; left: 14px; }
+  .car-buy-hud { top: 150px; left: 222px; }
+  .skin-mint-hud[hidden] + .planet-buy-hud:not([hidden]) + .car-buy-hud { top: 150px; left: 112px; }
+  .skin-mint-hud:not([hidden]) + .planet-buy-hud[hidden] + .car-buy-hud { top: 150px; left: 124px; }
+  .skin-mint-hud[hidden] + .planet-buy-hud[hidden] + .car-buy-hud { top: 150px; left: 14px; }
+}
+@media (max-width: 345px) {
+  /* (the narrowest phones: no emoji, so the row still ends left of the buttons down the right) */
+  .skin-mint-hud .em, .planet-buy-hud .em, .car-buy-hud .em { display: none; }
+  .planet-buy-hud { left: 106px; }
+  .car-buy-hud { left: 186px; }
+  .skin-mint-hud[hidden] + .planet-buy-hud:not([hidden]) + .car-buy-hud { left: 94px; }
+  .skin-mint-hud:not([hidden]) + .planet-buy-hud[hidden] + .car-buy-hud { left: 106px; }
 }
 
 /* Chat: lines from everyone, above the emote bar (top left on touch screens, where the joystick is) */
@@ -518,8 +542,11 @@ body.map-on #hud, body.map-on .office, body.map-on .orb-card, body.map-on .fish-
 .comp-act { display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
 .comp-act .pbtn { padding: 6px 8px; white-space: nowrap; }
 .companions > .kv { align-items: center; gap: 8px; margin: 4px 0 8px; }
+.comp-card.car-card { grid-template-columns: 64px 1fr auto; }
 @media (max-width: 400px) {
   .comp-card { grid-template-columns: 40px 1fr; }
+  .comp-card.car-card { grid-template-columns: 56px 1fr; }
+  .car-pic { width: 56px; height: 56px; }
   .comp-act { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
 }
 

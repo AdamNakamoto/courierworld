@@ -20,6 +20,7 @@ import { huntDay, newSpotsIn } from "./hunt-pick.js";
 import { createMoon } from "./moon.js";
 import { createMars } from "./mars.js";
 import { createFren } from "./fren.js";
+import { createCar } from "./cars.js";
 import { friendTier, PETS as FREN_PETS } from "./fren-pick.js";
 import { TRIPS } from "./trips.js";
 import { parseMeta } from "./pad-rules.js";
@@ -68,20 +69,22 @@ const INTRO = [
 // ---------------------------------------------------------------- characters
 
 /// A courier and (optionally) their ride, as one group facing +z. The ride takes the outfit's accent
-/// colour unless `rideColour` says otherwise (the skins' scooter and supercars have their own).
-function rider(params, rideKey = "foot", rideColour = null) {
+/// colour unless `rideColour` says otherwise (the skins' scooter and supercars have their own). With `car` (a Courier
+/// Cars kind) they drive that instead, hidden inside it: only the car shows.
+function rider(params, rideKey = "foot", rideColour = null, car = null) {
   const group = new THREE.Group();
   const ch = createCharacter(params);
-  const ride = rideKey === "foot" ? null : createRide(rideKey, rideColour ?? params.accent);
+  const ride = car ? createCar(car) : rideKey === "foot" ? null : createRide(rideKey, rideColour ?? params.accent);
   if (ride) {
     group.add(ride.group);
     ch.root.position.set(0, ride.mount.y, ride.mount.z);
     ch.setPose(ride.mount.pose);
   }
+  if (ride?.mount.hidden) ch.root.visible = false;
   group.add(ch.root);
   return {
-    group, ch, ride, params, rideKey, rideColour,
-    kind: ride ? rideKey : null,
+    group, ch, ride, params, rideKey, rideColour, car,
+    kind: car ? "moped" : ride ? rideKey : null, // (a car hums like the moped)
     speed: ride ? ride.mount.speed : 1,
     /// Returns true on the frame a foot comes down.
     update(dt, moving, t, air = 0, dist = null) {
@@ -107,7 +110,15 @@ player.group.position.set(0, R, 0);
 scene.add(player.group);
 let playingId = null;
 let playingAccount = null;
+// The Courier Car you're driving (car-kinds.js), if any: a layer over whoever you play as, so it stays when you switch
+// courier or skin. Not in the Mars rover (the car waits till you hop out).
+let driving = null;
 function setPlayer(r) {
+  if ((r.car ?? null) !== driving && r.rideKey !== "rover") {
+    const c = rider(r.params, r.rideKey, r.rideColour, driving);
+    dispose(r.group);
+    r = c;
+  }
   const prev = player.group;
   player = r;
   player.group.position.copy(prev.position);
@@ -191,6 +202,42 @@ function autoAvatar(s) {
   } catch {}
   const pick = owned.find((m) => m.id === saved) ?? owned.find((m) => m.onDuty) ?? owned[0];
   playAs(courier(pick.id, s.seed), s.account);
+}
+
+// Courier Cars: drive one you own (Post Office panel), kept per wallet; the room shows it to everyone else once it has
+// read on chain that it's yours. Sold, or another wallet logged in: back out of it.
+const carKey = (account) => `courier:car:${account.toLowerCase()}`;
+let carFor = null; // the wallet `driving` was picked by
+function setDriving(id, account = chainRef?.account ?? null) {
+  driving = id ?? null;
+  if (driving) {
+    // (No fishing or patting from a car: getting in reels the line in and stands you up.)
+    fishing?.cancel();
+    stopPat();
+  }
+  try {
+    if (account) driving ? localStorage.setItem(carKey(account), String(driving)) : localStorage.removeItem(carKey(account));
+  } catch {}
+  if (player.rideKey !== "rover") setPlayer(rider(player.params, player.rideKey, player.rideColour));
+}
+function checkCar(s) {
+  const acct = s?.account ?? null;
+  if (acct !== carFor) {
+    // A different wallet: out of the last one's car at once, and into its own saved car once its cars have been read.
+    if (acct && !s.cars) {
+      if (driving) setDriving(null, null);
+      return;
+    }
+    carFor = acct;
+    let saved = null;
+    try {
+      saved = acct ? Number(localStorage.getItem(carKey(acct))) : null;
+    } catch {}
+    const want = saved && s.cars?.owned?.[saved] > 0 ? saved : null;
+    if (want !== driving) setDriving(want, null);
+    return;
+  }
+  if (driving && s?.cars && !(s.cars.owned?.[driving] > 0)) setDriving(null, null); // (no longer yours)
 }
 
 // Your Courier Companions (companions.js): the ones you picked in the Post Office panel follow you on whichever world
@@ -336,6 +383,7 @@ let nopeSyncAt = 0, nopeSync = null; // when a refused find may next be brought 
 let fishing = null, fishState = null; // fishing in the bay (made once the courier is), and the room's word on your catch
 const net = createNet(W, {
   url: MP_URL, makeRider: rider, dispose,
+  myBubble: () => (player.ride?.mount.tag ? player.ride.mount.tag + 0.85 + swimK * 0.9 : 2.55), // (over your car's roof)
   // Where each world's couriers are drawn (the moon's and Mars's only once they're built).
   world: (w) => (trips[w] ? (trips[w].w ? { group: trips[w].w.group, r: TRIPS[w].R, terrain: trips[w].w.ground.terrain } : null) : { group: W.world, r: R, terrain: W.terrain }),
   tier(addr) {
@@ -462,7 +510,8 @@ for (const a of [$("orbSite"), $("orbChart")]) a.addEventListener("click", () =>
 /// Tell the room who you are: your courier, your wallet if you're logged in, and the companions following you.
 function introduce() {
   // (In the rover, they see your look driving it rather than your skin.)
-  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null, [...followers.keys()]);
+  net.hello(player.params, player.rideKey, chainRef?.account ?? null, player.rideKey === "rover" ? null : skinWorn?.id ?? null, [...followers.keys()],
+    player.rideKey === "rover" ? null : driving);
 }
 /// The facts the room passes on about you each frame, in planet space.
 function netState() {
@@ -940,7 +989,7 @@ fishing = createFishing({
   player: { get ch() { return player.ch; } },
   me: () => localPos(), ahead: () => ahead(), state: () => netState(),
   // (Only once the Courier Fish contract is deployed: until then E on the pier talks and waves as it always has.)
-  canAct: () => !!chainRef?.fishMint && mode === "play" && !dialog && !away && !photo && !flying && !map,
+  canAct: () => !!chainRef?.fishMint && mode === "play" && !dialog && !away && !photo && !flying && !map && !player.car, // (not from a car)
   signedIn: () => signedIn(),
   async signIn() {
     const chain = chainRef;
@@ -1095,7 +1144,7 @@ function placePlayer(dt, v, turnRate) {
   player.group.position.copy(UP).applyQuaternion(lag).multiplyScalar(G.R + bodyY).add(G.center);
   const accel = (v - lastV) / Math.max(dt, 1e-3);
   lastV = v;
-  const wheels = player.ride ? 1.8 : 1;
+  const wheels = player.car ? 0.5 : player.ride ? 1.8 : 1; // (a car barely leans into a turn)
   leanSide += (clamp(turnRate * Math.min(1, v / SPEED) * 0.045 * wheels, -0.3, 0.3) - leanSide) * (1 - Math.exp(-dt * 8));
   leanFwd += (clamp(accel * 0.012, -0.1, 0.14) - leanFwd) * (1 - Math.exp(-dt * 6));
   leanE.set(leanFwd, facingCamera ? 0 : Math.PI - facing, leanSide);
@@ -1430,6 +1479,17 @@ function planetButtons(s) {
   $("planetBuy").hidden = !on;
   $("planetBuyHud").hidden = !on;
 }
+// Courier Cars, the same way: from the title (into the game, then the shop) or the corner of the screen.
+$("carBuy").addEventListener("click", async () => {
+  if (await begin()) office?.showCars();
+});
+$("carBuyHud").addEventListener("click", () => office?.showCars());
+/// Show the car buttons while any car is on sale and not sold out.
+function carButtons(s) {
+  const on = !!s?.cars?.kinds?.some((k) => k.open && k.minted < k.maxSupply);
+  $("carBuy").hidden = !on;
+  $("carBuyHud").hidden = !on;
+}
 
 // ---------------------------------------------------------------- loop
 
@@ -1675,6 +1735,7 @@ function frame() {
     }
     swimK += ((swimming ? 1 : 0) - swimK) * (1 - Math.exp(-dt * 6));
     player.ch.setSwim(swimK);
+    if (player.car) player.ride.group.position.y = swimK * 0.9; // (a car floats rather than going under)
     if (landed && water !== null && bodyY < water + 0.05) splashAt(0.4, 8);
     camLift += (bodyY - camLift) * (1 - Math.exp(-dt * 5));
     landSquash *= Math.exp(-dt * 11);
@@ -1763,7 +1824,8 @@ function frame() {
 
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  W.setCutaway(mode === "play" && !photo && !map ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null);
+  W.setCutaway(mode === "play" && !photo && !map ? player.group.position.clone().multiplyScalar((R + bodyY + 0.9) / (R + bodyY)) : null,
+    player.ride?.mount.reach ? player.ride.mount.reach + swimK * 0.9 : 0); // (your own car stays whole, afloat too)
   W.render(t);
   if (map) mapUi.update({ camera, ground: G, group: world }, { d: localPos(), h: bodyY }, net.others());
   if (photo?.shoot && --photo.shoot === 0) capture();
@@ -2088,6 +2150,7 @@ function petAnswer(petId, text) {
 }
 const PETS_BY_ID = Object.fromEntries(FREN_PETS.map((p) => [p.id, p]));
 function startPat(pet) {
+  if (player.car) return toast(`Step out of your car to sit with ${pet.name} (Post Office panel, Cars: Get out).`);
   const w = away.w, me = localPos();
   patting = { pet };
   vel.set(0, 0);
@@ -2191,8 +2254,12 @@ const chainReady = connectChain()
         autoAvatar(s);
         skinButtons(s);
         planetButtons(s);
+        carButtons(s);
         checkCompanion(s);
+        checkCar(s);
       },
+      onCar: (id) => setDriving(id),
+      driving: () => driving,
       wearing: () => skinWorn?.id ?? null,
       onCompanion: (id, on) => setCompanion(id, on),
       companionsShown: () => [...followKinds],

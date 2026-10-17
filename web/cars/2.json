@@ -1,0 +1,25 @@
+{
+  "name": "City Taxi · Courier Car",
+  "description": "A yellow cab with a light on the roof and a checkered stripe. Where to, courier? A car to drive round Courier World: while you drive it, only the car shows. One of 300. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/2.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Common"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "City Taxi"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Everyday"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 300,
+      "display_type": "number"
+    }
+  ]
+}

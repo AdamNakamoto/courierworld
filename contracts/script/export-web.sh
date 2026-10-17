@@ -20,6 +20,7 @@ abi() { jq '.abi' "out/$1.sol/$1.json"; }
 COMPANIONS=deployments/robinhood-companions.json
 PLANETS=deployments/robinhood-planets.json
 FISH=deployments/robinhood-fish.json
+CARS=deployments/robinhood-cars.json
 DROPS2=deployments/robinhood-drops2.json
 onchain() {
   local code
@@ -30,11 +31,13 @@ onchain() {
 COMPANIONS_LIVE=0
 PLANETS_LIVE=0
 FISH_LIVE=0
+CARS_LIVE=0
 DROPS2_LIVE=0
 if [ -f "$GAME" ]; then
   if [ -f "$COMPANIONS" ] && onchain "$COMPANIONS" companions; then COMPANIONS_LIVE=1; fi
   if [ -f "$PLANETS" ] && onchain "$PLANETS" planets; then PLANETS_LIVE=1; fi
   if [ -f "$FISH" ] && onchain "$FISH" fish; then FISH_LIVE=1; fi
+  if [ -f "$CARS" ] && onchain "$CARS" cars; then CARS_LIVE=1; fi
   if [ -f "$DROPS2" ] && onchain "$DROPS2" drops2; then DROPS2_LIVE=1; fi
 fi
 CHAIN='{
@@ -121,6 +124,12 @@ if [ -f "$GAME" ]; then
     tmp=$(mktemp)
     jq --slurpfile f "$FISH" --argjson fishAbi "$(abi CourierFish)" \
       '.contracts.fish = $f[0].fish | .fishBlock = $f[0].block | .abis.fish = $fishAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+  fi
+  # Courier Cars, once deployed (script/deploy-cars.sh writes deployments/robinhood-cars.json).
+  if [ "$CARS_LIVE" = 1 ]; then
+    tmp=$(mktemp)
+    jq --slurpfile c "$CARS" --argjson carsAbi "$(abi CourierCars)" \
+      '.contracts.cars = $c[0].cars | .carsBlock = $c[0].block | .abis.cars = $carsAbi' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
   fi
   echo "wrote web/deployments/robinhood.json (stage: game)"
 else

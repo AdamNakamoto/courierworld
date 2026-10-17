@@ -1,0 +1,25 @@
+{
+  "name": "Pickup Truck · Courier Car",
+  "description": "A sturdy pickup with an open bed, for parcels too big for any bag. A car to drive round Courier World: while you drive it, only the car shows. One of 300. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/4.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Common"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Pickup Truck"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Everyday"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 300,
+      "display_type": "number"
+    }
+  ]
+}

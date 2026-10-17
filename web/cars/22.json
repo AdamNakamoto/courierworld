@@ -1,0 +1,25 @@
+{
+  "name": "Convertible · Courier Car",
+  "description": "Top down, sun out. A sea-green cruiser with white-wall tyres. A car to drive round Courier World: while you drive it, only the car shows. One of 30. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/22.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Epic"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Convertible"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fast"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 30,
+      "display_type": "number"
+    }
+  ]
+}

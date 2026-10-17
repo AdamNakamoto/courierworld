@@ -354,7 +354,7 @@ export async function renderSealedStamp(size = 512) {
   return out;
 }
 
-const TIER_INK = { Pet: "#5e9f57", "Space buddy": "#3f6fbf", Legendary: "#c9962a", Mecha: "#8d5a99", Anime: "#c4577f" };
+const TIER_INK = { Pet: "#5e9f57", "Space buddy": "#3f6fbf", Legendary: "#c9962a", Mecha: "#8d5a99", Anime: "#c4577f", Common: "#5f6b6e", Rare: "#3f6fbf", Epic: "#8d5a99" }; // (the last three: Courier Cars)
 
 /// Any ready-made `subject` (feet at y 0, facing +z), turned a little and framed to fit, w×h pixels. The caller
 /// builds it and disposes of it.

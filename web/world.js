@@ -56,10 +56,11 @@ const GRADIENT = (() => {
 
 // Cutaway: anything between the camera and the courier is cut through along the line of sight, so
 // trees and walls never hide them. Shared by every material (and the normal pass) so the ink outlines
-// agree; the ground and anything near it are never cut.
+// agree; the ground and anything near it are never cut, nor anything within cutSpare of the point looked at (the
+// car you're driving, which is bigger than any courier).
 // Leaves sway in the wind the same way (by a per-vertex "sway" weight only foliage has).
 const CUT = {
-  cutCam: { value: new THREE.Vector3() }, cutTarget: { value: new THREE.Vector3() }, cutR: { value: 0 }, windTime: { value: 0 },
+  cutCam: { value: new THREE.Vector3() }, cutTarget: { value: new THREE.Vector3() }, cutR: { value: 0 }, cutSpare: { value: 0 }, windTime: { value: 0 },
 };
 function cutaway(material) {
   material.onBeforeCompile = (sh) => {
@@ -83,9 +84,9 @@ function cutaway(material) {
     sh.fragmentShader = sh.fragmentShader
       .replace("void main() {", `varying vec3 vCutWorld;
       uniform vec3 cutCam, cutTarget;
-      uniform float cutR;
+      uniform float cutR, cutSpare;
       void main() {
-        if (cutR > 0.0 && length(vCutWorld) > ${(R + 0.3).toFixed(2)}) {
+        if (cutR > 0.0 && length(vCutWorld) > ${(R + 0.3).toFixed(2)} && distance(vCutWorld, cutTarget) > cutSpare) {
           vec3 ab = cutTarget - cutCam;
           float h = dot(vCutWorld - cutCam, ab) / dot(ab, ab);
           float r = cutR * smoothstep(0.06, 0.3, h) * (1.0 - smoothstep(0.66, 0.84, h));
@@ -1619,9 +1620,11 @@ export function createWorld(canvas, { keepClear = [] } = {}) {
     setDust(k) { post.uniforms.dust.value = k; },
     /// The rocket pad in the neon district ({ d, reach }), where the moon flights leave from, or null.
     rocket: rocketPad,
-    /// Cut a see-through path from the camera to this point (world space), or pass null to stop.
-    setCutaway(target) {
+    /// Cut a see-through path from the camera to this point (world space), or pass null to stop; nothing within
+    /// `spare` of the point is cut (the car you're driving).
+    setCutaway(target, spare = 0) {
       CUT.cutR.value = target ? 0.85 : 0;
+      CUT.cutSpare.value = spare;
       if (target) {
         CUT.cutTarget.value.copy(target);
         CUT.cutCam.value.copy(camera.position);

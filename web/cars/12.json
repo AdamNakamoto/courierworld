@@ -1,0 +1,25 @@
+{
+  "name": "Monster Truck · Courier Car",
+  "description": "Wheels taller than you are. Curbs? What curbs? A car to drive round Courier World: while you drive it, only the car shows. One of 100. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/12.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Rare"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Monster Truck"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fun"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 100,
+      "display_type": "number"
+    }
+  ]
+}

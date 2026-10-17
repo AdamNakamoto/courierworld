@@ -87,6 +87,16 @@ const PLANET_ERROR_TEXT = {
   WalletLimit: "That's more planets than one wallet can buy.",
   PriceChanged: "The planet price just went up. Check the new price and try again.",
 };
+/// What the cars contract means by its errors (it's the companions contract deployed again for cars, so it shares
+/// their names).
+const CAR_ERROR_TEXT = {
+  Closed: "That car isn't on sale right now.",
+  SoldOut: "Sold out: every one of that car has been bought.",
+  BadQuantity: "Buy between 1 and 10 cars at a time.",
+  PriceChanged: "That car's price just went up. Check the new price and try again.",
+  UnknownKind: "That car isn't in the showroom.",
+  WalletLimit: "You've bought as many of that car as one wallet can.",
+};
 /// What the companions contract means by the error names it shares with the skins.
 const COMPANION_ERROR_TEXT = {
   Closed: "That companion isn't on sale right now.",
@@ -169,7 +179,7 @@ export async function connectChain() {
   const errors = [
     ...dep.abis.nft, ...(dep.abis.stamp ?? []), ...(dep.abis.office ?? []),
     ...(dep.abis.hook ?? []), ...(dep.abis.router ?? []), ...(dep.abis.ethRouter ?? []), ...(dep.abis.skins ?? []), ...(dep.abis.skinsStamp ?? []),
-    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...(dep.abis.planets ?? []), ...(dep.abis.fish ?? []), ...V4_ABI,
+    ...(dep.abis.pad ?? []), ...(dep.abis.drops ?? []), ...(dep.abis.companions ?? []), ...(dep.abis.cars ?? []), ...(dep.abis.planets ?? []), ...(dep.abis.fish ?? []), ...V4_ABI,
   ].filter((i) => i.type === "error");
   knownErrors = errors;
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...errors];
@@ -184,6 +194,8 @@ export async function connectChain() {
     skinsStamp: dep.contracts.skinsStamp ? { address: dep.contracts.skinsStamp, abi: withErrors(dep.abis.skinsStamp) } : null,
     // Courier Companions: none until the contract is deployed, and every companion feature hides till then.
     companions: dep.contracts.companions ? { address: dep.contracts.companions, abi: withErrors(dep.abis.companions) } : null,
+    // Courier Cars: likewise, none until it's deployed, and every car feature hides till then.
+    cars: dep.contracts.cars ? { address: dep.contracts.cars, abi: withErrors(dep.abis.cars) } : null,
     // Courier Planets: likewise, none until it's deployed.
     planets: dep.contracts.planets ? { address: dep.contracts.planets, abi: withErrors(dep.abis.planets) } : null,
     // Courier Fish: likewise.
@@ -292,6 +304,40 @@ export async function connectChain() {
     return out;
   }
 
+  // Courier Cars: the same contract as the companions', so the same reads and the same cache.
+  let carsLast = null, carsGen = 0, carsFresh = 0;
+  async function carsOf(who) {
+    const last = carsLast;
+    if (last && last.who === who && Date.now() - last.at < COMPANIONS_EVERY_MS && Date.now() > carsFresh) return last.value;
+    try {
+      const gen = carsGen, at = Date.now();
+      const value = await readKinds(C.cars, who);
+      if (gen === carsGen) carsLast = { who, at, value };
+      return value;
+    } catch {
+      return last?.who === who ? last.value : null;
+    }
+  }
+  /// Every kind of a companions-style shop (`shop`) and, for `who`, how many of each they hold and have bought.
+  async function readKinds(shop, who) {
+    const [ids, list] = await read(shop, "allKinds");
+    const kinds = list.map((k, i) => ({
+      id: Number(ids[i]), price: k.price, maxSupply: Number(k.maxSupply), minted: Number(k.minted), perWallet: Number(k.perWallet), open: k.open,
+    }));
+    const out = { address: shop.address, kinds, owned: {}, bought: {} };
+    if (who && ids.length) {
+      const [held, got] = await Promise.all([
+        read(shop, "balanceOfBatch", [ids.map(() => who), ids]),
+        Promise.all(ids.map((id) => read(shop, "bought", [who, id]))),
+      ]);
+      kinds.forEach((k, i) => {
+        out.owned[k.id] = Number(held[i]);
+        out.bought[k.id] = Number(got[i]);
+      });
+    }
+    return out;
+  }
+
   const PLANETS_EVERY_MS = 15_000;
   let planetsLast = null; // { who, at, value }: the planet sale as last read, for that wallet
   let planetsGen = 0, planetsFresh = 0; // (as for companions, after a buy or the owner's change)
@@ -362,31 +408,34 @@ export async function connectChain() {
 
   const skinDesigns = new Map(); // skin id -> design, after the reveal
   async function snapshot() {
+    // (The wallet as it is now, for every read and for s.account: it can change while the reads are out.)
+    const who = account;
     // Started first so that, when it's time to read the shop again, those reads overlap the ones below.
-    const companions = C.companions ? companionsOf(account) : null;
-    const planets = C.planets ? planetsOf(account) : null;
-    const fish = C.fish ? fishOf(account) : null;
+    const companions = C.companions ? companionsOf(who) : null;
+    const cars = C.cars ? carsOf(who) : null;
+    const planets = C.planets ? planetsOf(who) : null;
+    const fish = C.fish ? fishOf(who) : null;
     const [block, minted, price, saleOpen, seed] = await Promise.all([
       pub.getBlock(), read(C.nft, "totalMinted"), read(C.nft, "price"), read(C.nft, "saleOpen"), read(C.nft, "seed"),
     ]);
     const s = {
-      now: block.timestamp, minted: Number(minted), price, saleOpen, seed, game, tiers, account, accounts, nft: C.nft.address,
+      now: block.timestamp, minted: Number(minted), price, saleOpen, seed, game, tiers, account: who, accounts, nft: C.nft.address,
       local: dep.local, explorer: dep.explorer, devAccounts: !browserWallet, browserWallet,
     };
     if (C.skins) {
       const [minted, price, saleOpen, seed, owner] = await Promise.all([
         read(C.skins, "totalMinted"), read(C.skins, "price"), read(C.skins, "saleOpen"), read(C.skins, "seed"), read(C.skins, "owner"),
       ]);
-      s.skins = { minted: Number(minted), price, saleOpen, seed, address: C.skins.address, mine: null, isOwner: !!account && same(owner, account) };
+      s.skins = { minted: Number(minted), price, saleOpen, seed, address: C.skins.address, mine: null, isOwner: !!who && same(owner, who) };
       // Paying in $STAMP: its price, whether it's open, and the ETH float that pays each skin's ETH price.
       if (C.skinsStamp) {
         const [stampPrice, open, float, saleOwner] = await Promise.all([
           read(C.skinsStamp, "stampPrice"), read(C.skinsStamp, "open"), pub.getBalance({ address: C.skinsStamp.address }), read(C.skinsStamp, "owner"),
         ]);
-        s.skins.stamp = { address: C.skinsStamp.address, price: stampPrice, open, float, isOwner: !!account && same(saleOwner, account) };
+        s.skins.stamp = { address: C.skinsStamp.address, price: stampPrice, open, float, isOwner: !!who && same(saleOwner, who) };
       }
-      if (account) {
-        const ids = (await read(C.skins, "tokensOfOwner", [account])).map(Number);
+      if (who) {
+        const ids = (await read(C.skins, "tokensOfOwner", [who])).map(Number);
         // A skin's design never changes once revealed, so it's read once.
         const design = (id) => skinDesigns.get(id) ?? read(C.skins, "designOf", [BigInt(id)]).then((d) => (skinDesigns.set(id, Number(d)), Number(d)));
         const designs = seed === 0n ? ids.map(() => null) : await Promise.all(ids.map(design));
@@ -394,6 +443,7 @@ export async function connectChain() {
       }
     }
     s.companions = companions ? await companions : null;
+    s.cars = cars ? await cars : null;
     s.planets = planets ? await planets : null;
     s.fish = fish ? await fish : null;
     if (game) {
@@ -403,9 +453,9 @@ export async function connectChain() {
       ]);
       Object.assign(s, { totalPower, rewardPerBlock, officePrice, cooldown, levelBase });
     }
-    if (!account) return s;
+    if (!who) return s;
     const [eth, mine] = await Promise.all([
-      pub.getBalance({ address: account }), read(C.nft, "tokensOfOwner", [account]).then((ids) => ids.map(Number)),
+      pub.getBalance({ address: who }), read(C.nft, "tokensOfOwner", [who]).then((ids) => ids.map(Number)),
     ]);
     s.eth = eth;
     if (!game) {
@@ -414,8 +464,8 @@ export async function connectChain() {
     }
     const [o, [pending], stampBal, allowance, imd] = await Promise.all([
       // What a claim mints for this player: after the inviter's cut and the supply cap.
-      read(C.office, "offices", [account]), read(C.office, "claimable", [account]), read(C.stamp, "balanceOf", [account]),
-      read(C.stamp, "allowance", [account, C.office.address]), T ? read(T.imd, "balanceOf", [account]) : null,
+      read(C.office, "offices", [who]), read(C.office, "claimable", [who]), read(C.stamp, "balanceOf", [who]),
+      read(C.stamp, "allowance", [who, C.office.address]), T ? read(T.imd, "balanceOf", [who]) : null,
     ]);
     s.office = { open: o[0], tier: Number(o[1]), onDuty: Number(o[2]), routesUsed: Number(o[3]), lastUpgrade: o[4], referrer: o[5], power: o[6] };
     Object.assign(s, { pending, stamp: stampBal, allowance, imd });
@@ -423,7 +473,7 @@ export async function connectChain() {
       Promise.all(mine.map((id) => read(C.office, "levelOf", [BigInt(id)]))),
       Promise.all(mine.map((id) => read(C.office, "dutyOf", [BigInt(id)]))),
     ]);
-    s.mine = mine.map((id, i) => ({ id, level: Number(levels[i]) + 1, onDuty: duty[i].toLowerCase() === account.toLowerCase() }));
+    s.mine = mine.map((id, i) => ({ id, level: Number(levels[i]) + 1, onDuty: duty[i].toLowerCase() === who.toLowerCase() }));
     return s;
   }
 
@@ -957,6 +1007,34 @@ export async function connectChain() {
         companionsLast = null;
         companionsGen++;
         companionsFresh = Date.now() + 6000;
+      }
+    },
+    /// Buy `qty` of car kind `id` with $STAMP, all of it to the treasury, at the price the panel showed at most: one
+    /// signature (a permit) and one transaction, or an approval first for wallets that can't sign typed data.
+    async buyCar(s, id, qty) {
+      const shop = C.cars, kind = s.cars?.kinds.find((k) => k.id === id);
+      if (!shop || !C.stamp || !kind) throw new Error("That car isn't in the showroom.");
+      if (!account) throw new Error("Log in first.");
+      const n = BigInt(qty), cost = kind.price * n, args = [BigInt(id), n, cost];
+      try {
+        if ((await read(C.stamp, "allowance", [account, shop.address])) >= cost) return await send(shop, "buy", args);
+        const deadline = (await pub.getBlock()).timestamp + 600n;
+        let sig = null;
+        try {
+          sig = await signPermit(shop.address, cost, deadline);
+        } catch (e) {
+          if (rejected(e)) throw e;
+        }
+        if (sig) return await send(shop, "buyWithPermit", [...args, deadline, sig.v, sig.r, sig.s]);
+        await send(C.stamp, "approve", [shop.address, cost]);
+        return await send(shop, "buy", args);
+      } catch (e) {
+        const text = CAR_ERROR_TEXT[revertName(e)];
+        throw text ? new Error(text) : e;
+      } finally {
+        carsLast = null;
+        carsGen++;
+        carsFresh = Date.now() + 6000;
       }
     },
     /// Buy `qty` planets (1 to 3) with $STAMP, all of it to the treasury: one signature (a permit) and one transaction,

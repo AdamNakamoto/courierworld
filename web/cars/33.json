@@ -1,0 +1,25 @@
+{
+  "name": "Neon Cyber Car · Courier Car",
+  "description": "All hard angles and glowing edges, straight out of the neon district. A car to drive round Courier World: while you drive it, only the car shows. One of 10. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/33.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Legendary"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Neon Cyber Car"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fantasy"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 10,
+      "display_type": "number"
+    }
+  ]
+}

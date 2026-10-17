@@ -22,6 +22,7 @@ import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { cleanName, nameMessage, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
 import { imageMessage, IMAGE_MAX_BYTES, IMAGE_TYPES } from "../../web/pad-rules.js";
 import { COMPANION_IDS } from "../../web/companion-kinds.js";
+import { CAR_IDS } from "../../web/car-kinds.js";
 import { BONUS_DROPS, BONUS_MINUTES, BONUS_MOVE_M, BONUS_WARMUP_MS, bonusCoins, bonusShare, bonusPayDay } from "../../web/bonus-rules.js";
 import { FISH, FISH_PER_DAY, FISH_MINT_DAYS, fishOf } from "../../web/fish-kinds.js";
 import { fishingSpot, pickFish, BITE_MIN_MS, BITE_MAX_MS, FIGHT_MIN_MS, CAST_MS, CAST_GAP_MS } from "../../web/fish-rules.js";
@@ -133,6 +134,7 @@ function cleanHello(h) {
   if (out.addr) {
     const kinds = [...new Set((Array.isArray(h.companions) ? h.companions : [h.companion]).filter((k) => COMPANION_IDS.includes(k)))];
     if (kinds.length) out.companionIds = kinds.sort((x, y) => x - y);
+    if (CAR_IDS.includes(h.carId)) out.carId = h.carId; // (the Courier Car they'd like to drive: checked in `hi`)
   }
   return out;
 }
@@ -392,21 +394,36 @@ export class Planet extends DurableObject {
     const hello = cleanHello(raw);
     if (!hello) return;
     const seq = (a.hiSeq = (a.hiSeq ?? 0) + 1);
-    const id = hello.skinId, kinds = hello.companionIds ?? [];
+    const id = hello.skinId, kinds = hello.companionIds ?? [], carId = hello.carId ?? null;
     delete hello.skinId;
     delete hello.companionIds;
+    delete hello.carId;
     // Skins and companions are read from the chain (never taken on the client's word) for the wallet on their name
     // tag, the address everyone sees: a hunt sign-in may be for a wallet they've since switched from. Both at once,
     // on a client with short timeouts, so a slow chain can't hold up their arrival for long.
     // A different skin at most every two seconds, so nobody can make the room hammer the chain.
     const skinAsk = id && (id === a.skinAsked || Date.now() - (a.skinAskedAt ?? 0) > 2000);
     if (skinAsk) [a.skinAsked, a.skinAskedAt] = [id, Date.now()];
-    const [design, owned] = await Promise.all([
+    const [design, owned, hasCar] = await Promise.all([
       skinAsk ? this.skinDesign(id, hello.addr) : null,
       kinds.length ? this.ownsCompanions(kinds, hello.addr, a) : new Map(),
+      carId ? this.ownsCar(carId, hello.addr, a) : false,
     ]);
     if (a.hiSeq !== seq) return; // a newer hello arrived while we were checking (or they left)
     if (design !== null) hello.skin = design;
+    // Their car: if the chain says it's theirs (or, while it hasn't answered, it was already shown for this wallet).
+    const sameWallet = a.hello?.addr?.toLowerCase() === hello.addr?.toLowerCase();
+    if (carId && (hasCar === true || (hasCar == null && sameWallet && a.hello?.car === carId))) hello.car = carId;
+    if (carId && hasCar === null) {
+      // Too soon after the last car check: look again once one's allowed (unless a newer hello comes first).
+      setTimeout(() => a.hiSeq === seq && this.seen.get(ws) === a && this.hi(ws, a, raw).catch(() => {}), Math.max(100, 2100 - (Date.now() - a.carAskedAt)));
+    } else if (carId && hasCar !== true) {
+      // Not theirs as far as the chain said (or it didn't answer): one more look in a while (a buy the RPC hadn't seen).
+      setTimeout(async () => {
+        if (a.hiSeq !== seq || this.seen.get(ws) !== a) return;
+        if ((await this.ownsCar(carId, hello.addr, a)) === true && a.hiSeq === seq && this.seen.get(ws) === a) this.hi(ws, a, raw).catch(() => {});
+      }, COMPANION_RECHECK_MS);
+    }
     // Their companions: those the chain says are theirs (and, while it hasn't answered, those already shown for this
     // wallet). `companion`,
     // the dearest, is for games from before several could follow (and is the one the companion bonus counts).
@@ -511,6 +528,28 @@ export class Planet extends DurableObject {
       for (const k of ask) out.set(k, undefined);
     }
     return out;
+  }
+
+  /// Whether `owner` holds a Courier Car of kind `id` (the Courier Cars contract, an ERC-1155 like the companions'):
+  /// kept a few minutes if so, a few seconds if not. False if not (or there's no contract yet); undefined if the chain
+  /// didn't answer; null if it isn't known and a new read would come sooner than two seconds after this player's last.
+  async ownsCar(id, owner, a) {
+    if (!this.env.CARS_ADDRESS || !owner) return false;
+    this.cars ??= new Map();
+    const key = `${owner.toLowerCase()}:${id}`, c = this.cars.get(key);
+    if (c && Date.now() - c.at < (c.owned ? COMPANION_CHECK_MS : COMPANION_MISS_MS)) return c.owned;
+    if (Date.now() - (a.carAskedAt ?? 0) < 2000) return null;
+    a.carAskedAt = Date.now();
+    try {
+      const held = await this.cosmeticChain().readContract({
+        address: this.env.CARS_ADDRESS, abi: COMPANIONS_ABI, functionName: "balanceOf", args: [owner.toLowerCase(), BigInt(id)],
+      });
+      this.cars.set(key, { at: Date.now(), owned: held > 0n });
+      while (this.cars.size > 3000) this.cars.delete(this.cars.keys().next().value);
+      return held > 0n;
+    } catch {
+      return undefined;
+    }
   }
 
   /// The drops running on `day`, oldest first ({ id, spots, isStamp }), read from both TokenDrops contracts and kept a

@@ -1,0 +1,25 @@
+{
+  "name": "Tuk-Tuk · Courier Car",
+  "description": "A zippy three-wheeler with a striped canopy. Beep beep! A car to drive round Courier World: while you drive it, only the car shows. One of 100. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/13.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Rare"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Tuk-Tuk"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fun"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 100,
+      "display_type": "number"
+    }
+  ]
+}

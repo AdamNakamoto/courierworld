@@ -751,3 +751,52 @@ moves no PEPE coin on any day (old and new layouts compared for the real drop li
 lay out the same coins. It added: `script/pause-drops.sh on|off` pauses or resumes both drops contracts from the
 treasury's wallet without the site; a "no" in the wallet on the first of two claims stops the second; the drop
 script refuses the first contract as `DROPS2`.
+
+## 17. New: Courier Cars (CourierCars)
+
+Live since 2026-10-17 at `0x79DD8994Fa61AE96e40C3881d6cdc1188Bd44eE6` (L2 block 90985457, source verified on Sourcify; owner and treasury the treasury,
+19 kinds on sale). `contracts/src/CourierCars.sol` is `CourierCompanions.sol` (live at
+`0x4254cEac6B7C9F8911Ce908A910DD1874C5B49B7`, IMD-audited in job 145af84f, findings fixed) deployed again for cars:
+an ERC-1155 where each kind of car is a token id with its own $STAMP price, a supply that can only shrink and a
+per-wallet limit counting purchases; paid only in $STAMP, straight from the buyer to the treasury; resales carry a
+royalty enforced through the transfer validator (OpenSea's registry); ownership two-step, never renounceable. The
+whole diff against `CourierCompanions.sol`:
+
+- Name "Courier Cars", symbol `CAR`, and car wording in the NatSpec.
+- **The royalty is fixed**: `ROYALTY_BPS = 500` (5%) replaces `MAX_ROYALTY_BPS`; `setRoyalty` and `RoyaltyTooHigh`
+  are gone; `setTreasury` always sets the default royalty to the new treasury at 5% (the companions' only moved it
+  if it was being paid to the old treasury). So the royalty is always 5%, always to the current treasury.
+- **`setKinds(ids, prices, maxSupplies, perWallets, open)`**, owner only: `setKind` for each entry, in order, in one
+  transaction (`BadLength` if the lists differ in length). `setKind` and `setKinds` share one private `_setKind`
+  (the companions' `setKind` body, unchanged), so every rule holds per entry: a kind's supply can only shrink and
+  never below what's minted, a new kind announces its `URI`. A repeated id in one call is just two `setKind`s.
+
+Deployed by `script/DeployCars.s.sol` (`deploy-cars.sh`), two transactions signed by the treasury wallet: the
+contract (owner and treasury the signer, the OpenSea registry, base https://courierworld.fun/cars/), then
+`setKinds` with the 19-car lineup, open: Common 500 $STAMP (300 each, 5 a wallet), Rare 1,500 (100, 3), Epic 4,000
+(30, 2), Legendary 10,000 (10, 1). The script refuses to run again once `deployments/robinhood-cars.json` exists,
+and after sending checks the contract's code and that all 19 kinds are on sale (the lineup goes to the address
+forge simulated: if the wallet used another nonce, or the second transaction failed, nothing is exported, and
+`DeployCars.s.sol`'s `lineupOn(address)` sends the lineup alone, signed by the owner).
+
+Trust: as for Courier Companions. The owner sets prices, opens and closes sales, adds kinds and shrinks supplies,
+sets the treasury and the validator, and can `rescue` tokens sent to the contract by mistake; it can't mint without
+paying, raise a supply, change the royalty, or reach anyone's cars or $STAMP.
+
+The game and the room: the room shows a player's car only after `balanceOf(addr, id)` on `CARS_ADDRESS` says the
+wallet on their name tag holds one (cached a few minutes if so, seconds if not; at most one new read per player
+every 2 s); the client's `carId` is never passed on, only the checked `car`.
+
+Tests: `test/CourierCars.t.sol` (the companions' unit tests, with `setKinds`, the 19-car lineup and the fixed royalty
+following the treasury; the `setRoyalty` tests removed) and `test/CourierCars.invariant.t.sol` (every call's outcome
+predicted); `CourierCarsForkTest` against the live registry (holders move their own; only OpenSea's fee-checked
+flow can sell; no more than authorized). End to end on a local chain and room: buying, driving, getting out, the
+car kept per wallet across reloads, wallet limits, and the room showing a car only to a wallet that owns it (a
+wallet without it, and a made-up car id, are shown on foot).
+
+Our own review (four independent passes, each finding checked by a skeptic) found nothing that lets a car be minted
+without paying or shown for a wallet that doesn't own it, and these, fixed: the deploy script now refuses to export
+a contract without its lineup and no longer stops before its checks when forge fails early; a car name that used a
+real brand was renamed (the Trail 4x4) and the neon cyber car redrawn so it resembles no real vehicle; the camera's
+see-through cut no longer cuts holes in your own car; a wallet switch mid-read can't restore the wrong wallet's car
+or lose the saved one; getting in ends fishing and patting; name tags and bubbles sit above a floating car.

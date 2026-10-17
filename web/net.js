@@ -13,6 +13,7 @@ import { nameMessage, nameShown } from "./name-rules.js";
 import { SKINS } from "./skins.js";
 import { createFollower } from "./companions.js";
 import { COMPANION_IDS } from "./companion-kinds.js";
+import { CAR_IDS } from "./car-kinds.js";
 
 /// What you can show the players around you: an emoji, or an emoji and a few words. It pops up
 /// over your head (keys 1-9 and 0, or the emote buttons). The order matters: the room sends the index.
@@ -294,6 +295,7 @@ export function createNet(W, {
   url, makeRider, dispose, tier = () => null, onCount = () => {}, onHunt = () => {}, onFound = () => {}, onNope = () => {}, onBonus = () => {},
   onChat = () => {}, onChatHistory = () => {}, onChatError = () => {}, nameToken = () => null, onNamed = () => {},
   onFish = () => {}, onFishNews = () => {}, onPets = () => {}, onPetPat = () => {}, onPetSay = () => {}, allowSay = () => true,
+  myBubble = () => 2.55, // how high your own bubbles go (over a car you're driving, they go over its roof)
   world = (w) => (w === "planet" ? { group: W.world, r: R, terrain: W.terrain } : null),
 }) {
   const players = new Map(); // id -> { hello, root, rider, tag, follower, pos, fwd, target, h, air, spd, swim, wave }
@@ -371,11 +373,13 @@ export function createNet(W, {
     const was = players.get(id)?.world;
     remove(id);
     const root = new THREE.Group();
-    // A skin the room has checked is theirs (its design number); otherwise their courier's look.
+    // A skin the room has checked is theirs (its design number); otherwise their courier's look. In a Courier Car the
+    // room has checked is theirs, only the car shows.
     const skin = Number.isInteger(hello.skin) ? SKINS[hello.skin] : null;
+    const car = Number.isInteger(hello.car) && CAR_IDS.includes(hello.car) ? hello.car : null;
     const rider = skin
-      ? makeRider(skin.params, skin.ride ?? "foot", skin.rideColour)
-      : makeRider(cleanLook(hello.look), RIDES.includes(hello.ride) ? hello.ride : "foot");
+      ? makeRider(skin.params, skin.ride ?? "foot", skin.rideColour, car)
+      : makeRider(cleanLook(hello.look), RIDES.includes(hello.ride) ? hello.ride : "foot", null, car);
     const tag = label(hello);
     root.add(rider.group, tag);
     // Their Courier Companions, those the room has read on chain are theirs (a room from before several could follow
@@ -405,6 +409,8 @@ export function createNet(W, {
     players.set(id, p);
     if (s) apply(p, s);
   }
+  /// How high over someone their bubbles and emotes go (over a tall car, higher).
+  const bubbleAt = (p) => (p.rider.ride?.mount.tag ? p.rider.ride.mount.tag + 0.85 + p.swim * 0.9 : p.rider.ride ? 3.2 : 2.85); // (a car floats)
   function remove(id) {
     const p = players.get(id);
     if (!p) return;
@@ -577,7 +583,7 @@ export function createNet(W, {
           p.rider.ch.setFish?.(1, 0);
         } else rodDown(p);
         const k = m[3] != null ? fishOf(m[3])?.name : null;
-        if (k && p.root.visible) emotes.say(p.rider.group, `🐟 ${k}!`, p.rider.ride ? 3.2 : 2.85);
+        if (k && p.root.visible) emotes.say(p.rider.group, `🐟 ${k}!`, bubbleAt(p));
         return;
       }
       case "pat": {
@@ -597,7 +603,7 @@ export function createNet(W, {
         if (!p || typeof m[3] !== "string") return;
         // (Chat's rules for what you see: chat off, or that player muted, and it isn't shown.)
         if (!allowSay({ id: String(p.id), name: p.hello?.name ?? (p.hello?.addr ? `${p.hello.addr.slice(0, 6)}…${p.hello.addr.slice(-4)}` : "Guest") })) return;
-        if (p.root.visible) emotes.say(p.rider.group, m[3], p.rider.ride ? 3.2 : 2.85);
+        if (p.root.visible) emotes.say(p.rider.group, m[3], bubbleAt(p));
         onPetSay(m[2], m[3], p.id);
         return;
       }
@@ -657,7 +663,7 @@ export function createNet(W, {
         const p = players.get(m[1]);
         if (!p) return;
         p.wave = 1.6;
-        if (m[2] >= 0 && p.root.visible) emotes.show(p.rider.group, m[2], p.rider.ride ? 3.2 : 2.85); // above the name tag
+        if (m[2] >= 0 && p.root.visible) emotes.show(p.rider.group, m[2], bubbleAt(p)); // above the name tag
         return;
       }
     }
@@ -699,11 +705,12 @@ export function createNet(W, {
     /// you're wearing (its token id) and the Courier Companion following you (its kind; the room shows
     /// either only if that wallet owns it). Joins the room the first time it's called; afterwards it tells
     /// everyone you've changed.
-    hello(look, ride, addr, skinId = null, companions = []) {
+    hello(look, ride, addr, skinId = null, companions = [], carId = null) {
       const was = me?.addr;
       // (`companion`, the dearest of them, for a room from before several could follow.)
       const list = addr ? [...new Set(companions)].sort((a, b) => a - b) : [];
-      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}), ...(list.length ? { companions: list, companion: list[list.length - 1] } : {}) };
+      me = { look, ride: ride ?? "foot", ...(addr ? { addr } : {}), ...(addr && skinId ? { skinId } : {}), ...(list.length ? { companions: list, companion: list[list.length - 1] } : {}),
+        ...(addr && carId ? { carId } : {}) }; // (the Courier Car you're driving: the room checks it's yours)
       if (!started) {
         started = true;
         connect();
@@ -742,7 +749,7 @@ export function createNet(W, {
     /// Wave (-1) or show one of EMOTES to the players around you (and over your own head).
     say(i) {
       send(["say", i]);
-      if (i >= 0) emotes.show(anchor, i, 2.55);
+      if (i >= 0) emotes.show(anchor, i, myBubble());
     },
     /// Each frame: `state` is where you are ({ p, f, h, air, spd, swim }: your direction from the
     /// planet's centre, the way you face, height, jump, speed and swim), or null when not playing.
@@ -832,9 +839,10 @@ export function createNet(W, {
         }
         p.rider.group.position.copy(p.pos).multiplyScalar(pr + p.h);
         orient(p.rider.group, p.pos, p.fwd);
-        p.tag.position.copy(p.pos).multiplyScalar(pr + p.h + (p.rider.ride ? 2.35 : 2.05));
+        p.tag.position.copy(p.pos).multiplyScalar(pr + p.h + (p.rider.ride?.mount.tag ?? (p.rider.ride ? 2.35 : 2.05)) + (p.rider.car ? p.swim * 0.9 : 0));
         p.rider.update(dt, p.spd, t, Math.min(1, p.air * 4), moved);
         p.rider.ch.setSwim(p.swim);
+        if (p.rider.car) p.rider.ride.group.position.y = p.swim * 0.9; // (a car floats)
         p.wave = Math.max(0, p.wave - dt);
         p.rider.ch.setWave(p.wave > 0 ? Math.min(1, p.wave * 3, (1.6 - p.wave) * 6) : 0);
       }
@@ -847,9 +855,9 @@ export function createNet(W, {
     },
     /// Show a chat line as a bubble over whoever said it, if they're in view (you included).
     bubble(id, text) {
-      if (id === myId) return emotes.say(anchor, text, 2.55);
+      if (id === myId) return emotes.say(anchor, text, myBubble());
       const p = players.get(id);
-      if (p?.root.visible) emotes.say(p.rider.group, text, p.rider.ride ? 3.2 : 2.85);
+      if (p?.root.visible) emotes.say(p.rider.group, text, bubbleAt(p));
     },
     /// The treasure hunt (the treasury's token drops): sign in with `wallet`, signing the room's message with
     /// `sign(message)`.
@@ -918,7 +926,7 @@ export function createNet(W, {
     /// Say something to pet `id` (everyone on Frenpet World near you sees it over your head).
     petSay(id, text) {
       send(["petsay", id, text]);
-      emotes.say(anchor, text, 2.55);
+      emotes.say(anchor, text, myBubble());
     },
     /// Signed vouchers for each day's catch still in the mint window, for CourierFish.mintMany.
     fishVouchers() {

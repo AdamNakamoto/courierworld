@@ -1,0 +1,25 @@
+{
+  "name": "Camper Van · Courier Car",
+  "description": "A two-tone camper with a pop-up roof. Deliver by day, stargaze by night. A car to drive round Courier World: while you drive it, only the car shows. One of 300. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/6.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Common"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Camper Van"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Everyday"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 300,
+      "display_type": "number"
+    }
+  ]
+}

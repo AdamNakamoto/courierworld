@@ -1,0 +1,25 @@
+{
+  "name": "Hover Car · Courier Car",
+  "description": "No wheels: it floats on a cushion of light, a hand's width off the road. A car to drive round Courier World: while you drive it, only the car shows. One of 10. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/31.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Legendary"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Hover Car"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fantasy"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 10,
+      "display_type": "number"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Rocket Car · Courier Car",
+  "description": "A silver dart with fins and a rocket on the back, flame and all. A car to drive round Courier World: while you drive it, only the car shows. One of 10. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/34.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Legendary"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Rocket Car"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fantasy"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 10,
+      "display_type": "number"
+    }
+  ]
+}

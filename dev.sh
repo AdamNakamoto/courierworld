@@ -109,6 +109,7 @@ write_dev_vars() {
     [ -n "${DROPS2:-}" ] && printf 'DROPS2_ADDRESS=%s\n' "$DROPS2"
     [ -n "${SKINS:-}" ] && printf 'SKINS_ADDRESS=%s\nSKINS_RPC=%s\n' "$SKINS" "$RPC"
     [ -n "${COMPANIONS:-}" ] && printf 'COMPANIONS_ADDRESS=%s\n' "$COMPANIONS"
+    [ -n "${CARS:-}" ] && printf 'CARS_ADDRESS=%s\n' "$CARS"
     [ -n "${FISH:-}" ] && printf 'FISH_KEY=%s\nFISH_ADDRESS=%s\nFISH_CHAIN_ID=%s\n' "$FISH_KEY" "$FISH" "$(cast chain-id --rpc-url "$RPC")"
     [ -n "$(addr PostOffice)" ] && printf 'POST_OFFICE=%s\nPAD_RPC=%s\n' "$(addr PostOffice)" "$RPC"
   } > multiplayer/.dev.vars || true
@@ -153,6 +154,15 @@ deploy_companions() { # Courier Companions with the whole lineup on sale for $ST
   cast rpc anvil_stopImpersonatingAccount "$minter" --rpc-url "$RPC" >/dev/null
 }
 deploy_companions
+
+deploy_cars() { # Courier Cars with the whole lineup on sale for $STAMP (paid to the treasury, account 1)
+  [ -n "$STAMP_ADDR" ] || return 0
+  local prev="$OUT"
+  STAMP=$STAMP_ADDR CARS_BASE="http://localhost:$WEB_PORT/cars/" deploy script/DeployCars.s.sol
+  CARS=$(addr CourierCars)
+  OUT="$prev"
+}
+deploy_cars
 
 deploy_planets() { # Courier Planets with the sale open at 1,000 $STAMP (the dev players hold 20,000 each, from
   # deploy_companions), owned by the deployer (account 0, "Owner" in the panel), paid to the treasury (account 1)
@@ -234,6 +244,10 @@ write_chain_json() { # writes web/chain.json from the addresses in OUT (couriers
     contracts=$(echo "$contracts" | jq --arg companions "$COMPANIONS" '. + {companions: $companions}')
     abis=$(echo "$abis" | jq --argjson companions "$(abi CourierCompanions)" '. + {companions: $companions}')
   fi
+  if [ -n "${CARS:-}" ]; then
+    contracts=$(echo "$contracts" | jq --arg cars "$CARS" '. + {cars: $cars}')
+    abis=$(echo "$abis" | jq --argjson cars "$(abi CourierCars)" '. + {cars: $cars}')
+  fi
   if [ -n "${PLANETS:-}" ]; then
     contracts=$(echo "$contracts" | jq --arg planets "$PLANETS" '. + {planets: $planets}')
     abis=$(echo "$abis" | jq --argjson planets "$(abi CourierPlanets)" '. + {planets: $planets}')
@@ -259,6 +273,7 @@ write_chain_json
 echo "CourierNFT $NFT"
 echo "Skins      $SKINS"
 [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
+[ -n "${CARS:-}" ] && echo "Cars       $CARS"
 [ -n "${PLANETS:-}" ] && echo "Planets    $PLANETS"
 [ -n "${FISH:-}" ] && echo "Fish       $FISH"
 [ -n "${DROPS2:-}" ] && echo "Drops 2    $DROPS2 (partner token ${DROPS2_TOKENS:-})"
@@ -282,12 +297,14 @@ if [ "$STAGED" = 1 ]; then
   deploy script/DeployFork.s.sol --sig "runGame()"
   STAMP_ADDR=$(addr StampToken) OFFICE_ADDR=$(addr PostOffice)
   deploy_companions
+  deploy_cars
   deploy_planets
   deploy_fish
   deploy_drops
   write_dev_vars
   write_chain_json
   [ -n "${COMPANIONS:-}" ] && echo "Companions $COMPANIONS"
+  [ -n "${CARS:-}" ] && echo "Cars       $CARS"
   [ -n "${PLANETS:-}" ] && echo "Planets    $PLANETS"
   echo "Stage 2: the game is live. Reload the page."
   wait "$WEB_PID"

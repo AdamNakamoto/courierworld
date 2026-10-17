@@ -1,0 +1,25 @@
+{
+  "name": "Ice-Cream Truck · Courier Car",
+  "description": "Pastel stripes and a giant cone on the roof. Everyone waves. A car to drive round Courier World: while you drive it, only the car shows. One of 100. Bought with $STAMP.",
+  "image": "https://courierworld.fun/cars/11.png",
+  "external_url": "https://courierworld.fun",
+  "attributes": [
+    {
+      "trait_type": "Tier",
+      "value": "Rare"
+    },
+    {
+      "trait_type": "Kind",
+      "value": "Ice-Cream Truck"
+    },
+    {
+      "trait_type": "Style",
+      "value": "Fun"
+    },
+    {
+      "trait_type": "Supply",
+      "value": 100,
+      "display_type": "number"
+    }
+  ]
+}
