@@ -2,11 +2,12 @@
   "about": "Ads on the Orb. Only what's listed here shows, so add an ad only once it's paid and approved. image: a picture in web/orb/ (\"orb/name.png\"), square (it's shown as a circle filling the globe's face; round logos fit best), PNG/JPG/WebP; url (website) and/or chart: https links, at least one; text: up to 140 characters; color: the rest of the globe (\"#rrggbb\"; if left out, the picture's edge colour); from/until: when it runs (UTC). The running ad also shows on two of Times Square's big screens.",
   "ads": [
     {
-      "name": "PEPE",
-      "image": "orb/pepe.jpg",
-      "chart": "https://dexscreener.com/robinhood/0x8fcedf727eb16b29914771544f7cad11919618d62933f519da723f893a56e9c8",
-      "text": "First token launched on CourierWorld Launchpad and As Daily Treasury Hunt",
-      "from": "2026-10-14"
+      "name": "MineWorldCraft",
+      "image": "orb/mineworldcraft.png",
+      "url": "https://mineworldcraft.fun/",
+      "chart": "https://dexscreener.com/robinhood/0xe28155d67689430f88b6b11eaaa926d37925216aa13fe14991de5aa815ea7797",
+      "text": "Combination of Manual Play and Idle Play to Earn",
+      "from": "2026-10-17"
     }
   ]
 }
