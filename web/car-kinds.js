@@ -33,8 +33,8 @@ export const carOf = (id) => CARS.find((c) => c.id === id) ?? null;
 /// of a car one wallet can buy (the contract's per-kind limit).
 export const CAR_TIERS = ["Common", "Rare", "Epic", "Legendary"];
 export const TIER_TERMS = {
-  Common: { price: 500, supply: 300, perWallet: 5 },
-  Rare: { price: 1500, supply: 100, perWallet: 3 },
-  Epic: { price: 4000, supply: 30, perWallet: 2 },
-  Legendary: { price: 10000, supply: 10, perWallet: 1 },
-};
+  Common: { price: 250, supply: 300, perWallet: 5 },
+  Rare: { price: 750, supply: 100, perWallet: 3 },
+  Epic: { price: 2000, supply: 30, perWallet: 2 },
+  Legendary: { price: 5000, supply: 10, perWallet: 1 },
+}; // (halved on 2026-10-17, launch day: DeployCars.s.sol's `reprice`)

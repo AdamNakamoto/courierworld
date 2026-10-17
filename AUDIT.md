@@ -774,7 +774,9 @@ whole diff against `CourierCompanions.sol`:
 Deployed by `script/DeployCars.s.sol` (`deploy-cars.sh`), two transactions signed by the treasury wallet: the
 contract (owner and treasury the signer, the OpenSea registry, base https://courierworld.fun/cars/), then
 `setKinds` with the 19-car lineup, open: Common 500 $STAMP (300 each, 5 a wallet), Rare 1,500 (100, 3), Epic 4,000
-(30, 2), Legendary 10,000 (10, 1). The script refuses to run again once `deployments/robinhood-cars.json` exists,
+(30, 2), Legendary 10,000 (10, 1). Halved the same day (Common 250, Rare 750, Epic 2,000, Legendary 5,000) by the
+script's `reprice(address)`: one `setKinds` from the owner with the new prices and each kind's supply, wallet limit
+and open flag read from the chain, so nothing else moves (it refuses if some kinds are open and others closed). The script refuses to run again once `deployments/robinhood-cars.json` exists,
 and after sending checks the contract's code and that all 19 kinds are on sale (the lineup goes to the address
 forge simulated: if the wallet used another nonce, or the second transaction failed, nothing is exported, and
 `DeployCars.s.sol`'s `lineupOn(address)` sends the lineup alone, signed by the owner).

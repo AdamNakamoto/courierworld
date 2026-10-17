@@ -618,7 +618,9 @@ contract CourierCarsTest is Test {
         for (uint256 i; i < 19; ++i) {
             assertEq(l[i].id, ids[i]);
             // Common 1-6, Rare 11-15, Epic 21-24, Legendary 31-34 (web/car-kinds.js TIER_TERMS).
-            (uint256 p, uint256 sup, uint256 lim) = ids[i] < 10 ? (500, 300, 5) : ids[i] < 20 ? (1500, 100, 3) : ids[i] < 30 ? (4000, 30, 2) : (10000, 10, 1);
+            (uint256 p, uint256 sup, uint256 lim) = ids[i] < 10
+                ? (uint256(250), uint256(300), uint256(5))
+                : ids[i] < 20 ? (uint256(750), uint256(100), uint256(3)) : ids[i] < 30 ? (uint256(2000), uint256(30), uint256(2)) : (uint256(5000), uint256(10), uint256(1));
             assertEq(l[i].price, p);
             assertEq(l[i].supply, sup);
             assertEq(l[i].perWallet, lim);
@@ -633,12 +635,12 @@ contract CourierCarsTest is Test {
         assertEq(deployed.name(), "Courier Cars");
         assertEq(deployed.symbol(), "CAR");
         (uint128 price, uint32 maxSupply,, uint32 perWallet, bool open,) = deployed.kinds(34);
-        assertEq(price, 10000e18);
+        assertEq(price, 5000e18);
         assertEq(maxSupply, 10);
         assertEq(perWallet, 1);
         assertTrue(open);
         (price, maxSupply,, perWallet, open,) = deployed.kinds(1);
-        assertEq(price, 500e18);
+        assertEq(price, 250e18);
         assertEq(maxSupply, 300);
         assertEq(perWallet, 5);
         assertTrue(open);
@@ -646,6 +648,49 @@ contract CourierCarsTest is Test {
         assertEq(to, treasury);
         assertEq(fee, 50e18);
         assertGt(deployed.getTransferValidator().code.length, 0);
+    }
+
+    /// reprice: the lineup's prices on a shop already selling (here at launch's prices, twice these), every car's
+    /// supply, wallet limit, sales and open or closed left as they are on chain.
+    function test_reprice() public {
+        DeployCars script = new DeployCars();
+        DeployCars.Lineup[19] memory l = script.lineup();
+        CourierCars live = new CourierCars(DEFAULT_SENDER, address(stamp), treasury, address(validator), "https://courierworld.fun/cars/");
+        uint256[] memory ids = new uint256[](19);
+        uint256[] memory prices = new uint256[](19);
+        uint256[] memory supplies = new uint256[](19);
+        uint256[] memory limits = new uint256[](19);
+        for (uint256 i; i < 19; ++i) (ids[i], prices[i], supplies[i], limits[i]) = (l[i].id, l[i].price * 2e18, l[i].supply, l[i].perWallet);
+        vm.prank(DEFAULT_SENDER);
+        live.setKinds(ids, prices, supplies, limits, true);
+        // One sold at launch's price, and one supply cut since.
+        vm.startPrank(alice);
+        stamp.approve(address(live), 4000e18);
+        live.buy(21, 1, 4000e18);
+        vm.stopPrank();
+        vm.prank(DEFAULT_SENDER);
+        live.setKind(31, 10000e18, 8, 1, true);
+        script.reprice(live);
+        for (uint256 i; i < 19; ++i) {
+            (uint128 price, uint32 maxSupply, uint32 minted, uint32 perWallet, bool open,) = live.kinds(l[i].id);
+            assertEq(price, l[i].price * 1e18);
+            assertEq(maxSupply, l[i].id == 31 ? 8 : l[i].supply);
+            assertEq(minted, l[i].id == 21 ? 1 : 0);
+            assertEq(perWallet, l[i].perWallet);
+            assertTrue(open);
+        }
+        (uint128 sports,,,,,) = live.kinds(21);
+        assertEq(sports, 2000e18);
+        assertEq(live.balanceOf(alice, 21), 1);
+        assertEq(live.bought(alice, 21), 1); // (her wallet limit still counts the one she bought)
+        // Some open and some closed: refused (setKinds would open or close them all alike).
+        vm.prank(DEFAULT_SENDER);
+        live.setKind(34, 5000e18, 10, 1, false);
+        vm.expectRevert(bytes("some cars are open and some closed: reprice those one by one with setKind"));
+        script.reprice(live);
+        // A contract without the lineup: refused.
+        vm.expectRevert(bytes("a car in the lineup isn't on the contract"));
+        script.reprice(shop);
     }
 
     /// setKinds: the owner only, the lists the same length, each kind under setKind's own rules.

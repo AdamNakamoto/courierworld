@@ -355,10 +355,12 @@ per-wallet limit counting purchases; paid only in $STAMP, straight to the treasu
 same transfer validator), named "Courier Cars" (`CAR`), with three changes: the royalty is a fixed 5% to the
 treasury (`ROYALTY_BPS`; no `setRoyalty`, and `setTreasury` always moves it), like the skins', planets' and fish's;
 `setKinds` sets several kinds in one transaction (the deploy is two: the contract, then the lineup); and car wording.
-The lineup, in `DeployCars.s.sol` (from `web/car-kinds.js`): Common 500 $STAMP (300 of each, 5 a wallet: van, taxi,
-hatchback, pickup, 4x4, camper), Rare 1,500 (100, 3 a wallet: ice-cream truck, monster truck, tuk-tuk,
-double-decker, tractor), Epic 4,000 (30, 2 a wallet: sports car, convertible, race car, muscle car) and Legendary
-10,000 (10, 1 a wallet: hover car, golden limo, neon cyber car, rocket car). Every car is Courier World's own design.
+The lineup, in `DeployCars.s.sol` (from `web/car-kinds.js`): Common 250 $STAMP (300 of each, 5 a wallet: van, taxi,
+hatchback, pickup, 4x4, camper), Rare 750 (100, 3 a wallet: ice-cream truck, monster truck, tuk-tuk,
+double-decker, tractor), Epic 2,000 (30, 2 a wallet: sports car, convertible, race car, muscle car) and Legendary
+5,000 (10, 1 a wallet: hover car, golden limo, neon cyber car, rocket car). (It launched at twice those prices and
+was halved the same day: `forge script script/DeployCars.s.sol --sig "reprice(address)" <cars>`, signed by the
+owner, sets the lineup's prices and leaves every car's supply, wallet limit and open or closed as they are.) Every car is Courier World's own design.
 Tests: `CourierCars.t.sol` and `CourierCars.invariant.t.sol` (the companions' suites, plus `setKinds` and the fixed
 royalty).
 

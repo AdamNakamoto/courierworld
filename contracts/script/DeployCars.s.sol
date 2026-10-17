@@ -26,28 +26,29 @@ contract DeployCars is Script {
         uint256 perWallet; // per address (every kind has one, so a single buyer can't sweep a kind)
     }
 
-    /// The first lineup (web/car-kinds.js: ids, names and tiers; TIER_TERMS: Common 500 $STAMP, 300 of each, 5 a
-    /// wallet; Rare 1,500, 100, 3; Epic 4,000, 30, 2; Legendary 10,000, 10, 1). The game draws each id: web/cars.js.
+    /// The lineup (web/car-kinds.js: ids, names and tiers; TIER_TERMS: Common 250 $STAMP, 300 of each, 5 a wallet;
+    /// Rare 750, 100, 3; Epic 2,000, 30, 2; Legendary 5,000, 10, 1). The game draws each id: web/cars.js. (Launched
+    /// 2026-10-17 at twice these prices, halved the same day with `reprice`.)
     function lineup() public pure returns (Lineup[19] memory l) {
-        l[0] = Lineup(1, 500, 300, 5); // Courier Van (Common)
-        l[1] = Lineup(2, 500, 300, 5); // City Taxi (Common)
-        l[2] = Lineup(3, 500, 300, 5); // Hatchback (Common)
-        l[3] = Lineup(4, 500, 300, 5); // Pickup Truck (Common)
-        l[4] = Lineup(5, 500, 300, 5); // Trail 4x4 (Common)
-        l[5] = Lineup(6, 500, 300, 5); // Camper Van (Common)
-        l[6] = Lineup(11, 1500, 100, 3); // Ice-Cream Truck (Rare)
-        l[7] = Lineup(12, 1500, 100, 3); // Monster Truck (Rare)
-        l[8] = Lineup(13, 1500, 100, 3); // Tuk-Tuk (Rare)
-        l[9] = Lineup(14, 1500, 100, 3); // Double-Decker Bus (Rare)
-        l[10] = Lineup(15, 1500, 100, 3); // Tractor (Rare)
-        l[11] = Lineup(21, 4000, 30, 2); // Sports Car (Epic)
-        l[12] = Lineup(22, 4000, 30, 2); // Convertible (Epic)
-        l[13] = Lineup(23, 4000, 30, 2); // Race Car (Epic)
-        l[14] = Lineup(24, 4000, 30, 2); // Muscle Car (Epic)
-        l[15] = Lineup(31, 10000, 10, 1); // Hover Car (Legendary)
-        l[16] = Lineup(32, 10000, 10, 1); // Golden Limo (Legendary)
-        l[17] = Lineup(33, 10000, 10, 1); // Neon Cyber Car (Legendary)
-        l[18] = Lineup(34, 10000, 10, 1); // Rocket Car (Legendary)
+        l[0] = Lineup(1, 250, 300, 5); // Courier Van (Common)
+        l[1] = Lineup(2, 250, 300, 5); // City Taxi (Common)
+        l[2] = Lineup(3, 250, 300, 5); // Hatchback (Common)
+        l[3] = Lineup(4, 250, 300, 5); // Pickup Truck (Common)
+        l[4] = Lineup(5, 250, 300, 5); // Trail 4x4 (Common)
+        l[5] = Lineup(6, 250, 300, 5); // Camper Van (Common)
+        l[6] = Lineup(11, 750, 100, 3); // Ice-Cream Truck (Rare)
+        l[7] = Lineup(12, 750, 100, 3); // Monster Truck (Rare)
+        l[8] = Lineup(13, 750, 100, 3); // Tuk-Tuk (Rare)
+        l[9] = Lineup(14, 750, 100, 3); // Double-Decker Bus (Rare)
+        l[10] = Lineup(15, 750, 100, 3); // Tractor (Rare)
+        l[11] = Lineup(21, 2000, 30, 2); // Sports Car (Epic)
+        l[12] = Lineup(22, 2000, 30, 2); // Convertible (Epic)
+        l[13] = Lineup(23, 2000, 30, 2); // Race Car (Epic)
+        l[14] = Lineup(24, 2000, 30, 2); // Muscle Car (Epic)
+        l[15] = Lineup(31, 5000, 10, 1); // Hover Car (Legendary)
+        l[16] = Lineup(32, 5000, 10, 1); // Golden Limo (Legendary)
+        l[17] = Lineup(33, 5000, 10, 1); // Neon Cyber Car (Legendary)
+        l[18] = Lineup(34, 5000, 10, 1); // Rocket Car (Legendary)
     }
 
     function run() external returns (CourierCars shop) {
@@ -96,5 +97,32 @@ contract DeployCars is Script {
         uint256 n = putOnSale(shop);
         vm.stopBroadcast();
         console2.log("kinds on sale", n);
+    }
+
+    /// The lineup's prices, as lineup() has them now, for a Courier Cars contract already selling, signed by its owner:
+    /// every car's supply, wallet limit and open or closed stay as they are on chain. One transaction:
+    /// forge script script/DeployCars.s.sol --sig "reprice(address)" <cars> ...
+    function reprice(CourierCars shop) external {
+        Lineup[19] memory l = lineup();
+        uint256[] memory ids = new uint256[](l.length);
+        uint256[] memory prices = new uint256[](l.length);
+        uint256[] memory supplies = new uint256[](l.length);
+        uint256[] memory perWallets = new uint256[](l.length);
+        bool open;
+        for (uint256 i; i < l.length; ++i) {
+            (, uint32 maxSupply,, uint32 perWallet, bool isOpen, bool exists) = shop.kinds(l[i].id);
+            require(exists, "a car in the lineup isn't on the contract");
+            // (setKinds opens or closes them all alike: so only while they agree, as they do from launch.)
+            if (i == 0) open = isOpen;
+            else require(isOpen == open, "some cars are open and some closed: reprice those one by one with setKind");
+            (ids[i], prices[i], supplies[i], perWallets[i]) = (l[i].id, l[i].price * 1e18, maxSupply, perWallet);
+        }
+        vm.startBroadcast();
+        shop.setKinds(ids, prices, supplies, perWallets, open);
+        vm.stopBroadcast();
+        for (uint256 i; i < l.length; ++i) {
+            (uint128 price,,,,,) = shop.kinds(l[i].id);
+            console2.log("car", l[i].id, "price (whole $STAMP)", price / 1e18);
+        }
     }
 }
